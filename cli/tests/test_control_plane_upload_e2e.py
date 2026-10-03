@@ -265,3 +265,54 @@ def test_correlated_five_mib_value_upload_stays_below_the_limit(
         assert json.dumps(envelope["report"]["events"]).count(large) == 2
     finally:
         store.close()
+
+
+def test_compact_summary_stays_under_limit_and_digest_is_environment_independent(
+    tmp_path, monkeypatch
+):
+    store = SQLiteExecutionStore(tmp_path / "results.sqlite")
+    try:
+        store.save_test_run(
+            "run-compact",
+            {
+                "run_id": "run-compact",
+                "status": "finished",
+                "project_root": "/private/user/workspace",
+                "selection": [
+                    "tests/test_login.py",
+                    "--db-url=postgres://u:hunter2@db/x",
+                ],
+                "capture": {"private": "machine data"},
+            },
+        )
+        for index in range(500):
+            store.save_test_result(
+                "run-compact",
+                f"attempt-{index}",
+                {
+                    "run_id": "run-compact",
+                    "attempt_id": f"attempt-{index}",
+                    "suite_name": "Compact suite",
+                    "suite_id": 1,
+                    "node_id": f"tests/test_login.py::test_{index}",
+                    "outcome": "passed",
+                    "execution_ids": [],
+                    "diagnostics": {"stdout": "x" * 7000},
+                    "phases": {"call": {"outcome": "passed"}},
+                },
+            )
+        feedback = build_feedback(store, "run-compact")
+        directory = tmp_path / "reports"
+        export_feedback(feedback, store, directory)
+        _, _, before = control_plane._current_run_summary(feedback, store, directory)
+        monkeypatch.setenv("CI_DEPLOY_PASSWORD", "login")
+        _, _, after = control_plane._current_run_summary(feedback, store, directory)
+        assert before == after
+        assert len(after) < control_plane._MAX_SUMMARY_BYTES
+        compact = json.loads(after)["comparison_input"]
+        assert "hunter2" not in json.dumps(compact)
+        assert "/private/user/workspace" not in json.dumps(compact)
+        assert compact["test_results"][0]["node_id"].startswith("tests/test_login.py")
+        assert all("diagnostics" not in attempt for attempt in compact["test_results"])
+    finally:
+        store.close()

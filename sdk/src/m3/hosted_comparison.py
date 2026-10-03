@@ -7,6 +7,7 @@ network request, evaluates prompts, or starts a process of its own.
 from __future__ import annotations
 
 import json
+import posixpath
 import sys
 from collections.abc import Mapping
 from types import SimpleNamespace
@@ -24,6 +25,102 @@ if TYPE_CHECKING:
 _MAX_INPUT_BYTES = 32 << 20
 _MAX_OUTPUT_BYTES = 4 << 20
 _SPEC_ADAPTER: TypeAdapter[ExecutionSpec] = TypeAdapter(ExecutionSpec)
+_EXPORT_FIELDS = frozenset(
+    {
+        "execution_files",
+        "spec_files",
+        "catalog_files",
+        "trace_files",
+        "evidence_files",
+        "artifact_files",
+        "diagnostic_files",
+        "test_run_files",
+        "test_result_files",
+        "unavailable_references",
+    }
+)
+
+
+def comparison_input(manifest: Mapping[str, Any], tests: Any) -> dict[str, Any]:
+    """Project already-redacted saved evidence without machine paths or output.
+
+    This projection is deterministic across uploader environments. Diagnostics
+    and manifest failures are restored from the feedback already in the upload.
+    """
+    root = str(manifest.get("project_root") or "").replace("\\", "/").rstrip("/")
+
+    def node(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if root and value.startswith(root + "/"):
+            return value[len(root) + 1 :]
+        return value
+
+    projected = {
+        key: manifest[key]
+        for key in (
+            "run_id",
+            "run_label",
+            "project_id",
+            "status",
+            "persistence_error",
+        )
+        if key in manifest
+    }
+    # Selection is needed for checkout-independent case matching. Upload only
+    # relative pytest file/node identities, never command-line flags or values.
+    selected = []
+    for value in manifest.get("selection", ()) or ():
+        value = node(value)
+        if (
+            isinstance(value, str)
+            and value
+            and not value.startswith(("-", "/"))
+            and "://" not in value
+            and "=" not in value
+            and ".." not in value.split("::", 1)[0].split("/")
+            and not posixpath.isabs(value)
+            and not (len(value) > 1 and value[1] == ":")
+        ):
+            selected.append(value)
+    projected["selection"] = selected
+    attempts = []
+    for test in tests:
+        item = {
+            key: test[key]
+            for key in (
+                "attempt_id",
+                "run_id",
+                "node_id",
+                "suite_id",
+                "suite_name",
+                "outcome",
+                "execution_ids",
+                "detached_evaluations",
+            )
+            if key in test
+        }
+        item["node_id"] = node(item.get("node_id"))
+        phases = test.get("phases")
+        if isinstance(phases, Mapping):
+            item["phases"] = {
+                phase: {
+                    key: value[key]
+                    for key in ("outcome", "wasxfail", "exception_type")
+                    if key in value
+                }
+                for phase, value in phases.items()
+                if isinstance(value, Mapping)
+            }
+        attempts.append(item)
+    return neutralize_response(
+        "/api/v2/feedback/{run_id}",
+        {
+            "schema_version": 1,
+            "manifest": projected,
+            "test_results": attempts,
+        },
+    )
 
 
 def _id(value: Any) -> str:
@@ -127,6 +224,8 @@ def _wire_feedback(
     # Ignore upload-time comparison state before validating the feedback DTO;
     # it can be stale or from an older schema and is never comparison input.
     restored.pop("comparison", None)
+    for field in _EXPORT_FIELDS:
+        restored.pop(field, None)
     restored = _remap_feedback_suites(restored, suite_ids)
     feedback = Feedback.model_validate(restored)
     if feedback.run_id != run_id:
@@ -151,9 +250,13 @@ class _RunStore:
         else:
             if (
                 not isinstance(comparison_input, Mapping)
+                or type(comparison_input.get("schema_version")) is not int
                 or comparison_input.get("schema_version") != 1
             ):
                 raise ValueError("unsupported comparison input")
+            comparison_input = internalize_request(
+                "/api/v2/feedback/{run_id}", dict(comparison_input)
+            )
             raw_manifest = comparison_input.get("manifest")
             raw_tests = comparison_input.get("test_results")
             if not isinstance(raw_manifest, Mapping) or not isinstance(raw_tests, list):
@@ -166,6 +269,45 @@ class _RunStore:
             self.test_results = tuple(
                 _mapped_suite_record(item, suite_ids) for item in raw_tests
             )
+
+        # The compact upload carries comparison identities only. Reuse the
+        # persisted diagnostic/failure projections instead of duplicating them.
+        projected_tests = {
+            item.get("attempt_id"): item
+            for item in feedback.get("tests", ())
+            if isinstance(item, Mapping)
+        }
+        self.test_results = tuple(
+            {
+                **item,
+                **{
+                    key: projected_tests[item.get("attempt_id")][key]
+                    for key in (
+                        "diagnostics",
+                        "metadata",
+                        "description",
+                        "started_at",
+                        "finished_at",
+                        "duration_seconds",
+                    )
+                    if item.get("attempt_id") in projected_tests
+                    and key in projected_tests[item.get("attempt_id")]
+                    and key not in item
+                },
+            }
+            for item in self.test_results
+        )
+        self.manifest = dict(self.manifest)
+        for kind, field in (
+            ("collection", "collection_reports"),
+            ("worker", "worker_errors"),
+        ):
+            if field not in self.manifest:
+                self.manifest[field] = [
+                    {key: value for key, value in item.items() if key != "kind"}
+                    for item in feedback.get("failures", ())
+                    if isinstance(item, Mapping) and item.get("kind") == kind
+                ]
 
         reports = run.get("reports")
         if not isinstance(reports, list):
@@ -226,6 +368,16 @@ class _RunStore:
             )
             if recorded_run_id != run_id:
                 raise ValueError("report is not associated with its run")
+
+        for attempt in self.test_results:
+            if attempt.get("run_id") is not None and attempt["run_id"] != run_id:
+                raise ValueError("test attempt run identity mismatch")
+            execution_ids = attempt.get("execution_ids") or ()
+            if not isinstance(execution_ids, (list, tuple)) or any(
+                not isinstance(value, str) or value not in self.reports
+                for value in execution_ids
+            ):
+                raise ValueError("test attempt execution identity mismatch")
 
     @staticmethod
     def _legacy_input(
@@ -411,6 +563,9 @@ def main() -> int:
             raise ValueError("response too large")
         sys.stdout.buffer.write(output + b"\n")
         return 0
+    except (ValueError, MemoryError):
+        sys.stdout.buffer.write(b'{"error":"comparison_incompatible"}\n')
+        return 1
     except Exception:
         sys.stdout.buffer.write(b'{"error":"comparison_unavailable"}\n')
         return 1
@@ -420,4 +575,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["compare_runs", "main"]
+__all__ = ["compare_runs", "comparison_input", "main"]

@@ -199,7 +199,10 @@ def _walk(value: Any, *, path: tuple[str, ...], reverse: bool) -> Any:
             elif (
                 name == "evaluator"
                 and _path_contains(path, "feedback")
-                and any(part in {"failures", "evaluation_changes"} for part in path)
+                and any(
+                    part in {"failures", "evaluation_changes", "detached_evaluations"}
+                    for part in path
+                )
             ):
                 result[key] = _evaluator_name(item, reverse=reverse)
             elif name == "manifest" and isinstance(item, Mapping):
@@ -220,7 +223,8 @@ def _walk(value: Any, *, path: tuple[str, ...], reverse: bool) -> Any:
             elif name == "schema_id" and _path_contains(path, "trace"):
                 result[key] = _schema_id(item, reverse=reverse)
             elif name == "name" and any(
-                part in {"evaluation", "evaluations"} for part in path
+                part in {"evaluation", "evaluations", "detached_evaluations"}
+                for part in path
             ):
                 result[key] = _evaluator_name(item, reverse=reverse)
             elif name == "source" and "provenance" in path:

@@ -1,0 +1,2220 @@
+{
+  "runs": [
+    {
+      "run_id": "A",
+      "feedback": {
+        "version": "v2",
+        "feedback": {
+          "artifact_files": {},
+          "catalog_files": {
+            "execution-A": "catalogs/1cd06220c929eb1829bbf8db615b8e5b.json"
+          },
+          "ci": null,
+          "comparison": null,
+          "diagnostic_files": {},
+          "evaluation_stats": {
+            "quality": {
+              "average_score": 0.4,
+              "evaluation_count": 1,
+              "expected_count": 1,
+              "missing_required_count": 0,
+              "pass_rate": 0.0,
+              "pending_required_count": 0,
+              "score_count": 1,
+              "status_counts": {
+                "failed": 1
+              }
+            }
+          },
+          "evidence_files": {},
+          "execution_files": {
+            "execution-A": "executions/1cd06220c929eb1829bbf8db615b8e5b.json"
+          },
+          "executions": [
+            {
+              "evaluation_count": 2,
+              "event_count": 2,
+              "events_truncated": false,
+              "evidence": null,
+              "execution_id": "execution-A",
+              "lifecycle": "finished",
+              "outcome": "completed",
+              "result_kind": "completed",
+              "suite_id": 10,
+              "suite_name": "catalog",
+              "tool_result": null
+            }
+          ],
+          "failures": [
+            {
+              "case_id": "tests/test_api.py::test_list",
+              "details": {},
+              "evaluation_id": "execution-A-2",
+              "evaluator": "quality",
+              "execution_id": "execution-A",
+              "kind": "evaluation",
+              "message": null,
+              "rationale": null,
+              "required": false,
+              "score": 0.4,
+              "status": "failed"
+            }
+          ],
+          "limitations": [],
+          "project_id": "project-a",
+          "project_name": null,
+          "run_id": "A",
+          "run_label": "Run A",
+          "schema_version": 1,
+          "spec_files": {
+            "execution-A": "specs/1cd06220c929eb1829bbf8db615b8e5b.json"
+          },
+          "suites": [
+            {
+              "suite_id": 10,
+              "suite_name": "catalog"
+            },
+            {
+              "suite_id": 10,
+              "suite_name": null
+            }
+          ],
+          "summary": {
+            "collection_errors": 0,
+            "effective_verdict_counts": {
+              "failed": 0,
+              "incomplete": 0,
+              "passed": 3,
+              "pending": 0,
+              "skipped": 0
+            },
+            "error_tests": 0,
+            "executions": 1,
+            "failed_tests": 0,
+            "failures": 0,
+            "not_run_tests": [],
+            "passed_tests": 3,
+            "run_status": "finished",
+            "skipped_tests": 0,
+            "terminal_executions": 1,
+            "test_outcome_counts": {
+              "error": 0,
+              "failed": 0,
+              "not_run": 0,
+              "passed": 3,
+              "skipped": 0
+            },
+            "tests": 3
+          },
+          "test_result_files": {
+            "A:main:1": "diagnostics/9ea91b9ba17db8820d77541e797f18dd.json",
+            "A:main:2": "diagnostics/02b397e8ecfedcae0e2046b6b914d490.json",
+            "A:removed": "diagnostics/84773aa2d691ff40521d0cea0baa3543.json"
+          },
+          "test_run_files": {
+            "A": "diagnostics/559aead08264d5795d3909718cdd05ab.json"
+          },
+          "tests": [
+            {
+              "attempt_id": "A:main:1",
+              "effective_verdict": "passed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-A-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-A",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.4,
+                  "status": "failed"
+                }
+              ],
+              "execution_ids": [
+                "execution-A"
+              ],
+              "metadata": {
+                "harness_config": "model-a",
+                "matrix.trial": "trial-1"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "passed",
+              "phases": {},
+              "suite_id": 10,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "passed"
+            },
+            {
+              "attempt_id": "A:main:2",
+              "effective_verdict": "passed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-A-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-A",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.4,
+                  "status": "failed"
+                }
+              ],
+              "execution_ids": [
+                "execution-A"
+              ],
+              "metadata": {
+                "harness_config": "model-a",
+                "matrix.trial": "trial-2"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "passed",
+              "phases": {},
+              "suite_id": 10,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "passed"
+            },
+            {
+              "attempt_id": "A:removed",
+              "effective_verdict": "passed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [],
+              "execution_ids": [],
+              "node_id": "tests/test_api.py::test_removed",
+              "outcome": "passed",
+              "phases": {},
+              "suite_id": 10,
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "passed"
+            }
+          ],
+          "trace_files": {},
+          "unavailable_references": [
+            {
+              "execution_id": "execution-A",
+              "kind": "trace",
+              "reason": "trace view unavailable"
+            }
+          ]
+        }
+      },
+      "suite_ids": {
+        "10": 9001
+      },
+      "comparison_input": {
+        "schema_version": 1,
+        "manifest": {
+          "run_id": "A",
+          "run_label": "Run A",
+          "project_id": "project-a",
+          "status": "finished",
+          "selection": [
+            "tests/test_api.py"
+          ]
+        },
+        "test_results": [
+          {
+            "attempt_id": "A:main:1",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 10,
+            "suite_name": "catalog",
+            "outcome": "passed",
+            "execution_ids": [
+              "execution-A"
+            ],
+            "phases": {}
+          },
+          {
+            "attempt_id": "A:main:2",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 10,
+            "suite_name": "catalog",
+            "outcome": "passed",
+            "execution_ids": [
+              "execution-A"
+            ],
+            "phases": {}
+          },
+          {
+            "attempt_id": "A:removed",
+            "node_id": "tests/test_api.py::test_removed",
+            "suite_id": 10,
+            "outcome": "passed",
+            "execution_ids": [],
+            "phases": {}
+          }
+        ]
+      },
+      "reports": [
+        {
+          "version": "v2",
+          "execution_id": "execution-A",
+          "spec": {
+            "run_id": null,
+            "project_id": null,
+            "project_name": null,
+            "suite_name": "catalog",
+            "case_id": null,
+            "servers": [
+              {
+                "server": {
+                  "name": "orders",
+                  "trust": "untrusted",
+                  "kind": "stdio",
+                  "command": "orders",
+                  "args": [],
+                  "environment": {},
+                  "cwd": null
+                },
+                "profile": null,
+                "alias": "orders",
+                "required": true
+              }
+            ],
+            "protocol": {
+              "revision": null,
+              "transport": null
+            },
+            "timeout_seconds": null,
+            "goal": null,
+            "evaluations": [],
+            "artifact_policy": "failed",
+            "declared_artifacts": [],
+            "workspace": {
+              "kind": "temporary",
+              "source": null,
+              "acknowledge_risk": false
+            },
+            "tool_policy": {
+              "kind": "restrictive",
+              "allowed_tools": [],
+              "denied_tools": []
+            },
+            "permission_policy": {
+              "mode": "deny"
+            },
+            "sampling_policy": {
+              "mode": "deny"
+            },
+            "filesystem_policy": {
+              "mode": "deny"
+            },
+            "terminal_policy": {
+              "mode": "deny"
+            },
+            "metadata": {
+              "harness_config": "model-a"
+            },
+            "kind": "direct",
+            "operation": {
+              "server": "orders",
+              "kind": "call_tool",
+              "name": "lookup",
+              "arguments": {}
+            },
+            "validate_schemas": false
+          },
+          "report": {
+            "snapshot": {
+              "execution_id": "execution-A",
+              "project_id": null,
+              "run_id": "A",
+              "suite_id": 10,
+              "suite_name": "catalog",
+              "lifecycle": "finished",
+              "outcome": "completed",
+              "sequence": 0,
+              "tool_call_count": 0,
+              "created_at": "2026-01-01T00:00:00Z",
+              "finished_at": "2026-01-01T00:00:00Z",
+              "provenance": null,
+              "agent": null
+            },
+            "agent": null,
+            "events": [
+              {
+                "schema": "event",
+                "schema_version": "0.2",
+                "event_id": "execution-A-request",
+                "execution_id": "execution-A",
+                "sequence": 0,
+                "kind": "mcp.request",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "monotonic_offset_ms": 0.0,
+                "session_id": null,
+                "turn_id": null,
+                "server_binding": "orders",
+                "connection_id": "connection",
+                "correlation": {
+                  "jsonrpc_id": 1,
+                  "direction": "client_to_server",
+                  "request_sequence": 1
+                },
+                "lifecycle_phase": "unknown",
+                "payload": {
+                  "method": "tools/list",
+                  "params": {}
+                },
+                "payload_ref": null,
+                "provenance": {
+                  "origin": "normalized",
+                  "source": "internal",
+                  "provider_kind": null,
+                  "derived_from_sequence": null
+                },
+                "raw_evidence_ref": null,
+                "reasoning": null
+              },
+              {
+                "schema": "event",
+                "schema_version": "0.2",
+                "event_id": "execution-A-response",
+                "execution_id": "execution-A",
+                "sequence": 1,
+                "kind": "mcp.response",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "monotonic_offset_ms": 1.0,
+                "session_id": null,
+                "turn_id": null,
+                "server_binding": "orders",
+                "connection_id": "connection",
+                "correlation": {
+                  "jsonrpc_id": 1,
+                  "direction": "server_to_client",
+                  "request_sequence": 1
+                },
+                "lifecycle_phase": "unknown",
+                "payload": {
+                  "method": "tools/list",
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "lookup",
+                        "description": "old description",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "payload_ref": null,
+                "provenance": {
+                  "origin": "normalized",
+                  "source": "internal",
+                  "provider_kind": null,
+                  "derived_from_sequence": null
+                },
+                "raw_evidence_ref": null,
+                "reasoning": null
+              }
+            ],
+            "artifacts": [],
+            "direct_result": null,
+            "error": null,
+            "evidence": null,
+            "turns": [],
+            "evaluations": [
+              {
+                "evaluation_id": "execution-A-1",
+                "execution_id": "execution-A",
+                "suite_id": null,
+                "suite_name": null,
+                "case_id": "tests/test_api.py::test_list",
+                "turn_id": null,
+                "name": "quality",
+                "status": "failed",
+                "required": false,
+                "message": null,
+                "score": 0.2,
+                "rationale": null,
+                "metrics": {},
+                "provenance": null,
+                "details": {},
+                "goal": null,
+                "metadata": {
+                  "harness_config": "model-a",
+                  "matrix.trial": "trial-1"
+                },
+                "subject_kind": "unknown",
+                "subject_digest": null,
+                "run_id": null,
+                "created_at": "2026-01-01T00:00:00Z"
+              },
+              {
+                "evaluation_id": "execution-A-2",
+                "execution_id": "execution-A",
+                "suite_id": null,
+                "suite_name": null,
+                "case_id": "tests/test_api.py::test_list",
+                "turn_id": null,
+                "name": "quality",
+                "status": "failed",
+                "required": false,
+                "message": null,
+                "score": 0.4,
+                "rationale": null,
+                "metrics": {},
+                "provenance": null,
+                "details": {},
+                "goal": null,
+                "metadata": {
+                  "harness_config": "model-a",
+                  "matrix.trial": "trial-2"
+                },
+                "subject_kind": "unknown",
+                "subject_digest": null,
+                "run_id": null,
+                "created_at": "2026-01-01T00:00:00Z"
+              }
+            ],
+            "event_count": 2,
+            "events_truncated": false,
+            "next_after_sequence": null,
+            "artifact_count": 0,
+            "artifacts_truncated": false
+          },
+          "trace": {
+            "schema_id": "trace_view",
+            "summary": {
+              "tool_call_count": 0,
+              "successful_tool_call_count": 0,
+              "failed_tool_call_count": 0
+            }
+          },
+          "test_results": []
+        }
+      ]
+    },
+    {
+      "run_id": "B",
+      "feedback": {
+        "version": "v2",
+        "feedback": {
+          "artifact_files": {},
+          "catalog_files": {
+            "execution-B": "catalogs/4ce795575ca04c8db16e627a669fd3b4.json"
+          },
+          "ci": null,
+          "comparison": null,
+          "diagnostic_files": {},
+          "evaluation_stats": {
+            "quality": {
+              "average_score": 0.3,
+              "evaluation_count": 1,
+              "expected_count": 1,
+              "missing_required_count": 0,
+              "pass_rate": 0.0,
+              "pending_required_count": 0,
+              "score_count": 1,
+              "status_counts": {
+                "failed": 1
+              }
+            }
+          },
+          "evidence_files": {},
+          "execution_files": {
+            "execution-B": "executions/4ce795575ca04c8db16e627a669fd3b4.json"
+          },
+          "executions": [
+            {
+              "evaluation_count": 2,
+              "event_count": 2,
+              "events_truncated": false,
+              "evidence": null,
+              "execution_id": "execution-B",
+              "lifecycle": "finished",
+              "outcome": "completed",
+              "result_kind": "completed",
+              "suite_id": 20,
+              "suite_name": "catalog",
+              "tool_result": null
+            }
+          ],
+          "failures": [
+            {
+              "attempt_id": "B:main:1",
+              "effective_verdict": "failed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-B-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-B",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.3,
+                  "status": "failed"
+                }
+              ],
+              "execution_ids": [
+                "execution-B"
+              ],
+              "metadata": {
+                "harness_config": "model-b",
+                "matrix.trial": "trial-1"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "failed",
+              "phases": {},
+              "suite_id": 20,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "failed_assertion"
+            },
+            {
+              "attempt_id": "B:main:2",
+              "effective_verdict": "failed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-B-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-B",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.3,
+                  "status": "failed"
+                }
+              ],
+              "execution_ids": [
+                "execution-B"
+              ],
+              "metadata": {
+                "harness_config": "model-b",
+                "matrix.trial": "trial-2"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "failed",
+              "phases": {},
+              "suite_id": 20,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "failed_assertion"
+            },
+            {
+              "case_id": "tests/test_api.py::test_list",
+              "details": {},
+              "evaluation_id": "execution-B-2",
+              "evaluator": "quality",
+              "execution_id": "execution-B",
+              "kind": "evaluation",
+              "message": null,
+              "rationale": null,
+              "required": false,
+              "score": 0.3,
+              "status": "failed"
+            }
+          ],
+          "limitations": [],
+          "project_id": "project-a",
+          "project_name": null,
+          "run_id": "B",
+          "run_label": "Run B",
+          "schema_version": 1,
+          "spec_files": {
+            "execution-B": "specs/4ce795575ca04c8db16e627a669fd3b4.json"
+          },
+          "suites": [
+            {
+              "suite_id": 20,
+              "suite_name": "catalog"
+            }
+          ],
+          "summary": {
+            "collection_errors": 0,
+            "effective_verdict_counts": {
+              "failed": 2,
+              "incomplete": 0,
+              "passed": 0,
+              "pending": 0,
+              "skipped": 0
+            },
+            "error_tests": 0,
+            "executions": 1,
+            "failed_tests": 2,
+            "failures": 2,
+            "not_run_tests": [],
+            "passed_tests": 0,
+            "run_status": "finished",
+            "skipped_tests": 0,
+            "terminal_executions": 1,
+            "test_outcome_counts": {
+              "error": 0,
+              "failed": 2,
+              "not_run": 0,
+              "passed": 0,
+              "skipped": 0
+            },
+            "tests": 2
+          },
+          "test_result_files": {
+            "B:main:1": "diagnostics/764ce320a3bca2886fe81308ec6af84a.json",
+            "B:main:2": "diagnostics/1a4b24f27554a114b4a652967c943b0d.json"
+          },
+          "test_run_files": {
+            "B": "diagnostics/df7e70e5021544f4834bbee64a9e3789.json"
+          },
+          "tests": [
+            {
+              "attempt_id": "B:main:1",
+              "effective_verdict": "failed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-B-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-B",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.3,
+                  "status": "failed"
+                }
+              ],
+              "execution_ids": [
+                "execution-B"
+              ],
+              "metadata": {
+                "harness_config": "model-b",
+                "matrix.trial": "trial-1"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "failed",
+              "phases": {},
+              "suite_id": 20,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "failed_assertion"
+            },
+            {
+              "attempt_id": "B:main:2",
+              "effective_verdict": "failed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-B-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-B",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.3,
+                  "status": "failed"
+                }
+              ],
+              "execution_ids": [
+                "execution-B"
+              ],
+              "metadata": {
+                "harness_config": "model-b",
+                "matrix.trial": "trial-2"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "failed",
+              "phases": {},
+              "suite_id": 20,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "failed_assertion"
+            }
+          ],
+          "trace_files": {},
+          "unavailable_references": [
+            {
+              "execution_id": "execution-B",
+              "kind": "trace",
+              "reason": "trace view unavailable"
+            }
+          ]
+        }
+      },
+      "suite_ids": {
+        "20": 9001
+      },
+      "comparison_input": {
+        "schema_version": 1,
+        "manifest": {
+          "run_id": "B",
+          "run_label": "Run B",
+          "project_id": "project-a",
+          "status": "finished",
+          "selection": [
+            "tests/test_api.py"
+          ]
+        },
+        "test_results": [
+          {
+            "attempt_id": "B:main:1",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 20,
+            "suite_name": "catalog",
+            "outcome": "failed",
+            "execution_ids": [
+              "execution-B"
+            ],
+            "phases": {}
+          },
+          {
+            "attempt_id": "B:main:2",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 20,
+            "suite_name": "catalog",
+            "outcome": "failed",
+            "execution_ids": [
+              "execution-B"
+            ],
+            "phases": {}
+          }
+        ]
+      },
+      "reports": [
+        {
+          "version": "v2",
+          "execution_id": "execution-B",
+          "spec": {
+            "run_id": null,
+            "project_id": null,
+            "project_name": null,
+            "suite_name": "catalog",
+            "case_id": null,
+            "servers": [
+              {
+                "server": {
+                  "name": "orders",
+                  "trust": "untrusted",
+                  "kind": "stdio",
+                  "command": "orders",
+                  "args": [],
+                  "environment": {},
+                  "cwd": null
+                },
+                "profile": null,
+                "alias": "orders",
+                "required": true
+              }
+            ],
+            "protocol": {
+              "revision": null,
+              "transport": null
+            },
+            "timeout_seconds": null,
+            "goal": null,
+            "evaluations": [],
+            "artifact_policy": "failed",
+            "declared_artifacts": [],
+            "workspace": {
+              "kind": "temporary",
+              "source": null,
+              "acknowledge_risk": false
+            },
+            "tool_policy": {
+              "kind": "restrictive",
+              "allowed_tools": [],
+              "denied_tools": []
+            },
+            "permission_policy": {
+              "mode": "deny"
+            },
+            "sampling_policy": {
+              "mode": "deny"
+            },
+            "filesystem_policy": {
+              "mode": "deny"
+            },
+            "terminal_policy": {
+              "mode": "deny"
+            },
+            "metadata": {
+              "harness_config": "model-b"
+            },
+            "kind": "direct",
+            "operation": {
+              "server": "orders",
+              "kind": "call_tool",
+              "name": "lookup",
+              "arguments": {}
+            },
+            "validate_schemas": false
+          },
+          "report": {
+            "snapshot": {
+              "execution_id": "execution-B",
+              "project_id": null,
+              "run_id": "B",
+              "suite_id": 20,
+              "suite_name": "catalog",
+              "lifecycle": "finished",
+              "outcome": "completed",
+              "sequence": 0,
+              "tool_call_count": 0,
+              "created_at": "2026-01-01T00:00:00Z",
+              "finished_at": "2026-01-01T00:00:00Z",
+              "provenance": null,
+              "agent": null
+            },
+            "agent": null,
+            "events": [
+              {
+                "schema": "event",
+                "schema_version": "0.2",
+                "event_id": "execution-B-request",
+                "execution_id": "execution-B",
+                "sequence": 0,
+                "kind": "mcp.request",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "monotonic_offset_ms": 0.0,
+                "session_id": null,
+                "turn_id": null,
+                "server_binding": "orders",
+                "connection_id": "connection",
+                "correlation": {
+                  "jsonrpc_id": 1,
+                  "direction": "client_to_server",
+                  "request_sequence": 1
+                },
+                "lifecycle_phase": "unknown",
+                "payload": {
+                  "method": "tools/list",
+                  "params": {}
+                },
+                "payload_ref": null,
+                "provenance": {
+                  "origin": "normalized",
+                  "source": "internal",
+                  "provider_kind": null,
+                  "derived_from_sequence": null
+                },
+                "raw_evidence_ref": null,
+                "reasoning": null
+              },
+              {
+                "schema": "event",
+                "schema_version": "0.2",
+                "event_id": "execution-B-response",
+                "execution_id": "execution-B",
+                "sequence": 1,
+                "kind": "mcp.response",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "monotonic_offset_ms": 1.0,
+                "session_id": null,
+                "turn_id": null,
+                "server_binding": "orders",
+                "connection_id": "connection",
+                "correlation": {
+                  "jsonrpc_id": 1,
+                  "direction": "server_to_client",
+                  "request_sequence": 1
+                },
+                "lifecycle_phase": "unknown",
+                "payload": {
+                  "method": "tools/list",
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "lookup",
+                        "description": "middle description",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "payload_ref": null,
+                "provenance": {
+                  "origin": "normalized",
+                  "source": "internal",
+                  "provider_kind": null,
+                  "derived_from_sequence": null
+                },
+                "raw_evidence_ref": null,
+                "reasoning": null
+              }
+            ],
+            "artifacts": [],
+            "direct_result": null,
+            "error": null,
+            "evidence": null,
+            "turns": [],
+            "evaluations": [
+              {
+                "evaluation_id": "execution-B-1",
+                "execution_id": "execution-B",
+                "suite_id": null,
+                "suite_name": null,
+                "case_id": "tests/test_api.py::test_list",
+                "turn_id": null,
+                "name": "quality",
+                "status": "failed",
+                "required": false,
+                "message": null,
+                "score": 0.3,
+                "rationale": null,
+                "metrics": {},
+                "provenance": null,
+                "details": {},
+                "goal": null,
+                "metadata": {
+                  "harness_config": "model-b",
+                  "matrix.trial": "trial-1"
+                },
+                "subject_kind": "unknown",
+                "subject_digest": null,
+                "run_id": null,
+                "created_at": "2026-01-01T00:00:00Z"
+              },
+              {
+                "evaluation_id": "execution-B-2",
+                "execution_id": "execution-B",
+                "suite_id": null,
+                "suite_name": null,
+                "case_id": "tests/test_api.py::test_list",
+                "turn_id": null,
+                "name": "quality",
+                "status": "failed",
+                "required": false,
+                "message": null,
+                "score": 0.3,
+                "rationale": null,
+                "metrics": {},
+                "provenance": null,
+                "details": {},
+                "goal": null,
+                "metadata": {
+                  "harness_config": "model-b",
+                  "matrix.trial": "trial-2"
+                },
+                "subject_kind": "unknown",
+                "subject_digest": null,
+                "run_id": null,
+                "created_at": "2026-01-01T00:00:00Z"
+              }
+            ],
+            "event_count": 2,
+            "events_truncated": false,
+            "next_after_sequence": null,
+            "artifact_count": 0,
+            "artifacts_truncated": false
+          },
+          "trace": {
+            "schema_id": "trace_view",
+            "summary": {
+              "tool_call_count": 0,
+              "successful_tool_call_count": 0,
+              "failed_tool_call_count": 0
+            }
+          },
+          "test_results": []
+        }
+      ]
+    },
+    {
+      "run_id": "C",
+      "feedback": {
+        "version": "v2",
+        "feedback": {
+          "artifact_files": {},
+          "catalog_files": {
+            "execution-C": "catalogs/95c35335b729aec5705410a3c9fa4ec0.json"
+          },
+          "ci": null,
+          "comparison": null,
+          "diagnostic_files": {},
+          "evaluation_stats": {
+            "quality": {
+              "average_score": 0.9,
+              "evaluation_count": 1,
+              "expected_count": 1,
+              "missing_required_count": 0,
+              "pass_rate": 1.0,
+              "pending_required_count": 0,
+              "score_count": 1,
+              "status_counts": {
+                "passed": 1
+              }
+            }
+          },
+          "evidence_files": {},
+          "execution_files": {
+            "execution-C": "executions/95c35335b729aec5705410a3c9fa4ec0.json"
+          },
+          "executions": [
+            {
+              "evaluation_count": 2,
+              "event_count": 2,
+              "events_truncated": false,
+              "evidence": null,
+              "execution_id": "execution-C",
+              "lifecycle": "finished",
+              "outcome": "completed",
+              "result_kind": "completed",
+              "suite_id": 30,
+              "suite_name": "catalog",
+              "tool_result": null
+            }
+          ],
+          "failures": [],
+          "limitations": [],
+          "project_id": "project-a",
+          "project_name": null,
+          "run_id": "C",
+          "run_label": "Run C",
+          "schema_version": 1,
+          "spec_files": {
+            "execution-C": "specs/95c35335b729aec5705410a3c9fa4ec0.json"
+          },
+          "suites": [
+            {
+              "suite_id": 30,
+              "suite_name": "catalog"
+            },
+            {
+              "suite_id": 30,
+              "suite_name": null
+            }
+          ],
+          "summary": {
+            "collection_errors": 0,
+            "effective_verdict_counts": {
+              "failed": 0,
+              "incomplete": 0,
+              "passed": 3,
+              "pending": 0,
+              "skipped": 0
+            },
+            "error_tests": 0,
+            "executions": 1,
+            "failed_tests": 0,
+            "failures": 0,
+            "not_run_tests": [],
+            "passed_tests": 3,
+            "run_status": "finished",
+            "skipped_tests": 0,
+            "terminal_executions": 1,
+            "test_outcome_counts": {
+              "error": 0,
+              "failed": 0,
+              "not_run": 0,
+              "passed": 3,
+              "skipped": 0
+            },
+            "tests": 3
+          },
+          "test_result_files": {
+            "C:added": "diagnostics/0ed289f4a18f53cbfa81179a080046ce.json",
+            "C:main:1": "diagnostics/16cb4759efb7b546a4a032ddc203b198.json",
+            "C:main:2": "diagnostics/d09fa9ea6a3982af3f269b2376cf061e.json"
+          },
+          "test_run_files": {
+            "C": "diagnostics/6b23c0d5f35d1b11f9b683f0b0a61735.json"
+          },
+          "tests": [
+            {
+              "attempt_id": "C:main:1",
+              "effective_verdict": "passed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-C-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-C",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.9,
+                  "status": "passed"
+                }
+              ],
+              "execution_ids": [
+                "execution-C"
+              ],
+              "metadata": {
+                "harness_config": "model-a",
+                "matrix.trial": "trial-1"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "passed",
+              "phases": {},
+              "suite_id": 30,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "passed"
+            },
+            {
+              "attempt_id": "C:main:2",
+              "effective_verdict": "passed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [
+                {
+                  "case_id": "tests/test_api.py::test_list",
+                  "details": {},
+                  "evaluation_id": "execution-C-2",
+                  "evaluator": "quality",
+                  "execution_id": "execution-C",
+                  "kind": "evaluation",
+                  "message": null,
+                  "rationale": null,
+                  "required": false,
+                  "score": 0.9,
+                  "status": "passed"
+                }
+              ],
+              "execution_ids": [
+                "execution-C"
+              ],
+              "metadata": {
+                "harness_config": "model-a",
+                "matrix.trial": "trial-2"
+              },
+              "node_id": "tests/test_api.py::test_list",
+              "outcome": "passed",
+              "phases": {},
+              "suite_id": 30,
+              "suite_name": "catalog",
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "passed"
+            },
+            {
+              "attempt_id": "C:added",
+              "effective_verdict": "passed",
+              "evaluation_completeness": {
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "incomplete_required": [],
+                "missing_required": [],
+                "missing_required_count": 0,
+                "pending_required": [],
+                "pending_required_count": 0,
+                "required_pair_count": 0,
+                "status": "not_applicable"
+              },
+              "evaluation_reasons": [],
+              "evaluations": [],
+              "execution_ids": [],
+              "node_id": "tests/test_api.py::test_added",
+              "outcome": "passed",
+              "phases": {},
+              "suite_id": 30,
+              "tool_calls": {
+                "failed": 0,
+                "successful": 0,
+                "total": 0
+              },
+              "tool_result": null,
+              "verdict": "passed"
+            }
+          ],
+          "trace_files": {},
+          "unavailable_references": [
+            {
+              "execution_id": "execution-C",
+              "kind": "trace",
+              "reason": "trace view unavailable"
+            }
+          ]
+        }
+      },
+      "suite_ids": {
+        "30": 9001
+      },
+      "comparison_input": {
+        "schema_version": 1,
+        "manifest": {
+          "run_id": "C",
+          "run_label": "Run C",
+          "project_id": "project-a",
+          "status": "finished",
+          "selection": [
+            "tests/test_api.py"
+          ]
+        },
+        "test_results": [
+          {
+            "attempt_id": "C:main:1",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 30,
+            "suite_name": "catalog",
+            "outcome": "passed",
+            "execution_ids": [
+              "execution-C"
+            ],
+            "phases": {}
+          },
+          {
+            "attempt_id": "C:main:2",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 30,
+            "suite_name": "catalog",
+            "outcome": "passed",
+            "execution_ids": [
+              "execution-C"
+            ],
+            "phases": {}
+          },
+          {
+            "attempt_id": "C:added",
+            "node_id": "tests/test_api.py::test_added",
+            "suite_id": 30,
+            "outcome": "passed",
+            "execution_ids": [],
+            "phases": {}
+          }
+        ]
+      },
+      "reports": [
+        {
+          "version": "v2",
+          "execution_id": "execution-C",
+          "spec": {
+            "run_id": null,
+            "project_id": null,
+            "project_name": null,
+            "suite_name": "catalog",
+            "case_id": null,
+            "servers": [
+              {
+                "server": {
+                  "name": "orders",
+                  "trust": "untrusted",
+                  "kind": "stdio",
+                  "command": "orders",
+                  "args": [],
+                  "environment": {},
+                  "cwd": null
+                },
+                "profile": null,
+                "alias": "orders",
+                "required": true
+              }
+            ],
+            "protocol": {
+              "revision": null,
+              "transport": null
+            },
+            "timeout_seconds": null,
+            "goal": null,
+            "evaluations": [],
+            "artifact_policy": "failed",
+            "declared_artifacts": [],
+            "workspace": {
+              "kind": "temporary",
+              "source": null,
+              "acknowledge_risk": false
+            },
+            "tool_policy": {
+              "kind": "restrictive",
+              "allowed_tools": [],
+              "denied_tools": []
+            },
+            "permission_policy": {
+              "mode": "deny"
+            },
+            "sampling_policy": {
+              "mode": "deny"
+            },
+            "filesystem_policy": {
+              "mode": "deny"
+            },
+            "terminal_policy": {
+              "mode": "deny"
+            },
+            "metadata": {
+              "harness_config": "model-a"
+            },
+            "kind": "direct",
+            "operation": {
+              "server": "orders",
+              "kind": "call_tool",
+              "name": "lookup",
+              "arguments": {}
+            },
+            "validate_schemas": false
+          },
+          "report": {
+            "snapshot": {
+              "execution_id": "execution-C",
+              "project_id": null,
+              "run_id": "C",
+              "suite_id": 30,
+              "suite_name": "catalog",
+              "lifecycle": "finished",
+              "outcome": "completed",
+              "sequence": 0,
+              "tool_call_count": 0,
+              "created_at": "2026-01-01T00:00:00Z",
+              "finished_at": "2026-01-01T00:00:00Z",
+              "provenance": null,
+              "agent": null
+            },
+            "agent": null,
+            "events": [
+              {
+                "schema": "event",
+                "schema_version": "0.2",
+                "event_id": "execution-C-request",
+                "execution_id": "execution-C",
+                "sequence": 0,
+                "kind": "mcp.request",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "monotonic_offset_ms": 0.0,
+                "session_id": null,
+                "turn_id": null,
+                "server_binding": "orders",
+                "connection_id": "connection",
+                "correlation": {
+                  "jsonrpc_id": 1,
+                  "direction": "client_to_server",
+                  "request_sequence": 1
+                },
+                "lifecycle_phase": "unknown",
+                "payload": {
+                  "method": "tools/list",
+                  "params": {}
+                },
+                "payload_ref": null,
+                "provenance": {
+                  "origin": "normalized",
+                  "source": "internal",
+                  "provider_kind": null,
+                  "derived_from_sequence": null
+                },
+                "raw_evidence_ref": null,
+                "reasoning": null
+              },
+              {
+                "schema": "event",
+                "schema_version": "0.2",
+                "event_id": "execution-C-response",
+                "execution_id": "execution-C",
+                "sequence": 1,
+                "kind": "mcp.response",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "monotonic_offset_ms": 1.0,
+                "session_id": null,
+                "turn_id": null,
+                "server_binding": "orders",
+                "connection_id": "connection",
+                "correlation": {
+                  "jsonrpc_id": 1,
+                  "direction": "server_to_client",
+                  "request_sequence": 1
+                },
+                "lifecycle_phase": "unknown",
+                "payload": {
+                  "method": "tools/list",
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "lookup",
+                        "description": "current description",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "payload_ref": null,
+                "provenance": {
+                  "origin": "normalized",
+                  "source": "internal",
+                  "provider_kind": null,
+                  "derived_from_sequence": null
+                },
+                "raw_evidence_ref": null,
+                "reasoning": null
+              }
+            ],
+            "artifacts": [],
+            "direct_result": null,
+            "error": null,
+            "evidence": null,
+            "turns": [],
+            "evaluations": [
+              {
+                "evaluation_id": "execution-C-1",
+                "execution_id": "execution-C",
+                "suite_id": null,
+                "suite_name": null,
+                "case_id": "tests/test_api.py::test_list",
+                "turn_id": null,
+                "name": "quality",
+                "status": "passed",
+                "required": false,
+                "message": null,
+                "score": 0.8,
+                "rationale": null,
+                "metrics": {},
+                "provenance": null,
+                "details": {},
+                "goal": null,
+                "metadata": {
+                  "harness_config": "model-a",
+                  "matrix.trial": "trial-1"
+                },
+                "subject_kind": "unknown",
+                "subject_digest": null,
+                "run_id": null,
+                "created_at": "2026-01-01T00:00:00Z"
+              },
+              {
+                "evaluation_id": "execution-C-2",
+                "execution_id": "execution-C",
+                "suite_id": null,
+                "suite_name": null,
+                "case_id": "tests/test_api.py::test_list",
+                "turn_id": null,
+                "name": "quality",
+                "status": "passed",
+                "required": false,
+                "message": null,
+                "score": 0.9,
+                "rationale": null,
+                "metrics": {},
+                "provenance": null,
+                "details": {},
+                "goal": null,
+                "metadata": {
+                  "harness_config": "model-a",
+                  "matrix.trial": "trial-2"
+                },
+                "subject_kind": "unknown",
+                "subject_digest": null,
+                "run_id": null,
+                "created_at": "2026-01-01T00:00:00Z"
+              }
+            ],
+            "event_count": 2,
+            "events_truncated": false,
+            "next_after_sequence": null,
+            "artifact_count": 0,
+            "artifacts_truncated": false
+          },
+          "trace": {
+            "schema_id": "trace_view",
+            "summary": {
+              "tool_call_count": 0,
+              "successful_tool_call_count": 0,
+              "failed_tool_call_count": 0
+            }
+          },
+          "test_results": []
+        }
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "current_run_id": "C",
+      "baseline_run_id": "A",
+      "expected": {
+        "baseline_run_id": "A",
+        "current_run_id": "C",
+        "baseline_run_label": "Run A",
+        "current_run_label": "Run C",
+        "baseline_suites": [
+          {
+            "suite_id": 9001,
+            "suite_name": "catalog"
+          },
+          {
+            "suite_id": 9001,
+            "suite_name": null
+          }
+        ],
+        "current_suites": [
+          {
+            "suite_id": 9001,
+            "suite_name": "catalog"
+          },
+          {
+            "suite_id": 9001,
+            "suite_name": null
+          }
+        ],
+        "interface_changes": [
+          {
+            "suite_id": 9001,
+            "case_id": "tests/test_api.py::test_list",
+            "configuration": "0510b2ba6e774c2f",
+            "server": "orders",
+            "suite_name": "catalog",
+            "tool": "lookup",
+            "before": {
+              "name": "lookup",
+              "description": "old description",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            "after": {
+              "name": "lookup",
+              "description": "current description",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            "complete": true,
+            "connection_before": "connection",
+            "connection_after": "connection",
+            "execution_ids_before": [
+              "execution-A"
+            ],
+            "execution_ids_after": [
+              "execution-C"
+            ]
+          }
+        ],
+        "test_changes": [
+          {
+            "suite_id": 9001,
+            "node_id": "tests/test_api.py::test_added",
+            "baseline": [],
+            "current": [
+              {
+                "outcome": "passed",
+                "effective_verdict": "passed"
+              }
+            ]
+          },
+          {
+            "suite_id": 9001,
+            "node_id": "tests/test_api.py::test_removed",
+            "baseline": [
+              {
+                "outcome": "passed",
+                "effective_verdict": "passed"
+              }
+            ],
+            "current": []
+          }
+        ],
+        "evaluation_changes": [
+          {
+            "suite_id": 9001,
+            "case_id": "tests/test_api.py::test_list",
+            "evaluator": "quality",
+            "configuration": "0510b2ba6e774c2f",
+            "suite_name": "catalog",
+            "configuration_label_before": [
+              "model-a"
+            ],
+            "configuration_label_after": [
+              "model-a"
+            ],
+            "comparable": true,
+            "changed_fields": [],
+            "before": {
+              "count": 1,
+              "results": [
+                [
+                  "failed",
+                  0.4
+                ]
+              ],
+              "stats": {
+                "evaluation_count": 1,
+                "expected_count": 1,
+                "missing_required_count": 0,
+                "pending_required_count": 0,
+                "pass_rate": 0.0,
+                "score_count": 1,
+                "average_score": 0.4,
+                "status_counts": {
+                  "failed": 1
+                }
+              },
+              "input_fingerprints": [
+                "481d1c2a00d6bcf8"
+              ],
+              "execution_ids": [
+                "execution-A"
+              ]
+            },
+            "after": {
+              "count": 1,
+              "results": [
+                [
+                  "passed",
+                  0.9
+                ]
+              ],
+              "stats": {
+                "evaluation_count": 1,
+                "expected_count": 1,
+                "missing_required_count": 0,
+                "pending_required_count": 0,
+                "pass_rate": 1.0,
+                "score_count": 1,
+                "average_score": 0.9,
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "input_fingerprints": [
+                "481d1c2a00d6bcf8"
+              ],
+              "execution_ids": [
+                "execution-C"
+              ]
+            },
+            "delta": {
+              "evaluation_count": 0,
+              "expected_count": 0,
+              "missing_required_count": 0,
+              "pending_required_count": 0,
+              "pass_rate": 1.0,
+              "score_count": 0,
+              "average_score": 0.5
+            }
+          }
+        ],
+        "failures": [
+          {
+            "source": "baseline",
+            "kind": "evaluation",
+            "evaluation_id": "execution-A-2",
+            "execution_id": "execution-A",
+            "evaluator": "quality",
+            "case_id": "tests/test_api.py::test_list",
+            "status": "failed",
+            "required": false,
+            "score": 0.4,
+            "rationale": null,
+            "message": null,
+            "details": {}
+          }
+        ],
+        "coverage": {
+          "baseline_executions": 1,
+          "current_executions": 1,
+          "baseline_tests": 3,
+          "current_tests": 3
+        },
+        "limitations": []
+      }
+    },
+    {
+      "current_run_id": "C",
+      "baseline_run_id": "B",
+      "expected": {
+        "baseline_run_id": "B",
+        "current_run_id": "C",
+        "baseline_run_label": "Run B",
+        "current_run_label": "Run C",
+        "baseline_suites": [
+          {
+            "suite_id": 9001,
+            "suite_name": "catalog"
+          }
+        ],
+        "current_suites": [
+          {
+            "suite_id": 9001,
+            "suite_name": "catalog"
+          },
+          {
+            "suite_id": 9001,
+            "suite_name": null
+          }
+        ],
+        "interface_changes": [
+          {
+            "kind": "catalog_coverage",
+            "matched": 0,
+            "baseline": 1,
+            "current": 1,
+            "baseline_only": [
+              [
+                9001,
+                "tests/test_api.py::test_list",
+                "e89419014f9468c9",
+                "orders"
+              ]
+            ],
+            "current_only": [
+              [
+                9001,
+                "tests/test_api.py::test_list",
+                "0510b2ba6e774c2f",
+                "orders"
+              ]
+            ],
+            "complete": false
+          }
+        ],
+        "test_changes": [
+          {
+            "suite_id": 9001,
+            "node_id": "tests/test_api.py::test_added",
+            "baseline": [],
+            "current": [
+              {
+                "outcome": "passed",
+                "effective_verdict": "passed"
+              }
+            ]
+          },
+          {
+            "suite_id": 9001,
+            "node_id": "tests/test_api.py::test_list",
+            "baseline": [
+              {
+                "outcome": "failed",
+                "effective_verdict": "failed"
+              },
+              {
+                "outcome": "failed",
+                "effective_verdict": "failed"
+              }
+            ],
+            "current": [
+              {
+                "outcome": "passed",
+                "effective_verdict": "passed"
+              },
+              {
+                "outcome": "passed",
+                "effective_verdict": "passed"
+              }
+            ]
+          }
+        ],
+        "evaluation_changes": [
+          {
+            "suite_id": 9001,
+            "case_id": "tests/test_api.py::test_list",
+            "evaluator": "quality",
+            "configuration": "0510b2ba6e774c2f",
+            "suite_name": "catalog",
+            "configuration_label_before": [],
+            "configuration_label_after": [
+              "model-a"
+            ],
+            "comparable": false,
+            "changed_fields": [
+              "expected_or_provenance"
+            ],
+            "before": {
+              "count": 0,
+              "results": [],
+              "stats": {
+                "evaluation_count": 0,
+                "expected_count": 0,
+                "missing_required_count": 0,
+                "pending_required_count": 0,
+                "pass_rate": null,
+                "score_count": 0,
+                "average_score": null,
+                "status_counts": {}
+              },
+              "input_fingerprints": [],
+              "execution_ids": []
+            },
+            "after": {
+              "count": 1,
+              "results": [
+                [
+                  "passed",
+                  0.9
+                ]
+              ],
+              "stats": {
+                "evaluation_count": 1,
+                "expected_count": 1,
+                "missing_required_count": 0,
+                "pending_required_count": 0,
+                "pass_rate": 1.0,
+                "score_count": 1,
+                "average_score": 0.9,
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "input_fingerprints": [
+                "481d1c2a00d6bcf8"
+              ],
+              "execution_ids": [
+                "execution-C"
+              ]
+            },
+            "delta": {
+              "evaluation_count": 1,
+              "expected_count": 1,
+              "missing_required_count": 0,
+              "pending_required_count": 0,
+              "pass_rate": null,
+              "score_count": null,
+              "average_score": null
+            }
+          },
+          {
+            "suite_id": 9001,
+            "case_id": "tests/test_api.py::test_list",
+            "evaluator": "quality",
+            "configuration": "e89419014f9468c9",
+            "suite_name": "catalog",
+            "configuration_label_before": [
+              "model-b"
+            ],
+            "configuration_label_after": [],
+            "comparable": false,
+            "changed_fields": [
+              "expected_or_provenance"
+            ],
+            "before": {
+              "count": 1,
+              "results": [
+                [
+                  "failed",
+                  0.3
+                ]
+              ],
+              "stats": {
+                "evaluation_count": 1,
+                "expected_count": 1,
+                "missing_required_count": 0,
+                "pending_required_count": 0,
+                "pass_rate": 0.0,
+                "score_count": 1,
+                "average_score": 0.3,
+                "status_counts": {
+                  "failed": 1
+                }
+              },
+              "input_fingerprints": [
+                "481d1c2a00d6bcf8"
+              ],
+              "execution_ids": [
+                "execution-B"
+              ]
+            },
+            "after": {
+              "count": 0,
+              "results": [],
+              "stats": {
+                "evaluation_count": 0,
+                "expected_count": 0,
+                "missing_required_count": 0,
+                "pending_required_count": 0,
+                "pass_rate": null,
+                "score_count": 0,
+                "average_score": null,
+                "status_counts": {}
+              },
+              "input_fingerprints": [],
+              "execution_ids": []
+            },
+            "delta": {
+              "evaluation_count": -1,
+              "expected_count": -1,
+              "missing_required_count": 0,
+              "pending_required_count": 0,
+              "pass_rate": null,
+              "score_count": null,
+              "average_score": null
+            }
+          }
+        ],
+        "failures": [
+          {
+            "source": "baseline",
+            "attempt_id": "B:main:1",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 9001,
+            "suite_name": "catalog",
+            "outcome": "failed",
+            "execution_ids": [
+              "execution-B"
+            ],
+            "phases": {},
+            "metadata": {
+              "harness_config": "model-b",
+              "matrix.trial": "trial-1"
+            },
+            "verdict": "failed_assertion",
+            "effective_verdict": "failed",
+            "evaluations": [
+              {
+                "kind": "evaluation",
+                "evaluation_id": "execution-B-2",
+                "execution_id": "execution-B",
+                "evaluator": "quality",
+                "case_id": "tests/test_api.py::test_list",
+                "status": "failed",
+                "required": false,
+                "score": 0.3,
+                "rationale": null,
+                "message": null,
+                "details": {}
+              }
+            ],
+            "evaluation_completeness": {
+              "status": "not_applicable",
+              "required_pair_count": 0,
+              "complete_pair_count": 0,
+              "incomplete_pair_count": 0,
+              "missing_required_count": 0,
+              "pending_required_count": 0,
+              "missing_required": [],
+              "pending_required": [],
+              "incomplete_required": []
+            },
+            "evaluation_reasons": [],
+            "tool_calls": {
+              "total": 0,
+              "successful": 0,
+              "failed": 0
+            },
+            "tool_result": null
+          },
+          {
+            "source": "baseline",
+            "attempt_id": "B:main:2",
+            "node_id": "tests/test_api.py::test_list",
+            "suite_id": 9001,
+            "suite_name": "catalog",
+            "outcome": "failed",
+            "execution_ids": [
+              "execution-B"
+            ],
+            "phases": {},
+            "metadata": {
+              "harness_config": "model-b",
+              "matrix.trial": "trial-2"
+            },
+            "verdict": "failed_assertion",
+            "effective_verdict": "failed",
+            "evaluations": [
+              {
+                "kind": "evaluation",
+                "evaluation_id": "execution-B-2",
+                "execution_id": "execution-B",
+                "evaluator": "quality",
+                "case_id": "tests/test_api.py::test_list",
+                "status": "failed",
+                "required": false,
+                "score": 0.3,
+                "rationale": null,
+                "message": null,
+                "details": {}
+              }
+            ],
+            "evaluation_completeness": {
+              "status": "not_applicable",
+              "required_pair_count": 0,
+              "complete_pair_count": 0,
+              "incomplete_pair_count": 0,
+              "missing_required_count": 0,
+              "pending_required_count": 0,
+              "missing_required": [],
+              "pending_required": [],
+              "incomplete_required": []
+            },
+            "evaluation_reasons": [],
+            "tool_calls": {
+              "total": 0,
+              "successful": 0,
+              "failed": 0
+            },
+            "tool_result": null
+          },
+          {
+            "source": "baseline",
+            "kind": "evaluation",
+            "evaluation_id": "execution-B-2",
+            "execution_id": "execution-B",
+            "evaluator": "quality",
+            "case_id": "tests/test_api.py::test_list",
+            "status": "failed",
+            "required": false,
+            "score": 0.3,
+            "rationale": null,
+            "message": null,
+            "details": {}
+          }
+        ],
+        "coverage": {
+          "baseline_executions": 1,
+          "current_executions": 1,
+          "baseline_tests": 2,
+          "current_tests": 3
+        },
+        "limitations": [
+          "baseline and current catalogs have no shared case/configuration/server identity"
+        ]
+      }
+    }
+  ]
+}

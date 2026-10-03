@@ -22,8 +22,8 @@ from urllib.parse import quote, urlparse, urlsplit
 
 from m3 import _timing
 from m3.feedback import Feedback, load_run_entries, project_test_attempts
+from m3.hosted_comparison import comparison_input as project_comparison_input
 from m3.storage import SQLiteExecutionStore
-from m3.trace.redaction import redact_model_json
 from m3_app.api.report_payloads import (
     build_execution_envelope,
     build_report_envelope,
@@ -308,24 +308,9 @@ def _current_run_summary(
     manifest = store.get_test_run(run_id)
     comparison_input = None
     if manifest is not None:
-        # These fields attest the upload scan itself; they are local CLI state
-        # and are not part of the run evidence consumed by hosted comparison.
-        comparison_manifest = {
-            key: value
-            for key, value in manifest.items()
-            if key
-            not in {"upload_scan_digest", "upload_scan_clean", "upload_scan_sources"}
-        }
-        test_results = store.list_test_results(run_id)
-        comparison_input = {
-            "schema_version": 1,
-            "manifest": redact_model_json(
-                comparison_manifest, path="$.comparison_input.manifest"
-            ),
-            "test_results": redact_model_json(
-                list(test_results), path="$.comparison_input.test_results"
-            ),
-        }
+        comparison_input = project_comparison_input(
+            manifest, store.list_test_results(run_id)
+        )
     summary = {
         "transport_version": 1,
         "execution_ids": execution_ids,

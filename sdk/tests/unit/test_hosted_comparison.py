@@ -10,8 +10,8 @@ from pydantic import TypeAdapter
 
 from m3._wire import internalize_request, neutralize_response
 from m3.events import EventFactory, EventSequence
-from m3.feedback import Feedback, build_feedback
-from m3.hosted_comparison import _RunStore, compare_runs
+from m3.feedback import Feedback, build_feedback, export_feedback
+from m3.hosted_comparison import _RunStore, compare_runs, comparison_input
 from m3.types import (
     CallTool,
     DirectSpec,
@@ -276,6 +276,9 @@ def test_rejects_duplicate_execution_identity_and_foreign_manifest() -> None:
     baseline["reports"] = [
         _report_envelope("baseline", "execution-current", 22, "baseline", (0.2,))
     ]
+    baseline["comparison_input"]["test_results"][0]["execution_ids"] = [
+        "execution-current"
+    ]
     with pytest.raises(ValueError, match="duplicated across runs"):
         compare_runs({"current": current, "baseline": baseline})
 
@@ -470,4 +473,159 @@ def test_hosted_worker_matches_sdk_golden_for_three_runs() -> None:
         item.get("tool") == "lookup"
         and item.get("before", {}).get("description") == "old description"
         for item in against_a["interface_changes"]
+    )
+
+
+def test_real_exported_feedback_compares_with_sdk_golden(tmp_path: Path) -> None:
+    fixture = hosted_golden_fixture()
+    for run in fixture["runs"]:
+        local_map = {key: int(key) for key in run["suite_ids"]}
+        store = _RunStore(run["run_id"], run, local_map)
+        value = build_feedback(store, run["run_id"])
+        exported = json.loads(
+            export_feedback(value, store, tmp_path / run["run_id"]).read_text()
+        )
+        assert "execution_files" in exported and "unavailable_references" in exported
+        run["feedback"]["feedback"] = neutralize_response(
+            "/api/v2/feedback/{run_id}", exported
+        )
+    by_id = {run["run_id"]: run for run in fixture["runs"]}
+    for pair in fixture["comparisons"]:
+        assert (
+            compare_runs(
+                {
+                    "current": by_id[pair["current_run_id"]],
+                    "baseline": by_id[pair["baseline_run_id"]],
+                }
+            )
+            == pair["expected"]
+        )
+
+
+@pytest.mark.parametrize("version", [True, 2, "1"])
+def test_unknown_comparison_input_version_is_explicitly_rejected(version) -> None:
+    current = _run("current", "passed", 11)
+    current["comparison_input"]["schema_version"] = version
+    with pytest.raises(ValueError, match="unsupported comparison input"):
+        compare_runs({"current": current, "baseline": _run("baseline", "failed", 22)})
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize(
+    "field,value", [("run_id", "baseline"), ("execution_ids", ["execution-baseline"])]
+)
+def test_attempt_cannot_borrow_another_runs_identity(legacy, field, value) -> None:
+    current = _run_with_report("current", 11, "current", (0.8,))
+    baseline = _run_with_report("baseline", 22, "baseline", (0.2,))
+    if legacy:
+        current.pop("comparison_input")
+        attempt = current["feedback"]["feedback"]["tests"][0]
+    else:
+        attempt = current["comparison_input"]["test_results"][0]
+    attempt[field] = value
+    with pytest.raises(ValueError, match="test attempt"):
+        compare_runs({"current": current, "baseline": baseline})
+
+
+def test_compact_evidence_excludes_machine_data_and_reuses_diagnostics(
+    tmp_path: Path,
+) -> None:
+    manifest = {
+        "run_id": "current",
+        "project_root": "/private/checkout",
+        "status": "finished",
+        "selection": [
+            "tests/test_login.py",
+            "--db-url=postgres://u:hunter2@db/x",
+            "/private/checkout/tests/test_login.py",
+        ],
+        "capture": {"token": "private"},
+    }
+    tests = [
+        {
+            "run_id": "current",
+            "attempt_id": "attempt",
+            "node_id": "/private/checkout/tests/test_login.py::test_ok",
+            "suite_id": 11,
+            "outcome": "failed",
+            "execution_ids": [],
+            "diagnostics": {"stdout": "x" * 7000},
+            "phases": {"call": {"outcome": "failed", "longrepr": "x" * 7000}},
+        }
+    ]
+    compact = comparison_input(manifest, tests)
+    assert "hunter2" not in json.dumps(
+        compact
+    ) and "/private/checkout" not in json.dumps(compact)
+    assert "capture" not in compact["manifest"]
+    assert "diagnostics" not in compact["test_results"][0]
+    assert "longrepr" not in compact["test_results"][0]["phases"]["call"]
+    current = _run("current", "passed", 11)
+    current["comparison_input"] = compact
+    current["feedback"]["feedback"]["tests"] = [
+        {**tests[0], "node_id": "tests/test_login.py::test_ok"}
+    ]
+    store = _RunStore("current", current, {"11": 9001})
+    assert store.test_results[0]["diagnostics"] == tests[0]["diagnostics"]
+
+
+def test_worker_classifies_permanent_invalid_input(monkeypatch) -> None:
+    import io
+
+    import m3.hosted_comparison as worker
+
+    source = io.BytesIO(b"{invalid")
+    destination = io.BytesIO()
+    monkeypatch.setattr(worker.sys, "stdin", SimpleNamespace(buffer=source))
+    monkeypatch.setattr(worker.sys, "stdout", SimpleNamespace(buffer=destination))
+    assert worker.main() == 1
+    assert json.loads(destination.getvalue()) == {"error": "comparison_incompatible"}
+
+
+def test_committed_cli_export_fixture_matches_golden() -> None:
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures" / "hosted-comparison-exported.json"
+        ).read_text()
+    )
+    by_id = {run["run_id"]: run for run in fixture["runs"]}
+    for pair in fixture["comparisons"]:
+        assert (
+            compare_runs(
+                {
+                    "current": by_id[pair["current_run_id"]],
+                    "baseline": by_id[pair["baseline_run_id"]],
+                }
+            )
+            == pair["expected"]
+        )
+
+
+def test_compact_evidence_maps_reserved_detached_evaluator_identity() -> None:
+    evidence = comparison_input(
+        {"run_id": "current"},
+        [
+            {
+                "attempt_id": "a",
+                "metadata": {"m3.case_id": "user-value"},
+                "detached_evaluations": [
+                    {
+                        "name": "m3.output.has_text.v1",
+                        "evaluator": "m3.output.has_text.v1",
+                        "required": True,
+                        "status": "passed",
+                        "details": {"user": "m3.output.has_text.v1"},
+                    }
+                ],
+            }
+        ],
+    )
+    detached = evidence["test_results"][0]["detached_evaluations"][0]
+    assert detached["name"] == "output.has_text.v1"
+    assert detached["evaluator"] == "output.has_text.v1"
+    assert detached["details"]["user"] == "m3.output.has_text.v1"
+    restored = internalize_request("/api/v2/feedback/current", evidence)
+    assert (
+        restored["test_results"][0]["detached_evaluations"][0]["name"]
+        == "m3.output.has_text.v1"
     )
