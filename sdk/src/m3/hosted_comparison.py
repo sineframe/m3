@@ -69,6 +69,12 @@ def comparison_input(manifest: Mapping[str, Any], tests: Any) -> dict[str, Any]:
     }
     # Selection is needed for checkout-independent case matching. Upload only
     # relative pytest file/node identities, never command-line flags or values.
+    tests = list(tests)
+    saved_paths = {
+        node(test.get("node_id")).split("::", 1)[0]
+        for test in tests
+        if isinstance(test, Mapping) and isinstance(node(test.get("node_id")), str)
+    }
     selected = []
     for value in manifest.get("selection", ()) or ():
         value = node(value)
@@ -81,6 +87,11 @@ def comparison_input(manifest: Mapping[str, Any], tests: Any) -> dict[str, Any]:
             and ".." not in value.split("::", 1)[0].split("/")
             and not posixpath.isabs(value)
             and not (len(value) > 1 and value[1] == ":")
+            and any(
+                path == value.split("::", 1)[0]
+                or path.endswith("/" + value.split("::", 1)[0])
+                for path in saved_paths
+            )
         ):
             selected.append(value)
     projected["selection"] = selected

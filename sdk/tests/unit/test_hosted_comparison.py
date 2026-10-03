@@ -537,6 +537,9 @@ def test_compact_evidence_excludes_machine_data_and_reuses_diagnostics(
         "selection": [
             "tests/test_login.py",
             "--db-url=postgres://u:hunter2@db/x",
+            "--password",
+            "raw-credential",
+            "unrelated.py",
             "/private/checkout/tests/test_login.py",
         ],
         "capture": {"token": "private"},
@@ -557,6 +560,8 @@ def test_compact_evidence_excludes_machine_data_and_reuses_diagnostics(
     assert "hunter2" not in json.dumps(
         compact
     ) and "/private/checkout" not in json.dumps(compact)
+    assert "raw-credential" not in json.dumps(compact)
+    assert "unrelated.py" not in compact["manifest"]["selection"]
     assert "capture" not in compact["manifest"]
     assert "diagnostics" not in compact["test_results"][0]
     assert "longrepr" not in compact["test_results"][0]["phases"]["call"]
