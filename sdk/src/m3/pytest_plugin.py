@@ -223,8 +223,14 @@ def pytest_addoption(parser: _Any) -> None:
 
 def pytest_configure(config: _Any) -> None:
     _TimingPlugin.install(config)
-    with _timing.span("pytest.configure"):
-        _configure(config)
+    try:
+        with _timing.span("pytest.configure"):
+            _configure(config)
+    except BaseException:
+        timing_plugin = getattr(config, "_m3_timing_plugin", None)
+        if timing_plugin is not None:
+            timing_plugin.close(config)
+        raise
 
 
 def _configure(config: _Any) -> None:
@@ -1994,6 +2000,25 @@ class _Progress:
         self.finish()
 
 
+def _safe_nodeid(item: _Any) -> str:
+    """Node id without parameter values, which may contain secrets."""
+
+    nodeid = str(item.nodeid).split("[", 1)[0]
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return nodeid
+    indices = getattr(callspec, "indices", None)
+    if not indices:
+        return f"{nodeid}[param]"
+    return nodeid + "[" + "-".join(str(i) for i in indices.values()) + "]"
+
+
+def _fail_on_exception(span: _Any, outcome: _Any) -> None:
+    excinfo = getattr(outcome, "excinfo", None)
+    if excinfo is not None:
+        span.fail(type(excinfo[1]).__name__)
+
+
 class _TimingPlugin:
     """Opt-in M3_TIMINGS spans for pytest; registered only when enabled."""
 
@@ -2001,6 +2026,8 @@ class _TimingPlugin:
         self.directory = directory
         self.owner = owner
         self.is_worker = is_worker
+        self.reported = False
+        self.test_span: _Any = None
 
     @classmethod
     def install(cls, config: _Any) -> None:
@@ -2028,10 +2055,6 @@ class _TimingPlugin:
             directory = str(root / ".m3" / "reports" / run_id / "timings")
             owner = str(config.getoption("--m3-timings-owner") or "pytest")
             label = "controller"
-        try:
-            _Path(directory).mkdir(parents=True, exist_ok=True)
-        except OSError:
-            return
         _timing.start(directory, label)
         plugin = cls(str(directory), owner, isinstance(workerinput, dict))
         config._m3_timing_plugin = plugin
@@ -2039,6 +2062,11 @@ class _TimingPlugin:
 
     def close(self, config: _Any) -> None:
         _timing.stop()
+        if not self.is_worker and self.owner == "pytest" and not self.reported:
+            self.reported = True
+            from . import _timing_report
+
+            _timing_report.finish(self.directory)
         config.pluginmanager.unregister(self)
         config._m3_timing_plugin = None
 
@@ -2057,33 +2085,42 @@ class _TimingPlugin:
     @_pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_protocol(self, item: _Any, nextitem: _Any) -> _Iterator[None]:
         del nextitem
-        nodeid = str(item.nodeid)
-        with _timing.test_scope(nodeid), _timing.span("test", nodeid):
-            yield
+        nodeid = _safe_nodeid(item)
+        with _timing.test_scope(nodeid), _timing.span("test", nodeid) as span:
+            self.test_span = span
+            try:
+                outcome = yield
+                _fail_on_exception(span, outcome)
+            finally:
+                self.test_span = None
+
+    def pytest_runtest_logreport(self, report: _Any) -> None:
+        if report.failed and self.test_span is not None:
+            self.test_span.fail(str(report.when))
 
     @_pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_setup(self, item: _Any) -> _Iterator[None]:
         del item
-        with _timing.span("test.setup"):
-            yield
+        with _timing.span("test.setup") as span:
+            _fail_on_exception(span, (yield))
 
     @_pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_call(self, item: _Any) -> _Iterator[None]:
         del item
-        with _timing.span("test.call"):
-            yield
+        with _timing.span("test.call") as span:
+            _fail_on_exception(span, (yield))
 
     @_pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_teardown(self, item: _Any, nextitem: _Any) -> _Iterator[None]:
         del item, nextitem
-        with _timing.span("test.teardown"):
-            yield
+        with _timing.span("test.teardown") as span:
+            _fail_on_exception(span, (yield))
 
     @_pytest.hookimpl(hookwrapper=True)
     def pytest_fixture_setup(self, fixturedef: _Any, request: _Any) -> _Iterator[None]:
         del request
-        with _timing.span("fixture.setup", str(fixturedef.argname)):
-            yield
+        with _timing.span("fixture.setup", str(fixturedef.argname)) as span:
+            _fail_on_exception(span, (yield))
 
     @_pytest.hookimpl(trylast=True)
     def pytest_sessionfinish(self, session: _Any, exitstatus: int) -> None:
@@ -2096,8 +2133,9 @@ class _TimingPlugin:
         if self.is_worker:
             return
         _timing.stop()
-        if self.owner != "pytest":
+        if self.owner != "pytest" or self.reported:
             return
+        self.reported = True
         from . import _timing_report
 
         class _Out:

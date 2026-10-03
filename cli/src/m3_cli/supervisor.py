@@ -1306,6 +1306,7 @@ def _run_ui_server(
         with _timing.span("cli.ui.start"):
             child = _ServerChild(database, port, auth_token)
             ready = _wait_ready(child)
+        _finish_timings()
         if not ready:
             print("m3: UI server readiness failed", file=sys.stderr)
             for line in _server_diagnostics(child, auth_token):
@@ -1560,7 +1561,6 @@ def run_test_with_runs(
         return TestRunResult(
             exit_code, new_runs, warnings, invocation_run_id, database_path, root
         )
-    _finish_timings()
     server_code = _run_ui_server(database_path, port, exit_code, new_runs, warnings)
     return TestRunResult(
         server_code, new_runs, warnings, invocation_run_id, database_path, root

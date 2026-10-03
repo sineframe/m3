@@ -60,6 +60,7 @@ class Summary:
     spans: int = 0
     processes: int = 0
     dropped: int = 0
+    incomplete: int = 0
     report_ns: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,6 +175,7 @@ def write_reports(directory: str | os.PathLike[str]) -> Summary:
         for path in sorted(root.glob("*.jsonl")):
             if path.name in _SKIP:
                 continue
+            has_meta = False
             with path.open(encoding="utf-8", errors="replace") as handle:
                 for line in handle:
                     try:
@@ -197,10 +199,13 @@ def write_reports(directory: str | os.PathLike[str]) -> Summary:
                         if kind == "counter":
                             _add_counter(rec, counters, test_totals)
                         elif kind == "meta":
+                            has_meta = True
                             summary.dropped += int(rec.get("dropped", 0))
                             pids.add(rec.get("pid", 0))
                     except (ValueError, KeyError, TypeError, AttributeError):
                         continue
+                if not has_meta:
+                    summary.incomplete += 1
         trace.write("]}\n")
     os.replace(trace_tmp, root / "trace.json")
 
@@ -358,9 +363,12 @@ def _table(rows: list[list[str]], head: list[str] = _HEAD) -> list[str]:
 
 
 def _footer(summary: Summary) -> str:
-    return (
+    text = (
         f"report built in {_fmt(summary.report_ns)}; {summary.dropped} records dropped"
     )
+    if summary.incomplete:
+        text += f"; {summary.incomplete} process file incomplete"
+    return text
 
 
 def render_text(summary: Summary) -> str:

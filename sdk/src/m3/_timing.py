@@ -94,6 +94,9 @@ class _Ctx:
     def note(self, field: str, value: str | int | float | bool) -> None:
         return None
 
+    def fail(self, reason: str) -> None:
+        return None
+
 
 NOOP = _Ctx()
 
@@ -286,20 +289,41 @@ def start(directory: str | os.PathLike[str], process_label: str) -> None:
         _sink = sink
 
 
-def stop() -> None:
-    """Drain the writer, write counters and a meta record, then deactivate."""
+STOP_TIMEOUT_S = 60.0
+
+
+def stop() -> bool:
+    """Drain the writer, write counters and a meta record, then deactivate.
+
+    Returns True when the writer finished. When it is still alive after
+    ``STOP_TIMEOUT_S``, warns once and returns False.
+    """
     global _sink
     with _start_lock:
         sink, _sink = _sink, None
     if sink is None:
-        return
+        return True
     sink.closed = True
-    try:
-        sink.queue.put(None, timeout=5)
-    except queue.Full:
-        return
-    if sink.thread is not None:
-        sink.thread.join(timeout=5)
+    thread = sink.thread
+    deadline = time.monotonic() + STOP_TIMEOUT_S
+    queued = False
+    while not queued:
+        try:
+            sink.queue.put(None, timeout=0.1)
+            queued = True
+        except queue.Full:
+            if thread is None or not thread.is_alive() or time.monotonic() >= deadline:
+                break
+    if thread is not None:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            warnings.warn(
+                "m3 timings: writer did not finish; report may be incomplete",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return False
+    return True
 
 
 def _reset() -> None:
@@ -404,6 +428,10 @@ class _LiveSpan(_Ctx):
         if self.notes is None:
             self.notes = {}
         self.notes[field] = value
+
+    def fail(self, reason: str) -> None:
+        self.status = "error"
+        self.note("error", reason)
 
 
 def span(name: str, key: str | Callable[[], str] | None = None) -> _Ctx:

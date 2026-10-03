@@ -328,3 +328,12 @@ def test_memory_stays_bounded_for_200k_spans(tmp_path: Path) -> None:
     # Streaming: peak growth is a fraction of the input size, not proportional to it.
     assert growth < size / 2
     assert growth < 40 * 1024 * 1024
+
+
+def test_file_without_meta_is_incomplete(tmp_path: Path) -> None:
+    _write(tmp_path / "w-1.jsonl", [_span("a", 10)])
+    summary = _timing_report.write_reports(tmp_path)
+    assert summary.incomplete == 1
+    assert json.loads((tmp_path / "summary.json").read_text())["incomplete"] == 1
+    assert "1 process file incomplete" in _timing_report.render_text(summary)
+    assert "1 process file incomplete" in _timing_report.render_markdown(summary)

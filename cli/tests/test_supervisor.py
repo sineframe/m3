@@ -1881,6 +1881,8 @@ def test_ui_prints_timing_summary_before_serving(
     capsys: pytest.CaptureFixture[str],
     timings: Any,
 ) -> None:
+    import threading
+
     monkeypatch.setattr(supervisor, "_validate_port", lambda _port: None)
     monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
     monkeypatch.setattr(
@@ -1889,17 +1891,32 @@ def test_ui_prints_timing_summary_before_serving(
         lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
     )
     monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_a, **_k: 0)
-    printed: list[str] = []
 
-    def serve(_db: Path, _port: int, code: int, _runs: Any, _warnings: Any) -> int:
-        printed.append(capsys.readouterr().out)
-        return code
+    class Child:
+        process = SimpleNamespace(poll=lambda: None)
 
-    monkeypatch.setattr(supervisor, "_run_ui_server", serve)
+        def alive(self) -> bool:
+            return True
+
+    monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
+    monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
+    monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    monkeypatch.setattr(supervisor.webbrowser, "open", lambda _url: True)
+    real_sleep = supervisor.time.sleep
+
+    def sleep(seconds: float) -> None:
+        if threading.current_thread() is not threading.main_thread() or seconds == 1:
+            real_sleep(min(seconds, 0.001))
+            return
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(supervisor.time, "sleep", sleep)
     result = supervisor.run_test_with_runs(
         ui=True, port=8123, ui_dir=tmp_path, project_root=tmp_path
     )
     assert result.exit_code == 0
-    assert "M3 timings:" in printed[0]
-    assert "cli.pytest" in printed[0]
+    output = capsys.readouterr().out
+    assert "M3 timings:" in output
+    assert "cli.ui.start" in output
+    assert output.index("cli.ui.start") < output.index("http://127.0.0.1:8123")
     assert supervisor._timing_state["directory"] is None

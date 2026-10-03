@@ -183,7 +183,7 @@ brackets, such as `mcp.request[tools/call]`.
 | `collection.select` | span | Applying the M3 selection and marker rules. |
 | `collection.manifest` | span | Recording collected tests in the manifest. |
 | `pytest.generate` | counter | Generating parametrized cases for each test. |
-| `test` | span | One test, including setup, call, and teardown. Its key is the node ID, which is why `test` has one row. |
+| `test` | span | One test, including setup, call, and teardown. Its key is the node ID, with parameter values replaced by their positions, such as `test_x.py::test_y[0-1]`, which is why `test` has one row per test. |
 | `test.setup`, `test.call`, `test.teardown` | span | The three pytest phases of each test. |
 | `fixture.setup[<name>]` | span | Setting up one fixture, including your own. |
 | `pytest.persist_attempt` | counter | Saving one test attempt. |
@@ -293,6 +293,9 @@ brackets, such as `mcp.request[tools/call]`.
   `total`, and `max` are exact.
 - A full recording queue drops records instead of slowing the run. The last
   line reports `N records dropped`; when `N` is above zero, totals are low.
+- A process that was killed or did not finish writing leaves a file without its
+  closing record. The last line then adds `N process file incomplete`, and that
+  process's rows may be missing or low.
 - The summary lists at most 40 steps and 40 counters. Each step name keeps at
   most 200 distinct keys; further keys are grouped under `(other)`.
 - If the timings directory cannot be written, the run warns once and stops
@@ -302,6 +305,7 @@ brackets, such as `mcp.request[tools/call]`.
 
 Step names, keys, and counts carry names and numbers only. They do not include
 prompts, tool arguments, file contents, or credentials. Node IDs and fixture
-names are recorded.
+names are recorded. Parameterized node IDs keep only the parameter positions,
+never the values, so a secret used as a test parameter is not recorded.
 
 Next: [Save and reopen executions](persistence.md) for the rest of `.m3/reports/<run-id>/`.

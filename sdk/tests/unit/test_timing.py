@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import threading
+import time
 import tracemalloc
 import warnings
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from m3 import _timing
+from m3 import _timing, _timing_report
 
 
 @pytest.fixture(autouse=True)
@@ -387,3 +388,58 @@ def test_fork_child_resets_inactive(
 def test_module_documents_privacy_rule() -> None:
     assert "Privacy rule" in (_timing.__doc__ or "")
     assert sys.modules["m3._timing"] is _timing
+
+
+def _slow_sink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, delay: float
+) -> tuple[Path, Any]:
+    d = _enable(monkeypatch, tmp_path)
+    sink = _timing._sink
+    assert sink is not None
+    real_write = sink._write
+
+    def slow_write(text: str) -> None:
+        time.sleep(delay)
+        real_write(text)
+
+    sink._write = slow_write  # type: ignore[method-assign]
+    with _timing.span("slow"):
+        pass
+    return d, sink
+
+
+def test_stop_waits_for_slow_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    d, _ = _slow_sink(monkeypatch, tmp_path, 0.5)
+    assert _timing.stop() is True
+    summary = _timing_report.write_reports(d)
+    assert summary.spans == 1 and summary.incomplete == 0
+
+
+def test_stop_reports_unfinished_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(_timing, "STOP_TIMEOUT_S", 0.2)
+    d, sink = _slow_sink(monkeypatch, tmp_path, 1.0)
+    with pytest.warns(RuntimeWarning, match="writer did not finish"):
+        assert _timing.stop() is False
+    summary = _timing_report.write_reports(d)
+    assert summary.incomplete == 1
+    sink.thread.join(10)
+
+
+def test_fail_marks_span_error() -> None:
+    _timing.NOOP.fail("nope")  # inactive: no-op, no raise
+
+
+def test_fail_sets_status_and_notes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    d = _enable(monkeypatch, tmp_path)
+    with _timing.span("t") as s:
+        s.fail("assertion")
+    _timing.stop()
+    (rec,) = _spans(d)
+    assert rec["status"] == "error"
+    assert rec["notes"]["error"] == "assertion"
