@@ -66,6 +66,7 @@ from ._types.evals import (
     EvaluationRecord,
     EvaluationResult,
     EvaluationSource,
+    JudgeEvidence,
 )
 from ._types.events import (
     ArtifactRef,
@@ -188,6 +189,7 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "EvaluationDecision",
     "EvaluationId",
     "EvaluationSource",
+    "JudgeEvidence",
     "EvaluationRegistration",
     "EvaluationResult",
     "EvaluationStatus",
@@ -320,6 +322,7 @@ __all__ = [  # noqa: RUF022
     "EvaluationDecision",
     "EvaluationStatus",
     "EvaluationSource",
+    "JudgeEvidence",
     "TraceResult",
     "EvidenceRef",
     "ArtifactRef",

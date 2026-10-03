@@ -28,6 +28,7 @@ m3.evaluations.EvaluationDecision(
     metrics: collections.abc.Mapping[str, float] = ...,
     provenance: m3.types.EvaluationSource | None = None,
     details: collections.abc.Mapping[str, Any] = ...,
+    judge_evidence: m3.types.JudgeEvidence | None = None,
 ) -> None
 ```
 
@@ -43,6 +44,7 @@ Model fields:
 | `metrics` | `collections.abc.Mapping[str, float]` | No | `factory builtins.dict()` | — | — |
 | `provenance` | `m3.types.EvaluationSource \| None` | No | `None` | — | — |
 | `details` | `collections.abc.Mapping[str, Any]` | No | `factory builtins.dict()` | — | — |
+| `judge_evidence` | `m3.types.JudgeEvidence \| None` | No | `None` | — | — |
 
 ## `EvaluationRunner`
 

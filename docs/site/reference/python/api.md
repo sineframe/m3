@@ -59,6 +59,7 @@ this release. Use the capability pages to see how the objects work together.
 - <a id="m3.types.EvaluationDecision"></a><a id="evaluationdecision"></a>[`EvaluationDecision`](api/types.md#evaluationdecision)
 - <a id="m3.types.EvaluationStatus"></a><a id="evaluationstatus"></a>[`EvaluationStatus`](api/types.md#evaluationstatus)
 - <a id="m3.types.EvaluationSource"></a><a id="evaluationsource"></a>[`EvaluationSource`](api/types.md#evaluationsource)
+- <a id="m3.types.JudgeEvidence"></a><a id="judgeevidence"></a>[`JudgeEvidence`](api/types.md#judgeevidence)
 - <a id="m3.types.TraceResult"></a><a id="traceresult"></a>[`TraceResult`](api/types.md#traceresult)
 - <a id="m3.types.EvidenceRef"></a><a id="evidenceref"></a>[`EvidenceRef`](api/types.md#evidenceref)
 - <a id="m3.types.ArtifactRef"></a><a id="artifactref"></a>[`ArtifactRef`](api/types.md#artifactref)
