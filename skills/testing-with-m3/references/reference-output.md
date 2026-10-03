@@ -4,15 +4,15 @@
 
 ## Lines printed after a run
 
-In an interactive terminal, `m3 test` prints the M3 banner before pytest starts, replaces pytest's per-test dots with one live progress line, and lists each failing test above that line as it fails. The `M3 run`, `M3 feedback`, `M3 verdicts`, and `M3 observations` lines are shown as a panel titled with the run ID, with `verdicts`, `observations`, and `feedback` rows. When output is piped or redirected, under `m3 ci test`, or with `TERM=dumb`, M3 prints the plain lines below. Set `NO_COLOR` to keep the interactive layout without colour. Pytest's own output takes over the progress line under `-v`, `-s`, `-n`, or live logging.
+In an interactive terminal, `m3 test` prints the M3 banner before pytest starts, replaces pytest's per-test dots with one live progress line that counts expected failures (xfailed) separately from skips, and lists each failing test above that line as it fails. The `M3 run`, `M3 feedback`, `M3 verdicts`, and `M3 observations` lines are shown as a panel titled with the run ID, with `verdicts`, `observations`, and `feedback` rows. When output is piped or redirected, under `m3 ci test`, or with `TERM=dumb`, M3 prints the plain lines below. Set `NO_COLOR` to keep the interactive layout without colour. Pytest's own output takes over the progress line under `-v`, `-s`, `-n`, or live logging.
 
 | Line | Meaning | What to do |
 |---|---|---|
 | `M3 run` | The run ID created by this invocation. | Use it with `--baseline`. If a run started with `--upload` was not published, use it with `m3 upload`. |
 | `M3 feedback` | Path of this run's `feedback.json`. | Read selected fields from this path. |
-| `M3 verdicts` | Count of test cases per verdict. | Informational. |
+| `M3 verdicts` | Count of test cases per verdict, with `xfailed` (expected failures) shown separately from `skipped`. | Informational. An xfailed test is not a failure. |
 | `M3 observations` | Tool-error results and completed executions in this run. | A tool error is a server result with `is_error=True`, not a test failure by itself. |
-| `M3: no tests executed; skipped-only runs fail` | Every selected test was skipped or deselected, and the run fails. | Unskip or select a test. |
+| `M3: no tests executed; skipped-only runs fail` | Every selected test was skipped or deselected, and the run fails. A run whose only executed tests are xfailed counts as executed. | Unskip or select a test. |
 | `M3 execution timeout` | One execution reached a deadline. It is printed once per timed-out execution: `id`, `stage`, `elapsed`, `feedback`. | Informational. The run's result is the pytest outcome, so a test that expects a timeout can still pass. Inspect the execution's diagnostics when the timeout was not expected. |
 | `M3 test manifest persistence was incomplete` | Pytest results were not fully saved. | Saved history for this run is incomplete; do not use it as a baseline. |
 | `M3 required evaluations blocked finalization` | A `required=True` evaluation did not pass. | The run is not successful even if test code caught the exception. |

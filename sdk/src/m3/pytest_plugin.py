@@ -78,6 +78,9 @@ from ._test_runs import (
     test_attempt as _test_attempt,
 )
 from ._test_runs import (
+    xfail_phase as _xfail_phase,
+)
+from ._test_runs import (
     xfail_waives_required_evaluations as _xfail_waives_required_evaluations,
 )
 
@@ -1180,6 +1183,12 @@ def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> _Iterator[_Any]:
     finally:
         state["finished_at"] = _now_iso()
         state["outcome"] = _attempt_outcome(state)
+        call_phase = (state.get("phases") or {}).get("call")
+        xfail_found = _xfail_phase(state.get("phases"))
+        if isinstance(call_phase, dict) and call_phase.get("wasxfail"):
+            state["xfail_reason"] = str(call_phase.get("xfail_reason", ""))
+        elif xfail_found is not None:
+            state["xfail_reason"] = str(xfail_found[1].get("xfail_reason", ""))
         _save_attempt(config, state)
         _reset_test(token)
 
@@ -1199,6 +1208,8 @@ def _attempt_outcome(state: dict[str, object]) -> str:
         if phase != "call"
     ):
         return "error"
+    if _xfail_phase(values) is not None:
+        return "xfailed"
     if any(value.get("outcome") == "skipped" for value in values.values()):
         return "skipped"
     if values.get("call", {}).get("outcome") == "passed":
@@ -1213,18 +1224,25 @@ def _pytest_runtest_logreport(report: _Any) -> None:
     phases = state.setdefault("phases", {})
     if not isinstance(phases, dict):
         return
-    phases[str(report.when)] = {
+    phase_record: dict[str, object] = {
         "outcome": str(report.outcome),
         "duration_seconds": float(getattr(report, "duration", 0.0) or 0.0),
-        "wasxfail": bool(getattr(report, "wasxfail", False)),
+        "wasxfail": hasattr(report, "wasxfail"),
     }
+    if hasattr(report, "wasxfail"):
+        phase_record["xfail_reason"] = str(report.wasxfail)
+    phases[str(report.when)] = phase_record
     exception_types = state.get("_m3_exception_types")
     exception_type = (
         exception_types.pop(str(report.when), None)
         if isinstance(exception_types, dict)
         else None
     )
-    if report.outcome == "failed":
+    if report.outcome == "failed" or (
+        report.outcome == "skipped"
+        and report.when in {"setup", "teardown"}
+        and hasattr(report, "wasxfail")
+    ):
         if isinstance(exception_type, str):
             phases[str(report.when)]["exception_type"] = exception_type
         else:
@@ -1371,9 +1389,14 @@ def _required_evaluation_issues(
                 )
         phases = attempt.get("phases")
         diagnostics = attempt.get("diagnostics")
+        xfail_found = _xfail_phase(phases)
+        ignored_diagnostic = (
+            f"{xfail_found[0]}:longrepr" if xfail_found is not None else None
+        )
         has_phase_error = isinstance(diagnostics, _Mapping) and any(
             str(key).split(":", 1)[0] in {"setup", "teardown"}
             and str(key).endswith(":longrepr")
+            and str(key) != ignored_diagnostic
             for key in diagnostics
         )
         has_xfail_phase = isinstance(phases, _Mapping) and any(
@@ -1567,10 +1590,11 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         collected = {str(item) for item in record.get("collected_node_ids", ())}
         attempts = store.list_test_results(run_id.root)
         recorded = {str(item.get("node_id")) for item in attempts}
-        # A genuine xfail is represented as a skipped call phase by pytest,
-        # but the test did execute. Ordinary skips still do not count.
+        # A genuine xfail is an executed test even though pytest reports its
+        # call phase as skipped. Legacy rows stored it as "skipped" with a
+        # wasxfail phase. Ordinary skips still do not count.
         executed_attempt = any(
-            item.get("outcome") in {"passed", "failed", "error"}
+            item.get("outcome") in {"passed", "failed", "error", "xfailed"}
             or (
                 item.get("outcome") == "skipped"
                 and isinstance(item.get("phases"), _Mapping)
@@ -1791,6 +1815,7 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             ("teardown_error", "teardown error"),
             ("pytest_error", "pytest error"),
             ("skipped", "skipped"),
+            ("xfailed", "xfailed"),
         )
         tool_errors = sum(
             test.get("tool_result") == "tool_error" for test in feedback.tests
@@ -1866,7 +1891,7 @@ def _write_run_panel(
             style.green
             if kind == "passed"
             else style.yellow
-            if kind == "skipped"
+            if kind in {"skipped", "xfailed"}
             else style.red
         )
         verdict_parts.append(paint(f"{count} {label}"))
@@ -1968,6 +1993,7 @@ class _Progress:
         self.config = config
         self.reporter: _Any = None
         self.total = self.completed = self.passed = self.failed = self.skipped = 0
+        self.xfailed = 0
         self._counted: set[str] = set()
         self._outcomes: dict[str, str] = {}
         self._last_write = 0.0
@@ -2030,19 +2056,34 @@ class _Progress:
         if not self.enabled or report.when not in {"setup", "call", "teardown"}:
             return
         if report.when == "teardown":
-            if (
-                report.outcome == "failed"
-                and report.nodeid in self._counted
-                and self._outcomes.get(report.nodeid) != "failed"
+            if report.nodeid not in self._counted:
+                return
+            previous = self._outcomes.get(report.nodeid)
+            crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+            crash = getattr(crash, "message", None)
+            teardown_xfail = (
+                report.outcome == "skipped"
+                and hasattr(report, "wasxfail")
+                and not (
+                    isinstance(crash, str) and "XFailed" not in crash.split(":", 1)[0]
+                )
+            )
+            if (report.outcome == "failed" and previous != "failed") or (
+                teardown_xfail and previous in {"passed", "skipped"}
             ):
-                previous = self._outcomes[report.nodeid]
                 if previous == "passed":
                     self.passed -= 1
                 elif previous == "skipped":
                     self.skipped -= 1
-                self.failed += 1
-                self._outcomes[report.nodeid] = "failed"
-                self._report_failure(report.nodeid)
+                elif previous == "xfailed":
+                    self.xfailed -= 1
+                if teardown_xfail:
+                    self.xfailed += 1
+                    self._outcomes[report.nodeid] = "xfailed"
+                else:
+                    self.failed += 1
+                    self._outcomes[report.nodeid] = "failed"
+                    self._report_failure(report.nodeid)
                 self._write(force=True)
             return
         if report.nodeid in self._counted:
@@ -2053,13 +2094,30 @@ class _Progress:
         if report.when != "call" and report.outcome not in {"failed", "skipped"}:
             return
         self._counted.add(report.nodeid)
-        self._outcomes[report.nodeid] = report.outcome
+        outcome = report.outcome
+        crash_message = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+        crash_message = getattr(crash_message, "message", None)
+        is_xfail = (
+            outcome == "skipped"
+            and report.when in {"setup", "call"}
+            and hasattr(report, "wasxfail")
+            # A setup *error* under an xfail marker also carries ``wasxfail``;
+            # when pytest exposes the exception, only ``XFailed`` counts.
+            and not (
+                report.when == "setup"
+                and isinstance(crash_message, str)
+                and "XFailed" not in crash_message.split(":", 1)[0]
+            )
+        )
+        self._outcomes[report.nodeid] = "xfailed" if is_xfail else outcome
         self.completed += 1
-        if report.outcome == "passed":
+        if outcome == "passed":
             self.passed += 1
-        elif report.outcome == "failed":
+        elif outcome == "failed":
             self.failed += 1
             self._report_failure(report.nodeid)
+        elif is_xfail:
+            self.xfailed += 1
         else:
             self.skipped += 1
         self._write(force=report.outcome == "failed")
@@ -2107,12 +2165,18 @@ class _Progress:
             f"   {style.green(f'{glyphs.passed} {self.passed:<{digits}}')}"
             f"  {(style.red if self.failed else style.grey)(f'{glyphs.failed} {self.failed:<{digits}}')}"
             f"  {(style.yellow if self.skipped else style.grey)(f'{glyphs.skipped} {self.skipped:<{digits}}')}"
-            f" {style.dim(f'{_time.monotonic() - self._started:5.1f}s')}"
+            + (
+                f"  {style.yellow(f'xfail {self.xfailed:<{digits}}')}"
+                if self.xfailed
+                else ""
+            )
+            + f" {style.dim(f'{_time.monotonic() - self._started:5.1f}s')}"
         )
         fraction = (
             f"  {style.bold(f'{self.completed:>{digits}}')}{style.dim(f'/{total}')}"
         )
-        bar_width = max(10, min(28, width - 64))
+        xfail_width = 8 + digits if self.xfailed else 0
+        bar_width = max(10, min(28, width - 64 - xfail_width))
         line = (
             f"  {lead} {style.bar(self.completed, total, bar_width)}{fraction}{counts}"
         )

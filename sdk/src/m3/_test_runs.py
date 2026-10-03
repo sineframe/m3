@@ -174,8 +174,13 @@ def xfail_waives_required_evaluations(state: Mapping[str, Any]) -> bool:
     if not isinstance(phases, Mapping):
         return False
     call = phases.get("call")
-    if not isinstance(call, Mapping) or not bool(call.get("wasxfail")):
-        return False
+    if isinstance(call, Mapping) and bool(call.get("wasxfail")):
+        xfail_name = "call"
+    else:
+        found = xfail_phase(phases)
+        if found is None:
+            return False
+        xfail_name, call = found
     if any(
         isinstance(value, Mapping) and value.get("outcome") == "failed"
         for phase, value in phases.items()
@@ -183,13 +188,15 @@ def xfail_waives_required_evaluations(state: Mapping[str, Any]) -> bool:
     ):
         return False
     diagnostics = state.get("diagnostics")
+    # An xfail in setup or teardown carries its own skip longrepr; that is not
+    # a phase error.
+    ignored = f"{xfail_name}:longrepr"
     if isinstance(diagnostics, Mapping) and any(
         str(key).split(":", 1)[0] in {"setup", "teardown"}
         and str(key).endswith(":longrepr")
+        and str(key) != ignored
         for key in diagnostics
     ):
-        return False
-    if "call" not in phases:
         return False
     # ``passed`` with ``wasxfail`` is XPASS, including non-strict XPASS.  It
     # is evidence that the expected-failure contract was not met and cannot
@@ -201,6 +208,38 @@ def xfail_waives_required_evaluations(state: Mapping[str, Any]) -> bool:
     ):
         return False
     return True
+
+
+def xfail_phase(phases: Any) -> tuple[str, Mapping[str, Any]] | None:
+    """Return ``(name, phase)`` of the phase carrying an expected failure.
+
+    Pytest reports an ordinary xfail as a skipped ``call`` phase with
+    ``wasxfail``; ``xfail(run=False)`` and ``pytest.xfail()`` inside a fixture
+    produce a skipped ``setup`` phase with ``wasxfail`` and no call phase.
+    Pytest also reports a genuine setup *error* under an xfail marker as a
+    skipped ``setup`` phase with ``wasxfail``; only an ``XFailed`` exception
+    type identifies a real expected failure.
+    """
+
+    if not isinstance(phases, Mapping):
+        return None
+    call = phases.get("call")
+    if (
+        isinstance(call, Mapping)
+        and call.get("outcome") == "skipped"
+        and call.get("wasxfail")
+    ):
+        return "call", call
+    for name in ("setup", "teardown"):
+        phase = phases.get(name)
+        if (
+            isinstance(phase, Mapping)
+            and phase.get("outcome") == "skipped"
+            and phase.get("wasxfail")
+            and str(phase.get("exception_type", "")).endswith("XFailed")
+        ):
+            return name, phase
+    return None
 
 
 def associate_execution(execution_id: Any, *, run_id: Any = None) -> None:
@@ -263,5 +302,6 @@ __all__ = [
     "reset_test",
     "run_record",
     "test_attempt",
+    "xfail_phase",
     "xfail_waives_required_evaluations",
 ]
