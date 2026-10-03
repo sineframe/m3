@@ -31,6 +31,7 @@ from m3.errors import (
     ManagedInputStateError,
     ManagedInputValidationError,
 )
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION
 from m3.harness.codex import CodexHarnessAdapter
 from m3.harness.contracts import HarnessAdapterRegistry, HarnessLaunch
 from m3.storage import SQLiteExecutionStore
@@ -47,7 +48,9 @@ _MCP_SERVER = _ROOT / "tests" / "fixtures" / "codex_mrtr_server.py"
 def _require_codex() -> str:
     executable = os.environ.get("M3_CODEX_EXECUTABLE") or shutil.which("codex")
     if executable is None:
-        pytest.fail("Codex 0.156.1 is required; set M3_CODEX_EXECUTABLE")
+        pytest.fail(
+            f"Codex {CODEX_VERIFIED_VERSION} is required; set M3_CODEX_EXECUTABLE"
+        )
     try:
         version = subprocess.run(
             [executable, "--version"],
@@ -57,8 +60,8 @@ def _require_codex() -> str:
             timeout=5,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        pytest.fail("Codex 0.156.1 could not be executed")
-    expected = "codex-cli 0.156.1"
+        pytest.fail(f"Codex {CODEX_VERIFIED_VERSION} could not be executed")
+    expected = f"codex-cli {CODEX_VERIFIED_VERSION}"
     if version != expected:
         pytest.fail(f"expected {expected!r}, found {version!r}")
     return executable

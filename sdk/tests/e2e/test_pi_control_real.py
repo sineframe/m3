@@ -1,4 +1,4 @@
-"""Real Pi 0.85.1 gate for the private M3 control connection."""
+"""Real Pi gate for the private M3 control connection."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from m3.harness._verified_versions import PI_VERIFIED_VERSION
 from m3.harness.pi_control import (
     CONTROL_PROTOCOL_VERSION,
     PiControlChannel,
@@ -36,7 +37,7 @@ _BRIDGE = _EXTENSION.with_name("bridge.py")
 def _require_pi() -> str:
     executable = os.environ.get("M3_PI_EXECUTABLE") or shutil.which("pi")
     if executable is None:
-        pytest.skip("Pi 0.85.1 is unavailable on PATH")
+        pytest.skip(f"Pi {PI_VERIFIED_VERSION} is unavailable on PATH")
     try:
         version = subprocess.run(
             [executable, "--version"],
@@ -46,9 +47,11 @@ def _require_pi() -> str:
             timeout=5,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        pytest.skip("Pi 0.85.1 could not be executed")
-    if version != "0.85.1":
-        pytest.skip(f"Pi version 0.85.1 is required; found {version or 'unknown'}")
+        pytest.skip(f"Pi {PI_VERIFIED_VERSION} could not be executed")
+    if version != PI_VERIFIED_VERSION:
+        pytest.skip(
+            f"Pi version {PI_VERIFIED_VERSION} is required; found {version or 'unknown'}"
+        )
     return executable
 
 

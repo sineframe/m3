@@ -22,6 +22,7 @@ from m3.elicitation import (
     ElicitationResponse,
     PendingElicitationRound,
 )
+from m3.harness._verified_versions import PI_VERIFIED_VERSION
 from m3.harness.contracts import HarnessAdapterRegistry, HarnessLaunch
 from m3.harness.pi import PiHarnessAdapter
 from m3.storage import SQLiteExecutionStore
@@ -56,8 +57,10 @@ def _require_pi() -> str:
     executable = os.environ.get("M3_PI_EXECUTABLE") or shutil.which("pi")
     if executable is None:
         if os.environ.get("M3_REQUIRE_PI_MRTR") == "1":
-            pytest.fail("Pi 0.85.1 is required for the MRTR CI gate")
-        pytest.skip("Pi 0.85.1 is unavailable on PATH; set M3_PI_EXECUTABLE")
+            pytest.fail(f"Pi {PI_VERIFIED_VERSION} is required for the MRTR CI gate")
+        pytest.skip(
+            f"Pi {PI_VERIFIED_VERSION} is unavailable on PATH; set M3_PI_EXECUTABLE"
+        )
     try:
         version = subprocess.run(
             [executable, "--version"],
@@ -68,12 +71,20 @@ def _require_pi() -> str:
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         if os.environ.get("M3_REQUIRE_PI_MRTR") == "1":
-            pytest.fail("Pi 0.85.1 could not be executed for the MRTR CI gate")
-        pytest.skip("Pi 0.85.1 could not be executed at the required runtime")
-    if version != "0.85.1":
+            pytest.fail(
+                f"Pi {PI_VERIFIED_VERSION} could not be executed for the MRTR CI gate"
+            )
+        pytest.skip(
+            f"Pi {PI_VERIFIED_VERSION} could not be executed at the required runtime"
+        )
+    if version != PI_VERIFIED_VERSION:
         if os.environ.get("M3_REQUIRE_PI_MRTR") == "1":
-            pytest.fail(f"Pi 0.85.1 is required for the MRTR CI gate; found {version}")
-        pytest.skip(f"Pi version 0.85.1 is required; found {version or 'unknown'}")
+            pytest.fail(
+                f"Pi {PI_VERIFIED_VERSION} is required for the MRTR CI gate; found {version}"
+            )
+        pytest.skip(
+            f"Pi version {PI_VERIFIED_VERSION} is required; found {version or 'unknown'}"
+        )
     return executable
 
 

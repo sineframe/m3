@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION
+
 
 class CodexUnavailable(RuntimeError):
     pass
@@ -30,7 +32,7 @@ def require_codex() -> tuple[str, str]:
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         raise CodexUnavailable("Codex could not be executed") from exc
-    expected = "codex-cli 0.156.1"
+    expected = f"codex-cli {CODEX_VERIFIED_VERSION}"
     if version != expected:
         raise CodexUnavailable(f"expected {expected!r}, found {version!r}")
     return executable, version

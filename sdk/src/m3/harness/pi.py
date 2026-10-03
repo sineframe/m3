@@ -31,6 +31,7 @@ from ..types import (
     TurnOutcome,
 )
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
+from ._verified_versions import PI_VERIFIED_VERSION
 from .contracts import (
     HarnessInteractionCapabilities,
     HarnessLaunch,
@@ -146,7 +147,7 @@ class PiHarnessAdapter(NativeRPCAdapter):
         version = await asyncio.to_thread(probe_help, self.executable, ("--version",))
         interaction = (
             self.interaction_capabilities
-            if version is not None and version.strip() == "0.85.1"
+            if version is not None and version.strip() == PI_VERIFIED_VERSION
             else HarnessInteractionCapabilities(retry_owner="m3")
         )
         self._capabilities = replace(
