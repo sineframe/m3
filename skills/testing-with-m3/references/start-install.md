@@ -74,4 +74,23 @@ uv add "sf-m3[pytest,storage,judge]"
 This declares the SDK in the project manifest. The standalone CLI remains a
 separate user-level installation.
 
+## Try a canary build
+
+Canary builds let you try unreleased changes before they ship. They are
+published as GitHub prereleases, never to PyPI, and are not supported releases.
+`canary-main` follows the `main` branch, and `canary-pr-N` follows pull request
+N while it has the `canary` label.
+
+```sh
+# Latest build of main
+curl -LsSf https://m3.sineframe.com/install.sh | sh -s -- --canary
+
+# A pull request
+curl -LsSf https://m3.sineframe.com/install.sh | sh -s -- --pr 123
+```
+
+`m3 --version` and `m3 doctor` name the canary and its commit. `m3 setup`
+installs the matching SDK from the same canary release. To return to the latest
+stable release, rerun the installer without options.
+
 Continue to [your first MCP test](getting-started.md), or [test your own server](start-your-server.md).

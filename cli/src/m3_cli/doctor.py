@@ -13,6 +13,7 @@ from dotenv import dotenv_values
 from m3.configuration import ConfigError, load_config
 from m3.services.probes import ProbeKind, ProbeRequest, Probes
 
+from .canary import canary_build
 from .errors import CLIError
 
 _TRANSPORT_MODULES = {
@@ -240,11 +241,17 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         raise DoctorCLIError(
             "the CLI installation is incomplete; reinstall sf-m3-cli"
         ) from None
-    cli = {
+    cli: dict[str, Any] = {
         "status": "ready" if cli_version == bundled_sdk_version else "not ready",
         "version": cli_version,
         "sdk_version": bundled_sdk_version,
     }
+    canary = canary_build()
+    if canary is not None:
+        cli["canary"] = {
+            "release_tag": canary.release_tag,
+            "source_commit": canary.source_commit,
+        }
     cli_ready = cli["status"] == "ready"
     source = None
     selected_path = None
@@ -323,7 +330,13 @@ def print_human(report: dict[str, Any]) -> None:
     print(f"m3 doctor: {'ready' if report['ready'] else 'not ready'}")
     cli = report.get("cli")
     if cli is not None:
-        print(f"M3 CLI {cli.get('version')}: {cli.get('status')}")
+        canary = cli.get("canary")
+        suffix = (
+            f" ({canary['release_tag']}, {canary['source_commit'][:7]})"
+            if isinstance(canary, dict)
+            else ""
+        )
+        print(f"M3 CLI {cli.get('version')}{suffix}: {cli.get('status')}")
         if cli.get("sdk_version") != cli.get("version"):
             print(f"bundled SDK: {cli.get('sdk_version')}")
     project_python = report.get("project_python")

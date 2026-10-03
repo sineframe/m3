@@ -1,7 +1,8 @@
 #!/bin/sh
 # Public bootstrap for stable M3 releases, with an alpha fallback before the
 # first final release. Supported version tags are vX.Y.Z, optionally followed
-# by aN, bN, or rcN; exact tag selection uses the same grammar.
+# by aN, bN, or rcN; exact tag selection uses the same grammar. Canary builds
+# are opt-in prereleases tagged canary-main or canary-pr-N.
 set -eu
 REPOSITORY='sineframe/m3'
 command -v curl >/dev/null 2>&1 || { echo 'curl is required' >&2; exit 1; }
@@ -20,7 +21,12 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --prerelease) mode=prerelease ;;
         --tag) [ "$#" -ge 2 ] || { echo '--tag requires a tag' >&2; exit 2; }; exact_tag=$2; shift ;;
-        -h|--help) echo 'Usage: install-latest.sh [--prerelease | --tag vX.Y.Z[aN|bN|rcN]]'; exit 0 ;;
+        --canary) mode=canary; exact_tag=canary-main ;;
+        --pr)
+            [ "$#" -ge 2 ] || { echo '--pr requires a pull request number' >&2; exit 2; }
+            case "$2" in ''|0*|*[!0-9]*) echo '--pr requires a pull request number' >&2; exit 2 ;; esac
+            mode=canary; exact_tag="canary-pr-$2"; shift ;;
+        -h|--help) echo 'Usage: install-latest.sh [--prerelease | --tag vX.Y.Z[aN|bN|rcN] | --canary | --pr N]'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -41,6 +47,7 @@ tag=$("$BOOTSTRAP_PYTHON" - "$TMP_DIR" "$mode" "$exact_tag" <<'PY'
 import json, pathlib, re, sys
 root, mode, exact = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 pattern = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$")
+canary = re.compile(r"^canary-(?:main|pr-[1-9][0-9]*)$")
 rows = []
 for path in root.glob("releases-*.json"):
     data = json.loads(path.read_text())
@@ -54,7 +61,16 @@ def parse(tag):
     major, minor, patch, phase, serial = match.groups()
     rank = {None: 3, "a": 0, "b": 1, "rc": 2}[phase]
     return (int(major), int(minor), int(patch), rank, int(serial or 0))
-rows = [r for r in rows if isinstance(r, dict) and not r.get("draft") and parse(r.get("tag_name", ""))]
+rows = [r for r in rows if isinstance(r, dict) and not r.get("draft")]
+if mode == "canary":
+    match = next((r for r in rows if r.get("tag_name") == exact and canary.fullmatch(exact) and r.get("prerelease")), None)
+    if match is None:
+        raise SystemExit(f"no published canary build {exact}; pull requests need the canary label")
+    if not any(a.get("name") == "install.sh" for a in match.get("assets", [])):
+        raise SystemExit("requested canary has no install.sh asset")
+    print(exact)
+    raise SystemExit
+rows = [r for r in rows if parse(r.get("tag_name", ""))]
 if exact:
     match = next((r for r in rows if r["tag_name"] == exact), None)
     if match is None:
@@ -84,8 +100,11 @@ curl --fail --silent --show-error --location "${base_url}/SHA256SUMS" --output "
 "$BOOTSTRAP_PYTHON" - "$TMP_DIR/manifest.json" "$tag" "$TMP_DIR/install.sh" "$TMP_DIR/SHA256SUMS" <<'PY'
 import hashlib, json, pathlib, re, sys
 manifest=json.loads(pathlib.Path(sys.argv[1]).read_text())
-version=sys.argv[2][1:]
-if manifest.get("version") != version: raise SystemExit("release manifest version mismatch")
+tag=sys.argv[2]
+if tag.startswith("canary-"):
+    version=manifest.get("version")
+    if manifest.get("release_tag") != tag or not isinstance(version,str) or not re.fullmatch(r"[0-9A-Za-z.]+\.dev[0-9]+",version): raise SystemExit("canary manifest does not match the requested build")
+elif manifest.get("version") != tag[1:]: raise SystemExit("release manifest version mismatch")
 for name, path in (("install.sh", pathlib.Path(sys.argv[3])), ("SHA256SUMS", pathlib.Path(sys.argv[4]))):
     expected=manifest.get("assets",{}).get(name)
     if not isinstance(expected,str) or not re.fullmatch(r"[0-9a-f]{64}",expected): raise SystemExit(f"release manifest has no valid {name} hash")

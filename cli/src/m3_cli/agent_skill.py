@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from m3_cli.canary import canary_build
+
 SKILL_NAME = "testing-with-m3"
 SKILL_REPOSITORY = "sineframe/m3"
 _CI_MARKERS = (
@@ -129,6 +131,9 @@ def ensure_agent_skill(project_root: Path, cli_version: str, *, enabled: bool) -
         return
     if any(os.environ.get(name) for name in _CI_MARKERS):
         print("Agent skill: skipped in CI")
+        return
+    if canary_build() is not None:
+        print("Agent skill: skipped for a canary build of M3")
         return
     if _is_development_install():
         print(

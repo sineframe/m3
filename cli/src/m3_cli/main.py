@@ -36,7 +36,10 @@ class _VersionAction(argparse.Action):
             version = importlib.metadata.version("sf-m3-cli")
         except importlib.metadata.PackageNotFoundError:
             raise CLIError("the CLI installation is incomplete") from None
-        print(f"m3 {version}")
+        from m3_cli.canary import canary_build
+
+        canary = canary_build()
+        print(f"m3 {version}" if canary is None else f"m3 {version} ({canary.label})")
         parser.exit(0)
 
 

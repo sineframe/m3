@@ -29,6 +29,8 @@ PROJECTS = {
     "sf_m3_app": ROOT / "app",
     "sf_m3_cli": ROOT / "cli",
 }
+_REPOSITORY = "sineframe/m3"
+_CANARY_TAG_RE = re.compile(r"^canary-(?:main|pr-[1-9][0-9]*)$")
 _VERSION_RE = re.compile(r"^\s*version\s*=\s*[\"']([^\"']+)[\"']\s*$", re.MULTILINE)
 _WHEEL_DIST_INFO_RE = re.compile(r"^[^/]+-[^/]+\.dist-info/METADATA$")
 _JUNK_NAMES = {
@@ -348,7 +350,27 @@ def _ignore_staged_junk(directory: str, names: list[str]) -> set[str]:
     return ignored
 
 
-def _stage_cli(ui_dist: Path, temporary_root: Path) -> Path:
+def canary_metadata(release_tag: str, source_commit: str) -> dict[str, str]:
+    """Describe a canary build so the installed CLI can find its sibling wheels."""
+
+    if not _CANARY_TAG_RE.fullmatch(release_tag):
+        raise ReleaseBuildError(
+            "canary release tag must be canary-main or canary-pr-<number>"
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise ReleaseBuildError(
+            "canary source commit must be a 40-character commit SHA"
+        )
+    return {
+        "release_tag": release_tag,
+        "base_url": f"https://github.com/{_REPOSITORY}/releases/download/{release_tag}",
+        "source_commit": source_commit,
+    }
+
+
+def _stage_cli(
+    ui_dist: Path, temporary_root: Path, canary: dict[str, str] | None = None
+) -> Path:
     staged = temporary_root / "cli"
     shutil.copytree(CLI_ROOT, staged, ignore=_ignore_staged_junk)
     packaged_ui = staged / "src" / "m3_cli" / "ui"
@@ -356,6 +378,10 @@ def _stage_cli(ui_dist: Path, temporary_root: Path) -> Path:
         shutil.rmtree(packaged_ui)
     packaged_ui.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(ui_dist, packaged_ui)
+    if canary is not None:
+        (staged / "src" / "m3_cli" / "canary.json").write_text(
+            json.dumps(canary, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+        )
     return staged
 
 
@@ -613,8 +639,13 @@ def build_release(
     out_dir: str | os.PathLike[str],
     *,
     expected_version: str | None = None,
+    canary: dict[str, str] | None = None,
 ) -> dict[str, Path]:
-    """Build and verify all release wheels, returning their artifact paths."""
+    """Build and verify all release wheels, returning their artifact paths.
+
+    ``canary`` (from :func:`canary_metadata`) embeds ``m3_cli/canary.json`` in
+    the CLI wheel. Stable releases omit it, so their wheels are unchanged.
+    """
 
     ui = validate_ui_dist(ui_dist, out_dir)
     output = _resolved(out_dir)
@@ -632,10 +663,16 @@ def build_release(
         )
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sf-m3-cli-release-") as temporary:
-        staged = _stage_cli(ui, Path(temporary))
+        staged = _stage_cli(ui, Path(temporary), canary)
         for project in (PROJECTS["sf_m3"], PROJECTS["sf_m3_app"], staged):
             _run_build(project, output)
-    return verify_release(output, expected, ui_source_dist=ui)
+    artifacts = verify_release(output, expected, ui_source_dist=ui)
+    with zipfile.ZipFile(artifacts["sf_m3_cli"]) as archive:
+        if ("m3_cli/canary.json" in archive.namelist()) != (canary is not None):
+            raise ReleaseBuildError(
+                "CLI wheel canary metadata does not match the build"
+            )
+    return artifacts
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -643,6 +680,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ui-dist", type=Path)
     parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--expected-version")
+    parser.add_argument(
+        "--canary-tag",
+        help="build a canary for this release tag (canary-main or canary-pr-N)",
+    )
+    parser.add_argument("--source-commit", help="commit SHA recorded in canary builds")
     parser.add_argument(
         "--print-version",
         action="store_true",
@@ -663,10 +705,14 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(
                 "--ui-dist and --out-dir are required unless --print-version is used"
             )
+        canary = None
+        if args.canary_tag is not None:
+            canary = canary_metadata(args.canary_tag, args.source_commit or "")
         artifacts = build_release(
             args.ui_dist,
             args.out_dir,
             expected_version=args.expected_version,
+            canary=canary,
         )
     except ReleaseBuildError as exc:
         print(f"release build failed: {exc}", file=sys.stderr)
