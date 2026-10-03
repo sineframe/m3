@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from collections.abc import Mapping
 
 import pytest
@@ -112,9 +111,25 @@ def test_sync_persistent_kit_has_the_same_worker_contract(tmp_path):
         )
 
 
-class _SlowHarness(HarnessAdapter):
-    def __init__(self, calls: list[str]) -> None:
+class _Rendezvous:
+    """Releases waiting turns only once ``expected`` turns are in flight at once."""
+
+    def __init__(self, expected: int) -> None:
+        self._expected = expected
+        self._arrived = 0
+        self._all_arrived = asyncio.Event()
+
+    async def wait(self) -> None:
+        self._arrived += 1
+        if self._arrived == self._expected:
+            self._all_arrived.set()
+        await asyncio.wait_for(self._all_arrived.wait(), timeout=20)
+
+
+class _RendezvousHarness(HarnessAdapter):
+    def __init__(self, calls: list[str], rendezvous: _Rendezvous) -> None:
         self._calls = calls
+        self._rendezvous = rendezvous
 
     async def start(self, _spec: AgentSpec) -> None:
         return None
@@ -127,7 +142,7 @@ class _SlowHarness(HarnessAdapter):
         metadata: Mapping[str, object] | None = None,
     ) -> TurnResponse | AdapterTurn:
         del message, timeout, metadata
-        await asyncio.sleep(1)
+        await self._rendezvous.wait()
         self._calls.append("send")
         return TurnResponse(content=(TextContent(text="ok"),))
 
@@ -144,14 +159,22 @@ def _agent_spec(text: str = "hello") -> AgentSpec:
 
 
 def test_private_queue_kits_run_concurrently_and_only_their_own_work(tmp_path):
-    async def run() -> tuple[list[ExecutionOutcome], float]:
+    async def run() -> list[ExecutionOutcome]:
         path = tmp_path / "private.sqlite"
         calls_a: list[str] = []
         calls_b: list[str] = []
+        # Every turn blocks until all eight are in flight, so this only
+        # completes if both kits run all four of their executions at once.
+        # A wall-clock bound would also measure per-event SQLite commits.
+        rendezvous = _Rendezvous(expected=8)
         kits = []
         for queue, calls in (("pytest-a", calls_a), ("pytest-b", calls_b)):
             registry = HarnessAdapterRegistry(
-                {"acp": lambda _harness, calls=calls: _SlowHarness(calls)}
+                {
+                    "acp": lambda _harness, calls=calls: _RendezvousHarness(
+                        calls, rendezvous
+                    )
+                }
             )
             kits.append(
                 AsyncMCPTestKit(
@@ -162,20 +185,17 @@ def test_private_queue_kits_run_concurrently_and_only_their_own_work(tmp_path):
                 )
             )
         try:
-            started = time.monotonic()
             handles = [kit.submit(_agent_spec()) for kit in kits for _ in range(4)]
             results = await asyncio.gather(*(h.result(timeout=30) for h in handles))
-            elapsed = time.monotonic() - started
         finally:
             for kit in kits:
                 await kit.aclose()
         assert len(calls_a) == 4
         assert len(calls_b) == 4
-        return [r.snapshot.outcome for r in results], elapsed
+        return [r.snapshot.outcome for r in results]
 
-    outcomes, elapsed = asyncio.run(run())
+    outcomes = asyncio.run(run())
     assert outcomes == [ExecutionOutcome.COMPLETED] * 8
-    assert elapsed < 3
 
 
 class _GatedHarness(HarnessAdapter):
