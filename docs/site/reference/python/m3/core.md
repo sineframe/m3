@@ -47,9 +47,11 @@ elicitation plan belong to the action that uses them. Consult the applicable
 harness guide because integrations expose different evidence and interactions.
 
 Omitting `tools` advertises the bound server's tools; `tools=[]` denies them.
-M3 answers harness approval prompts for calls to bound servers from that
-selection. `permission_policy` applies only to harness-native permission
-prompts outside the bound servers and denies them by default.
+Codex's MCP tool approval prompts are answered from that selection, and
+`permission_policy` does not change them. For ACP agents, every permission
+request, including MCP tool calls, goes to `permission_policy`, which denies
+by default; pass `permission_policy="allow"` to `agent.run(...)` or
+`agent.session(...)` for a trusted ACP agent.
 
 ## Async API
 

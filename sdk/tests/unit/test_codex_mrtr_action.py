@@ -29,7 +29,7 @@ from m3.harness.contracts import (
 )
 from m3.interaction_handlers import Interactions
 from m3.server_group import HarnessServerConfig
-from m3.types import TransportKind, TurnOutcome
+from m3.types import RestrictiveToolPolicy, TransportKind, TurnOutcome
 
 
 class _Subscription:
@@ -579,6 +579,7 @@ async def test_server_supplied_approval_marker_cannot_reuse_codex_approval() -> 
     adapter._launch = SimpleNamespace(
         configurations=(config,),
         interactions=interactions,
+        tool_policy=RestrictiveToolPolicy(allowed_tools=("fixture:collect_code",)),
     )
     process = Process()
     now = datetime.now(timezone.utc)

@@ -22,11 +22,13 @@ from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
 
+from .policy import ToolDescriptor, ToolPolicyEvaluator
 from .types import (
     FilesystemPolicy,
     PermissionPolicy,
     SamplingPolicy,
     TerminalPolicy,
+    ToolPolicy,
 )
 
 Decision = Literal["allow", "deny", "error"]
@@ -263,16 +265,45 @@ class Interactions:
                 False, await self._record(_deny("permission", "handler_error"))
             )
 
-    async def _approve_selected_mcp_tool(self) -> PermissionResult:
-        """Answer a harness prompt to call a tool on a selected MCP server.
+    async def _approve_selected_mcp_tool(
+        self,
+        tool_policy: ToolPolicy | None,
+        tool: ToolDescriptor,
+        advertised: Sequence[ToolDescriptor] = (),
+        *,
+        harness_name: str,
+    ) -> PermissionResult:
+        """Answer a harness prompt to call one tool on a selected MCP server.
 
-        The session's tool policy already decides which tools on selected
-        servers may run, and M3's MCP proxy enforces it on every call.
-        ``permission_policy`` governs only native prompts outside that scope.
+        The session's tool policy decides which tools on selected servers may
+        run, so the prompt is answered from that policy rather than from
+        ``permission_policy``, which governs only native prompts outside that
+        scope. The decision is made here, not deferred to M3's MCP proxy,
+        because some transports (in-process servers) and empty restrictive
+        policies have no pre-forward proxy gate.
         """
-        return PermissionResult(
-            True, await self._record(_receipt("permission", "allow", "tool_policy"))
+        known = {(item.server, item.name): item for item in advertised}
+        known.setdefault((tool.server, tool.name), tool)
+        try:
+            allowed = (
+                tool_policy is not None
+                and ToolPolicyEvaluator(tuple(known.values()))
+                .decide(
+                    tool_policy,
+                    tool,
+                    harness_name=harness_name,
+                    supports_enforcement=True,
+                )
+                .allowed
+            )
+        except Exception:
+            allowed = False
+        receipt = (
+            _receipt("permission", "allow", "tool_policy")
+            if allowed
+            else _deny("permission", "tool_policy_denied")
         )
+        return PermissionResult(allowed, await self._record(receipt))
 
     async def sample(self, request: SamplingRequest) -> SamplingResult:
         if self.sampling_policy.mode == "deny" or self.handlers.sampling is None:

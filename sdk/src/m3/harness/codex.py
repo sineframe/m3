@@ -15,6 +15,7 @@ from typing import Any
 from ..agent_session import AdapterTurn
 from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
+from ..policy import ToolDescriptor
 from ..types import (
     Codex,
     ErrorCode,
@@ -51,6 +52,7 @@ class _NativeMcpToolItem:
     """Codex-owned item identity eligible for one on-request approval."""
 
     server: str
+    tool: str
     arguments_json: str
 
 
@@ -975,7 +977,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 # alone is never evidence of an approval request.
                 approval_item = self._unapproved_mcp_tool_items.pop(approval_item_id)
                 self._approved_mcp_tool_items[approval_item_id] = approval_item
-                await self._answer_mcp_elicitation(process, frame)
+                await self._answer_mcp_elicitation(process, frame, approval_item)
             elif self._active_mrtr_action is not None:
                 # The action coordinator batches all native prompts for one
                 # observed keyed round before writing any response. Returning
@@ -1012,7 +1014,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             and arguments_json is not None
         ):
             self._unapproved_mcp_tool_items[item_id] = _NativeMcpToolItem(
-                server, arguments_json
+                server, tool, arguments_json
             )
 
     def _finish_native_mcp_tool_item(self, item: Mapping[str, Any]) -> None:
@@ -1160,7 +1162,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 action.observe_native_tool_item(item)
 
     async def _answer_mcp_elicitation(
-        self, process: JsonRpcProcess, frame: Mapping[str, Any]
+        self,
+        process: JsonRpcProcess,
+        frame: Mapping[str, Any],
+        item: _NativeMcpToolItem,
     ) -> None:
         request_id = frame.get("id")
         if isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
@@ -1184,12 +1189,28 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             )
             and params.get("threadId") == self._thread_id
             and (turn_id is None or turn_id == self._turn_id)
+            and item.server == server_name
         ):
             # Selected-server MCP access is decided by the session's tool
-            # policy, which M3's proxy enforces on the call itself. The
-            # permission policy is reserved for prompts outside that scope.
-            permission = await launch.interactions._approve_selected_mcp_tool()
-            allowed = permission.allowed
+            # policy; the permission policy is reserved for prompts outside
+            # that scope. The policy is applied to the item's tool here because
+            # not every transport has a proxy gate before the server.
+            servers = getattr(launch, "servers", None)
+            advertised = tuple(
+                ToolDescriptor(server=record.key, name=name)
+                for record in getattr(servers, "records", ())
+                if record.available
+                for name in record.tools
+            )
+            try:
+                tool = ToolDescriptor(server=item.server, name=item.tool)
+            except ValueError:
+                tool = None
+            if tool is not None:
+                permission = await launch.interactions._approve_selected_mcp_tool(
+                    launch.tool_policy, tool, advertised, harness_name="codex"
+                )
+                allowed = permission.allowed
         await self._write_frame(
             process,
             {

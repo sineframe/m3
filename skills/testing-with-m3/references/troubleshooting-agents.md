@@ -11,15 +11,20 @@ runtime/version supported on the current OS and CPU.
 
 Approval is separate from MCP elicitation. The test's tool selection decides
 which tools on its bound servers the agent may call: omitting `tools` allows
-every tool the server advertises, and `tools=[...]` allows only the named ones.
-M3 answers a harness's approval prompt for those calls from that selection, so
-a simple test needs no permission setting.
+every tool the server advertises, `tools=[...]` allows only the named ones, and
+`tools=[]` allows none.
 
-`permission_policy` covers only harness-native permission prompts outside the
-bound MCP servers, such as an ACP agent asking to run a command or edit files.
-It denies them by default. Allow them only for a trusted agent and a scoped
-workspace. If Codex lists tools but makes no call, check the `tools` selection
-and the prompt.
+Codex asks for approval before each MCP tool call. M3 answers it from that tool
+selection, so a Codex test needs no permission setting; a tool outside the
+selection is declined even if `permission_policy="allow"` is set. If Codex
+lists tools but makes no call, check the `tools` selection and the prompt.
+
+ACP agents are different: every permission request they send, including one
+for an MCP tool call, goes to `permission_policy`, which denies by default.
+For an ACP agent that asks before calling tools, pass
+`permission_policy="allow"` to `agent.run(...)` or `agent.session(...)`. Allow
+it only for a trusted agent and a scoped workspace, because the same setting
+also approves the agent's requests to run commands or edit files.
 
 ## Execution timed out
 
