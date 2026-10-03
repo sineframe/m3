@@ -30,11 +30,12 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from m3 import _timing, _timing_report
-from m3._terminal import Style, hyperlink, stream_is_utf8, supports_hyperlinks
+from m3._terminal import Style, hyperlink, supports_hyperlinks
 
 from . import console
 from .branding import M3_ASCII_ART, M3_TAGLINE
 from .ci_credentials import ACCESS_TOKEN_ENV, parse_credential_mapping
+from .project import resolve_project_root
 
 if typing.TYPE_CHECKING:
     import tomli as _tomllib
@@ -436,23 +437,6 @@ def validate_project_python(
             f"project m3 version {project_version} does not match CLI SDK version {expected}; install matching versions"
         )
     return project_version
-
-
-def resolve_project_root(explicit: Path | None = None) -> Path:
-    """Return the explicit root, else the nearest ``m3.toml`` directory above cwd.
-
-    The walk stops after checking a directory that contains ``.git``; without an
-    ``m3.toml`` the current directory is the root.
-    """
-    if explicit is not None:
-        return explicit.expanduser().resolve()
-    start = Path.cwd().resolve()
-    for directory in (start, *start.parents):
-        if (directory / "m3.toml").is_file():
-            return directory
-        if (directory / ".git").exists():
-            break
-    return start
 
 
 def _absolute_database(
@@ -1254,24 +1238,7 @@ def _stop_server(child: _ServerChild | None) -> None:
 
 
 def _stdout_style() -> Style | None:
-    """Styling for an interactive stdout, or None to keep the plain output."""
-
-    try:
-        interactive = sys.stdout.isatty()
-    except (AttributeError, OSError, ValueError):
-        return None
-    if not interactive or os.environ.get("TERM") == "dumb":
-        return None
-    return Style("NO_COLOR" not in os.environ, unicode=stream_is_utf8(sys.stdout))
-
-
-def _project_name(root: Path) -> str | None:
-    try:
-        value = _tomllib.loads((root / "m3.toml").read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return None
-    name = value.get("project_name")
-    return name.strip() if isinstance(name, str) and name.strip() else None
+    return console.stdout_style()
 
 
 def _print_start_banner(
@@ -1283,54 +1250,14 @@ def _print_start_banner(
     suite: str | None,
     num_processes: str | None,
 ) -> bool:
-    """Print the banner before pytest starts; return whether it was shown."""
-
-    style = _stdout_style()
-    if style is None:
-        return False
-    try:
-        version = importlib.metadata.version("sf-m3-cli")
-    except importlib.metadata.PackageNotFoundError:
-        version = ""
-    dot = f" {style.dim(style.glyphs.dot)} "
-
-    def row(key: str, value: str) -> str:
-        return f"{style.grey(key.ljust(9))}{value}"
-
-    details = []
-    if suite is not None:
-        details.append(f"suite {suite}")
-    if harnesses:
-        details.append(", ".join(harnesses))
-    if num_processes is not None:
-        details.append(f"{num_processes} workers")
-    info = [
-        f"{style.bold('m3')} {style.dim(version)}".rstrip(),
-        style.dim(M3_TAGLINE),
-        "",
-        row("project", _project_name(root) or root.name),
-        row("run", run_id.removeprefix("run-")[:7]),
-    ]
-    if details:
-        info.append(row("with", dot.join(details)))
-    if ui:
-        info.append(row("report", "opens in your browser when the run ends"))
-    project = _project_name(root) or root.name
-    summary = dot.join(
-        filter(
-            None,
-            (
-                f"{style.bold('m3')} {style.dim(version)}".rstrip(),
-                project,
-                run_id.removeprefix("run-")[:7],
-            ),
-        )
+    return console.print_start_banner(
+        root,
+        run_id,
+        ui=ui,
+        harnesses=harnesses,
+        suite=suite,
+        num_processes=num_processes,
     )
-    console.start_at_top()
-    print(file=sys.stdout)
-    console.print_banner(style, info, summary)
-    print(flush=True)
-    return True
 
 
 def _print_ui_output(
@@ -1689,6 +1616,7 @@ def run_test_with_runs(
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
+    banner_shown: bool = False,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
@@ -1729,6 +1657,19 @@ def run_test_with_runs(
     root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
     _start_timings(root, invocation_run_id)
+    # Banner first: the checks below can take seconds (they start the
+    # project Python), and the terminal should respond immediately.
+    no_header = not ci_mode and (
+        banner_shown
+        or _print_start_banner(
+            root,
+            invocation_run_id,
+            ui=ui,
+            harnesses=harnesses,
+            suite=suite,
+            num_processes=num_processes,
+        )
+    )
     database_path = _absolute_database(database, project_root=root)
     try:
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1790,14 +1731,6 @@ def run_test_with_runs(
         return TestRunResult(
             OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
         )
-    no_header = not ci_mode and _print_start_banner(
-        root,
-        invocation_run_id,
-        ui=ui,
-        harnesses=harnesses,
-        suite=suite,
-        num_processes=num_processes,
-    )
     exit_code = _run_pytest_timed(
         selected,
         database_path,
@@ -1876,6 +1809,7 @@ def run_test(
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
+    banner_shown: bool = False,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1929,10 +1863,24 @@ def run_test(
             run_id=run_id,
             ci_metadata=ci_metadata,
             num_processes=num_processes,
+            banner_shown=banner_shown,
         ).exit_code
     root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
     _start_timings(root, invocation_run_id)
+    # Banner first: the checks below can take seconds (they start the
+    # project Python), and the terminal should respond immediately.
+    no_header = not ci_mode and (
+        banner_shown
+        or _print_start_banner(
+            root,
+            invocation_run_id,
+            ui=False,
+            harnesses=harnesses,
+            suite=suite,
+            num_processes=num_processes,
+        )
+    )
     prepared = _prepare_test(
         python, database, root, require_xdist=num_processes is not None
     )
@@ -1958,14 +1906,6 @@ def run_test(
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR
-    no_header = not ci_mode and _print_start_banner(
-        root,
-        invocation_run_id,
-        ui=False,
-        harnesses=harnesses,
-        suite=suite,
-        num_processes=num_processes,
-    )
     return _run_pytest_timed(
         selected,
         database_path,

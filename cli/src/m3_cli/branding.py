@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import groupby
 
-from m3._terminal import GRADIENT, Style, fit
+from .terminal import GRADIENT, Style, fit
 
 M3_ASCII_ART = """\
 ███╗   ███╗  ███████╗░

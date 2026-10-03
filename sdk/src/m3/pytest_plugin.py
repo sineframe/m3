@@ -2071,10 +2071,17 @@ class _Progress:
         self._file: str | None = None
         self._file_counts: dict[str, int] = {}
         self._file_started = 0.0
+        self._running: set[str] = set()
+        self._attached = False
         option = config.option
+        # With xdist workers, tests from several files run at once, so the
+        # per-file lines are left out; the main process still sees every
+        # test start and finish and drives the live block.
+        self._parallel = bool(getattr(option, "numprocesses", 0))
         self.enabled = (
             int(getattr(option, "verbose", 0) or 0) <= 0
-            and not bool(getattr(option, "numprocesses", 0))
+            # Workers report to the main process; only it draws.
+            and not hasattr(config, "workerinput")
             # Uncaptured test output and live logs would interleave with the
             # live block; pytest's native output handles those better.
             and getattr(option, "capture", None) != "no"
@@ -2090,21 +2097,45 @@ class _Progress:
         except (ValueError, KeyError):
             return False
 
-    @_pytest.hookimpl(trylast=True)
-    def pytest_collection_finish(self, session: _Any) -> None:
-        items = list(session.items)
-        self.total = len(items)
-        self._order = {
-            str(getattr(item, "nodeid", index)): index
-            for index, item in enumerate(items)
-        }
-        self._cells = ["pending"] * self.total
-        self._started = _time.monotonic()
+    def _attach(self) -> None:
+        """Bind the terminal reporter and settle ``enabled`` (once).
+
+        Every entry point calls this: under xdist the main process never
+        runs pytest_collection_finish, so it cannot be the only place.
+        """
+
+        if self._attached:
+            return
+        self._attached = True
         if self.reporter is None:
             self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
-            self.enabled = self.enabled and self._is_tty()
-            self.disable_native_progress()
-        if self.enabled and self.total:
+        self.enabled = self.enabled and self.reporter is not None and self._is_tty()
+        self.disable_native_progress()
+
+    @_pytest.hookimpl(trylast=True)
+    def pytest_collection_finish(self, session: _Any) -> None:
+        self._started = _time.monotonic()
+        self._attach()
+        # Under xdist the main process collects nothing; workers report
+        # their collection through pytest_xdist_node_collection_finished.
+        self._collected(
+            [getattr(item, "nodeid", index) for index, item in enumerate(session.items)]
+        )
+
+    @_pytest.hookimpl(optionalhook=True)
+    def pytest_xdist_node_collection_finished(self, node: _Any, ids: _Any) -> None:
+        self._attach()
+        if not self.total:
+            self._started = _time.monotonic()
+            self._collected(list(ids))
+
+    def _collected(self, nodeids: list[_Any]) -> None:
+        if not nodeids:
+            return
+        self.total = len(nodeids)
+        self._order = {str(nodeid): index for index, nodeid in enumerate(nodeids)}
+        self._cells = ["pending"] * self.total
+        if self.enabled and not self._title_pushed:
             # Save the window title so finish() can restore it (xterm title
             # stack; terminals without one ignore both sequences).
             self._emit("\x1b[22;0t")
@@ -2115,6 +2146,7 @@ class _Progress:
         # The live block replaces pytest's per-test letters, which would
         # otherwise be appended to it.
         result = yield
+        self._attach()
         if self.enabled and not self._finished and result and len(result) == 3:
             category, _letter, word = result
             return category, "", word
@@ -2122,10 +2154,12 @@ class _Progress:
 
     @_pytest.hookimpl
     def pytest_runtest_logstart(self, nodeid: str, location: _Any) -> None:
+        self._attach()
         if not self.enabled:
             return
+        self._running.add(str(nodeid))
         path = str(nodeid).split("::", 1)[0]
-        if path != self._file:
+        if not self._parallel and path != self._file:
             self._flush_file()
             self._file, self._file_counts = path, {}
             self._file_started = _time.monotonic()
@@ -2142,9 +2176,11 @@ class _Progress:
                 self._durations[report.nodeid] = self._durations.get(
                     report.nodeid, 0.0
                 ) + float(duration)
+        self._attach()
         if not self.enabled or report.when not in {"setup", "call", "teardown"}:
             return
         if report.when == "teardown":
+            self._running.discard(str(report.nodeid))
             if (
                 report.outcome == "failed"
                 and report.nodeid in self._counted
@@ -2360,9 +2396,12 @@ class _Progress:
             line += style.bar(self.completed, total, bar_width)
         line += fraction + (counts if show_counts else "")
         line += elapsed if show_elapsed else ""
-        if not done and self._current and room >= 12:
+        current = self._current
+        if self._parallel and len(self._running) > 1:
+            current = f"{len(self._running)} running"
+        if not done and current and room >= 12:
             line += "  " + style.dim(
-                _truncate(self._current, room - 2, glyphs.ellipsis, keep="start")
+                _truncate(current, room - 2, glyphs.ellipsis, keep="start")
             )
         return line
 
@@ -2388,10 +2427,18 @@ class _Progress:
     def disable_native_progress(self) -> None:
         if not self.enabled or self.reporter is None:
             return
-        if hasattr(self.reporter, "_show_progress_info"):
+        # Save the reporter's own settings only once: a second call would
+        # record the values this method already replaced.
+        if (
+            hasattr(self.reporter, "_show_progress_info")
+            and self._native_progress is _NATIVE_PROGRESS_UNSET
+        ):
             self._native_progress = self.reporter._show_progress_info
             self.reporter._show_progress_info = False
-        if hasattr(self.reporter, "_showfspath"):
+        if (
+            hasattr(self.reporter, "_showfspath")
+            and self._native_fspath is _NATIVE_PROGRESS_UNSET
+        ):
             # File names would also land on the live block.
             self._native_fspath = self.reporter._showfspath
             self.reporter._showfspath = False

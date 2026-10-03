@@ -368,3 +368,72 @@ def test_fit_closes_a_hyperlink_it_cuts() -> None:
     cut = fit("see " + hyperlink("file:///a", "a" * 30), 10)
     assert visible_len(cut) == 10
     assert cut.endswith("\x1b]8;;\x1b\\…")
+
+
+def test_live_block_follows_xdist_workers_from_the_main_process() -> None:
+    reporter = _Reporter()
+    progress = _progress(reporter, numprocesses=2)
+    assert progress.enabled is True
+    # The xdist main process collects nothing itself.
+    progress.pytest_collection_finish(_items())
+    progress.pytest_xdist_node_collection_finished(
+        node=None, ids=["tests/a.py::one", "tests/b.py::two", "tests/a.py::three"]
+    )
+    progress.pytest_runtest_logstart("tests/a.py::one", ("", 1, ""))
+    progress.pytest_runtest_logstart("tests/b.py::two", ("", 1, ""))
+    assert "2 running" in _screen(reporter.written)[-1]
+    for nodeid in ("tests/a.py::one", "tests/b.py::two"):
+        for when in ("call", "teardown"):
+            progress.pytest_runtest_logreport(
+                SimpleNamespace(nodeid=nodeid, when=when, outcome="passed")
+            )
+    progress.pytest_runtest_logstart("tests/a.py::three", ("", 1, ""))
+    _run(progress, "tests/a.py::three", "passed")
+    progress.finish()
+    screen = _screen(reporter.written)
+    # Files interleave across workers, so there are no per-file lines.
+    assert not any(".py  " in line for line in screen)
+    assert "3/3" in screen[-1]
+
+
+def test_xdist_workers_never_draw() -> None:
+    from m3.pytest_plugin import _Progress
+
+    reporter = _Reporter()
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+        workerinput={"workerid": "gw0"},
+    )
+    assert _Progress(config).enabled is False
+
+
+def test_native_reporter_settings_survive_repeated_disable() -> None:
+    reporter = _Reporter()
+    progress = _progress(reporter)
+    progress.disable_native_progress()
+    progress._attach()
+    progress.restore_native_progress()
+    assert reporter._show_progress_info == "count"
+    assert reporter._showfspath is None
+
+
+def test_piped_xdist_run_keeps_pytest_letters() -> None:
+    """Under xdist the main process skips collection_finish; letters must
+    still be left alone when output is not a terminal."""
+
+    reporter = _Reporter(isatty=False)
+    from m3.pytest_plugin import _Progress
+
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=2),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
+    progress = _Progress(config)  # enabled before the terminal is checked
+    hook = progress.pytest_report_teststatus(report=None, config=None)
+    next(hook)
+    with pytest.raises(StopIteration) as stop:
+        hook.send(("passed", ".", "PASSED"))
+    assert stop.value.value == ("passed", ".", "PASSED")
+    assert progress.enabled is False
+    assert reporter._show_progress_info == "count"

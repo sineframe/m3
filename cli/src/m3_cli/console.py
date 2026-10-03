@@ -6,18 +6,20 @@ output keeps the plain lines printed by the supervisor.
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import shutil
 import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from m3._terminal import Style, fit
-
-from .branding import render_banner
+from .branding import M3_TAGLINE, render_banner
+from .project import project_name
+from .terminal import Style, fit, stream_is_utf8
 
 _REVEAL_FRAME_SECONDS = 0.02
 _CLIPBOARD_TIMEOUT_SECONDS = 2.0
@@ -26,6 +28,69 @@ _CLIPBOARD_TIMEOUT_SECONDS = 2.0
 def terminal_width() -> int:
     # Stay off the last column: some terminals wrap when it is written.
     return max(20, shutil.get_terminal_size((80, 24)).columns - 1)
+
+
+def stdout_style() -> Style | None:
+    """Styling for an interactive stdout, or None to keep the plain output."""
+
+    try:
+        interactive = sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return None
+    if not interactive or os.environ.get("TERM") == "dumb":
+        return None
+    return Style("NO_COLOR" not in os.environ, unicode=stream_is_utf8(sys.stdout))
+
+
+def print_start_banner(
+    root: Path,
+    run_id: str,
+    *,
+    ui: bool,
+    harnesses: Sequence[str],
+    suite: str | None,
+    num_processes: str | None,
+) -> bool:
+    """Print the banner before pytest starts; return whether it was shown."""
+
+    style = stdout_style()
+    if style is None:
+        return False
+    try:
+        version = importlib.metadata.version("sf-m3-cli")
+    except importlib.metadata.PackageNotFoundError:
+        version = ""
+    dot = f" {style.dim(style.glyphs.dot)} "
+
+    def row(key: str, value: str) -> str:
+        return f"{style.grey(key.ljust(9))}{value}"
+
+    details = []
+    if suite is not None:
+        details.append(f"suite {suite}")
+    if harnesses:
+        details.append(", ".join(harnesses))
+    if num_processes is not None:
+        details.append(f"{num_processes} workers")
+    project = project_name(root) or root.name
+    short_run = run_id.removeprefix("run-")[:7]
+    title = f"{style.bold('m3')} {style.dim(version)}".rstrip()
+    info = [
+        title,
+        style.dim(M3_TAGLINE),
+        "",
+        row("project", project),
+        row("run", short_run),
+    ]
+    if details:
+        info.append(row("with", dot.join(details)))
+    if ui:
+        info.append(row("report", "opens in your browser when the run ends"))
+    start_at_top()
+    print(file=sys.stdout)
+    print_banner(style, info, dot.join((title, project, short_run)))
+    print(flush=True)
+    return True
 
 
 def start_at_top() -> None:

@@ -8,15 +8,23 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, NoReturn
 
-from . import doctor, init, runtime, setup
 from .branding import M3_ASCII_ART
 from .errors import CLIError, UploadError
 from .server_options import add_server_arguments, normalize_server_groups
 
 if TYPE_CHECKING:
     from .supervisor import TestRunResult
+
+
+def _doctor() -> ModuleType:
+    # Imported on use: it loads the whole SDK, which `m3 test` must not wait
+    # for before showing its banner. Only reached for doctor or its errors.
+    from . import doctor
+
+    return doctor
 
 
 class _RedactingArgumentParser(argparse.ArgumentParser):
@@ -378,6 +386,24 @@ def main(argv: list[str] | None = None) -> int:
             args = _parser().parse_args(effective_argv)
         except SystemExit as exc:
             return exc.code if isinstance(exc.code, int) else 2
+        early_run_id: str | None = None
+        banner_shown = False
+        if args.command == "test":
+            # Show the banner before the slower imports and checks below.
+            from uuid import uuid4
+
+            from . import console
+            from .project import resolve_project_root as _early_root
+
+            early_run_id = f"run-{uuid4().hex}"
+            banner_shown = console.print_start_banner(
+                _early_root(args.project_root),
+                early_run_id,
+                ui=bool(getattr(args, "ui", False)),
+                harnesses=args.harness,
+                suite=args.suite,
+                num_processes=args.num_processes,
+            )
         if args.command == "test" or args.command == "ci":
             from .ci_credentials import validate_credential_mappings
             from .supervisor import (
@@ -426,6 +452,9 @@ def main(argv: list[str] | None = None) -> int:
                     runtime=args.runtime,
                     harness_cache_dir=args.harness_cache_dir,
                 )
+                if early_run_id is not None:
+                    test_kwargs["run_id"] = early_run_id
+                    test_kwargs["banner_shown"] = banner_shown
                 if is_ci or args.upload:
                     from uuid import uuid4
 
@@ -448,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
                     root = resolve_project_root(args.project_root)
                     if _timing.ENABLED:
                         # Start timing before credentials so they are measured.
-                        test_kwargs["run_id"] = f"run-{uuid4().hex}"
+                        test_kwargs.setdefault("run_id", f"run-{uuid4().hex}")
                         _start_timings(root, test_kwargs["run_id"])
 
                     resolved = resolved_environment(
@@ -539,47 +568,55 @@ def main(argv: list[str] | None = None) -> int:
 
             return run_ui(port=args.port, project_root=args.project_root)
         if args.command == "runtime":
+            from . import runtime
+
             return runtime.cache_command(
                 args.cache_command,
                 args.cache_dir,
                 project_root=args.project_root,
             )
         if args.command == "setup":
+            from . import setup
+
             try:
                 return setup.run(args)
             except setup.SetupError as exc:
                 print(f"m3 setup: {exc}", file=sys.stderr)
                 return 2
         if args.command == "init":
+            from . import init
+
             return init.run(args)
+        from . import doctor
+
         code, report = doctor.run(args)
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
             doctor.print_human(report)
         return code
-    except doctor.DoctorConfigurationError as exc:
+    except _doctor().DoctorConfigurationError as exc:
         if "--json" in effective_argv:
             print(
                 json.dumps(
                     {
                         "ready": False,
-                        "error": doctor._configuration_error_payload(
+                        "error": _doctor()._configuration_error_payload(
                             exc.configuration_error
                         ),
                     }
                 )
             )
         else:
-            doctor.print_configuration_error(exc.configuration_error)
+            _doctor().print_configuration_error(exc.configuration_error)
         return 2
-    except doctor.DoctorArgumentError as exc:
+    except _doctor().DoctorArgumentError as exc:
         if "--json" in effective_argv:
             print(json.dumps({"ready": False, "error": str(exc)}))
         else:
             print(f"m3 doctor: {exc}", file=sys.stderr)
         return 2
-    except doctor.DoctorProjectPythonError as exc:
+    except _doctor().DoctorProjectPythonError as exc:
         if "--json" in effective_argv:
             print(
                 json.dumps(
@@ -595,7 +632,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"m3 doctor: {exc}", file=sys.stderr)
         return 2
-    except doctor.DoctorCLIError as exc:
+    except _doctor().DoctorCLIError as exc:
         print(f"m3 doctor: {exc}", file=sys.stderr)
         return 2
     except CLIError as exc:
