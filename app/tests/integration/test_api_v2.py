@@ -1183,11 +1183,13 @@ def test_order_tool_catalog():
         "failed_tests": 0,
         "error_tests": 0,
         "skipped_tests": 0,
+        "xfailed_tests": 0,
         "test_outcome_counts": {
             "passed": 1,
             "failed": 0,
             "error": 0,
             "skipped": 0,
+            "xfailed": 0,
             "not_run": 0,
         },
         "effective_verdict_counts": {
@@ -1196,6 +1198,7 @@ def test_order_tool_catalog():
             "failed": 0,
             "incomplete": 0,
             "skipped": 0,
+            "xfailed": 0,
         },
         "not_run_tests": [],
         "collection_errors": 0,
