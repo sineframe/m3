@@ -519,7 +519,12 @@ class ProtocolKind(str, _Enum):
 
 class SafeHttpHeader(_FrozenModel):
     name: _Literal[
-        "content-type", "content-length", "retry-after", "request-id", "x-request-id"
+        "content-type",
+        "content-length",
+        "retry-after",
+        "request-id",
+        "x-request-id",
+        "www-authenticate",
     ]
     value: str
 

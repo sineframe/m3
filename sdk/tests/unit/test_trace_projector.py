@@ -1716,3 +1716,51 @@ def test_every_event_kind_has_an_explicit_projection_contract() -> None:
             }
         )
         assert _entry_for_event(source).kind == expected_kind, kind
+
+
+def _with_initialize_http(http: object) -> TraceResult:
+    trace = _trace()
+    response = trace.events[3]
+    patched = response.model_copy(
+        update={"payload": {**dict(response.payload), "http": http}}
+    )
+    return trace.model_copy(
+        update={"events": (*trace.events[:3], patched, *trace.events[4:])}
+    )
+
+
+def test_protocol_entry_projects_the_recorded_http_exchange() -> None:
+    assert _trace().view().protocol[0].http.state is ObservationState.NOT_EMITTED
+    view = _with_initialize_http(
+        {
+            "method": "POST",
+            "status_code": 401,
+            "headers": [
+                {"name": "www-authenticate", "value": 'Bearer realm="m3"'},
+            ],
+        }
+    ).view()
+    http = view.protocol[0].http
+    assert http.state is ObservationState.OBSERVED
+    assert http.value is not None
+    assert http.value.method == "POST"
+    assert http.value.status_code == 401
+    assert [(h.name, h.value) for h in http.value.headers] == [
+        ("www-authenticate", 'Bearer realm="m3"')
+    ]
+
+
+@pytest.mark.parametrize(
+    "http",
+    [
+        {"method": "POST", "status_code": "401"},
+        {"method": "POST", "status_code": 401, "headers": [{"name": "cookie"}]},
+        "401",
+    ],
+)
+def test_protocol_entry_marks_a_malformed_http_exchange_unavailable(
+    http: object,
+) -> None:
+    observation = _with_initialize_http(http).view().protocol[0].http
+    assert observation.state is ObservationState.UNAVAILABLE
+    assert observation.reason is ObservationReason.MALFORMED_SOURCE

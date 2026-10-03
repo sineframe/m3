@@ -222,6 +222,7 @@ class DirectTraceBridge:
         self._pending: dict[
             tuple[type[Any], Any, EventDirection], tuple[int, str | None, EventKind]
         ] = {}
+        self._http: dict[tuple[type[Any], Any], dict[str, Any]] = {}
         self._lock = Lock()
         self._factory_guard = _factory_lock(self._factory)
         self._final: TraceResult | None = None
@@ -381,6 +382,24 @@ class DirectTraceBridge:
             except Exception:
                 return
 
+    def observe_http_exchange(
+        self, jsonrpc_id: int | str, exchange: Mapping[str, Any]
+    ) -> None:
+        """Hold the HTTP response evidence for an outbound request.
+
+        The official client may replace a non-2xx response with a synthesized
+        JSON-RPC error, so the exchange is attached to whichever response or
+        error the session later observes for the same id.  A retried request
+        (for example, after an authentication challenge) keeps the latest.
+        """
+
+        key = _id_key(jsonrpc_id)
+        if key is None:
+            return
+        with self._lock:
+            if self._final is None:
+                self._http[key] = dict(exchange)
+
     def _correlation_direction(self, direction: Direction) -> EventDirection:
         return (
             EventDirection.CLIENT_TO_SERVER
@@ -458,6 +477,7 @@ class DirectTraceBridge:
     ) -> None:
         key = _id_key(message.id)
         pending: tuple[int, str | None, EventKind] | None = None
+        exchange: dict[str, Any] | None = None
         if key is not None:
             response_direction = self._correlation_direction(direction)
             request_direction = (
@@ -468,6 +488,8 @@ class DirectTraceBridge:
             pending_key = (key[0], key[1], request_direction)
             with self._lock:
                 pending = self._pending.pop(pending_key, None)
+                if request_direction is EventDirection.CLIENT_TO_SERVER:
+                    exchange = self._http.pop(key, None)
         method = pending[1] if pending is not None else None
         request_kind = pending[2] if pending is not None else EventKind.MCP_REQUEST
         if is_error:
@@ -487,7 +509,10 @@ class DirectTraceBridge:
             direction=self._correlation_direction(direction),
             request_sequence=pending[0] if pending is not None else None,
             phase=_phase(method),
-            payload_extra=_semantic_fields(message),
+            payload_extra={
+                **_semantic_fields(message),
+                **({"http": exchange} if exchange is not None else {}),
+            },
         )
         if method == "initialize" and not is_error:
             self._create(
@@ -591,6 +616,7 @@ class DirectTraceBridge:
         with self._lock:
             if self._final is not None:
                 return self._final.model_copy()
+            self._http.clear()
             allowed = {
                 "cleanup_failed",
                 "persistence_failed",
