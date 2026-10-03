@@ -48,7 +48,7 @@ recovery are unsupported and terminalize when ambiguous.
 
 ## Viewer database
 
-`m3 ui` currently opens `.m3/executions.sqlite` in the current project. It does
+`m3 ui` currently opens `.m3/executions.sqlite` under the project root. It does
 not accept the custom path supported by `m3 test --results-db`.
 
 ## Managed runtimes

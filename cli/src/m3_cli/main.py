@@ -157,6 +157,9 @@ def _parser() -> argparse.ArgumentParser:
     ui_parser.add_argument(
         "--port", type=int, default=8000, metavar="PORT", help="UI port"
     )
+    ui_parser.add_argument(
+        "--project-root", type=Path, metavar="PATH", help="project root"
+    )
 
     runtime_parser = subparsers.add_parser(
         "runtime", help="manage managed runtime caches"
@@ -396,10 +399,16 @@ def main(argv: list[str] | None = None) -> int:
                     test_environment,
                 )
                 from .ci_upload import control_plane_url
-                from .supervisor import discover_env_file, run_test_with_runs
+                from .supervisor import (
+                    discover_env_file,
+                    resolve_project_root,
+                    run_test_with_runs,
+                )
 
                 resolved = resolved_environment(
-                    discover_env_file(args.env_file, args.project_root)
+                    discover_env_file(
+                        args.env_file, resolve_project_root(args.project_root)
+                    )
                 )
                 if args.upload:
                     resolved[ACCESS_TOKEN_ENV] = access_token(
@@ -427,9 +436,13 @@ def main(argv: list[str] | None = None) -> int:
             return run_test(**test_kwargs)
         if args.command == "upload":
             from .ci_upload import publish_run
-            from .supervisor import _absolute_database, discover_env_file
+            from .supervisor import (
+                _absolute_database,
+                discover_env_file,
+                resolve_project_root,
+            )
 
-            root = (args.project_root or Path.cwd()).resolve()
+            root = resolve_project_root(args.project_root)
             database = _absolute_database(args.results_db, project_root=root)
             try:
                 publish_run(
@@ -462,7 +475,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "ui":
             from .supervisor import run_ui
 
-            return run_ui(port=args.port)
+            return run_ui(port=args.port, project_root=args.project_root)
         if args.command == "runtime":
             return runtime.cache_command(
                 args.cache_command,

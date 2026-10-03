@@ -9,8 +9,9 @@ code. Plain pytest without the storage plugin keeps SDK executions in memory.
 
 ## `m3 ui` shows no history
 
-Run it from the project containing `.m3/executions.sqlite`. `m3 ui` does not
-accept the custom path used by `m3 test --results-db`.
+Run it from the project or pass `--project-root PATH`; it reads
+`.m3/executions.sqlite` under the project root. `m3 ui` does not accept the
+custom path used by `m3 test --results-db`.
 
 ## Trace is not finalized
 

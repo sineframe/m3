@@ -129,7 +129,9 @@ the OS default. The standalone cache commands accept `--cache-dir` (alias
 | macOS | `~/Library/Caches/m3/harnesses` |
 | Linux and other supported Unix targets | `$XDG_CACHE_HOME/m3/harnesses`, falling back to `~/.cache/m3/harnesses` |
 
-`m3 runtime cache list` and `prune` also accept `--project-root`. Without an
+`m3 runtime cache list` and `prune` also accept `--project-root`, which
+defaults to the nearest `m3.toml` at or above the current directory, stopping at
+the Git root. Without an
 explicit path or `M3_HARNESS_CACHE_DIR`, M3 uses the same OS default. Cache roots
 must be outside the project and `PATH`, and outside blocked system directories.
 Symlinked cache paths are rejected. In CI, retain the selected cache directory

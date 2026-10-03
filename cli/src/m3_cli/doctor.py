@@ -223,10 +223,11 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         ProjectPythonError,
         discover_env_file,
         resolve_project_python,
+        resolve_project_root,
         validate_project_python,
     )
 
-    root = (args.project_root or Path.cwd()).resolve()
+    root = resolve_project_root(args.project_root)
     environment = (
         _read_selected_environment(discover_env_file(args.env_file, root))
         if any(kind == "config" for kind, _ in requirements)
@@ -290,7 +291,7 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     include_config = any(kind == "config" for kind, _ in requirements)
     if include_config:
         try:
-            config = load_config(env=environment, cwd=args.project_root)
+            config = load_config(env=environment, cwd=root)
         except ConfigError as error:
             raise DoctorConfigurationError(error) from None
         except (OSError, TypeError, ValueError):
