@@ -60,4 +60,4 @@ To require a second request in a later protocol round, compose bound leaves with
 The tool assertion runs after the action because one logical call owns all
 retries. Assert one logical operation and its ordered attempts.
 
-Tool calls, prompt retrieval, resource reads, and agent actions bind the plan at different API boundaries. Agent-driven elicitation also depends on harness capability and may require explicit tool approval. Identify the execution mode before applying an example. Next: [submit input to a paused execution](managed-input.md).
+Tool calls, prompt retrieval, resource reads, and agent actions bind the plan at different API boundaries. Agent-driven elicitation also depends on harness capability, and ACP agents that ask before calling tools need explicit tool approval through `permission_policy`. Identify the execution mode before applying an example. Next: [submit input to a paused execution](managed-input.md).

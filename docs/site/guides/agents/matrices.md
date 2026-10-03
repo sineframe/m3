@@ -9,7 +9,7 @@ Use `HarnessMatrix` to run the same MCP cases across harnesses and trials. A mat
 
 ## Requirements
 
-This live example runs four Codex executions. Install M3 with pytest, sign in to Codex, and set `M3_DOCS_CODEX_MODEL` to a model available to that login. Review the tool approval prompt. The test restricts M3 tool access to the selected shipping tool.
+This live example runs four Codex executions. Install M3 with pytest, sign in to Codex, and set `M3_DOCS_CODEX_MODEL` to a model available to that login. The test restricts M3 tool access to the selected shipping tool, and M3 approves Codex's calls to it.
 
 ## Define and run the cases
 

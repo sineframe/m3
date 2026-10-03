@@ -23,10 +23,7 @@ This checks the server response directly.
 ```python
 from m3 import expect
 
-result = agent.run("Quote a 2 kg parcel in the local zone.",
-    server=server,
-    permission_policy="allow",
-)
+result = agent.run("Quote a 2 kg parcel in the local zone.", server=server)
 
 expect(result).to_have_tool_call("shipping_quote", arguments={"weight_kg": 2, "zone": "local"},
     status="success",
@@ -34,8 +31,13 @@ expect(result).to_have_tool_call("shipping_quote", arguments={"weight_kg": 2, "z
 ```
 
 This checks the captured call, its arguments, and its result status. It does
-not accept the agent's prose as proof that the call occurred. Grant tool
-approval only to the scoped test server and workspace.
+not accept the agent's prose as proof that the call occurred.
+
+Codex needs no permission setting for this call; M3 approves it from the tool
+selection. An ACP agent that asks permission before calling a tool is denied
+by default, so pass `permission_policy="allow"` to `agent.run(...)` for it.
+Grant that only to a trusted agent with the scoped test server and workspace,
+because it also approves the agent's requests to run commands or edit files.
 
 See the [matcher reference](reference-python-m3-matchers.md) for count, choice,
 and result predicates.

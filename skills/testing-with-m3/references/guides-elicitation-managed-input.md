@@ -6,7 +6,7 @@ Managed input lets an agent execution pause while it waits for a person’s resp
 
 ## Requirements
 
-This example uses Codex CLI `0.156.1` and a model available to your Codex login. That adapter supports action-bound elicitation in the tested version. Set `M3_DOCS_CODEX_MODEL`, install M3 with pytest, and review Codex’s tool approval prompt. The run uses a SQLite execution store because managed input needs a persistent store that implements M3’s managed-input API. Provider access and managed runtime acquisition require network access.
+This example uses Codex CLI `0.156.1` and a model available to your Codex login. That adapter supports action-bound elicitation in the tested version. Set `M3_DOCS_CODEX_MODEL` and install M3 with pytest. M3 approves Codex's call to the selected `book_shipment` tool. The run uses a SQLite execution store because managed input needs a persistent store that implements M3's managed-input API. Provider access and managed runtime acquisition require network access.
 
 The companion `shipping_server.py` in the [runnable project](../examples/elicitation-managed-input) implements `book_shipment`: its first call requests the `shipping_address` form, and its next call returns a booked result only when that keyed response matches. The project includes both this server and the test below.
 

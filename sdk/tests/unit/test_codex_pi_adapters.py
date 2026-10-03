@@ -51,6 +51,7 @@ from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerReco
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
     Codex,
+    FullToolPolicy,
     PermissionPolicy,
     Pi,
     RestrictiveToolPolicy,
@@ -470,9 +471,38 @@ async def test_codex_native_app_server_handshake_multiturn_and_usage() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("permission_mode", ("allow", "deny"))
-async def test_codex_mcp_tool_approval_uses_session_permission_policy(
+@pytest.mark.parametrize(
+    ("tool_policy", "permission_mode", "expected"),
+    [
+        (FullToolPolicy(acknowledge_risk=True), "deny", ("allow", "tool_policy")),
+        (
+            RestrictiveToolPolicy(allowed_tools=("fixture:shipping_quote",)),
+            "deny",
+            ("allow", "tool_policy"),
+        ),
+        # tools=[]: an empty restrictive policy denies every tool, and the
+        # permission policy cannot widen it.
+        (RestrictiveToolPolicy(), "allow", ("deny", "tool_policy_denied")),
+        (
+            RestrictiveToolPolicy(allowed_tools=("fixture:other_tool",)),
+            "allow",
+            ("deny", "tool_policy_denied"),
+        ),
+        (
+            RestrictiveToolPolicy(
+                allowed_tools=("fixture:shipping_quote",),
+                denied_tools=("fixture:shipping_quote",),
+            ),
+            "allow",
+            ("deny", "tool_policy_denied"),
+        ),
+    ],
+)
+async def test_codex_selected_server_mcp_approval_follows_tool_policy(
+    tool_policy: object,
     permission_mode: str,
+    expected: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     configuration = HarnessServerConfig(
         key="fixture",
@@ -490,24 +520,30 @@ async def test_codex_mcp_tool_approval_uses_session_permission_policy(
         base.spec,
         base.servers,
         base.configurations,
-        base.tool_policy,
+        tool_policy,  # type: ignore[arg-type]
         Interactions(permission_policy=PermissionPolicy(mode=permission_mode)),
     )
     adapter = CodexHarnessAdapter(
         executable=str(CODEX_FIXTURE),
         environment={"M3_CODEX_FIXTURE_APPROVAL": "1"},
     )
+
+    async def ready_without_capture_proxy(_launch: HarnessLaunch) -> object:
+        # Non-empty policies normally require a capture proxy; this test has
+        # none and exercises only the approval answer for the fixture call.
+        return adapter._capabilities.readiness()
+
+    monkeypatch.setattr(adapter, "preflight", ready_without_capture_proxy)
     session = await adapter.open(launch)
     try:
         result = await session.send(HarnessTurnRequest.from_message("quote"))
         assert result.status == "completed"
-        # Codex reports the requested native MCP item even when the permission
-        # callback denies execution; the receipt records the actual decision.
-        assert len(result.tool_calls) == 1
+        # Codex approval for a selected server follows the tool policy for the
+        # requested tool; the native permission policy neither grants nor
+        # blocks it.
         assert launch.interactions is not None
         receipts = launch.interactions.receipts()
-        assert len(receipts) == 1
-        assert receipts[0].decision == permission_mode
+        assert [(item.decision, item.reason) for item in receipts] == [expected]
     finally:
         await session.close()
 

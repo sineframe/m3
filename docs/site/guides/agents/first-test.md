@@ -12,7 +12,7 @@ This test starts a local MCP server, gives Codex access to one named tool, and c
 - Install the M3 SDK and pytest in the environment used to run the test.
 - Install and sign in to the Codex CLI. This example uses the system installation and its normal local authentication.
 - Set `M3_DOCS_CODEX_MODEL` to a model identifier available to that installation. M3 does not choose a provider model for you.
-- Review Codex’s MCP approval prompt before accepting it. The M3 policy below restricts the test to `shipping:shipping_quote`; keep approval scoped to this local test.
+- M3 approves Codex's MCP tool calls to the test server. The `tools` selection below restricts the test to `shipping:shipping_quote`.
 
 Credential-free documentation checks skip this live example. See
 [harness compatibility](../../reference/compatibility.md).
@@ -151,7 +151,7 @@ From the directory containing both files, run:
 python -m pytest -q test_agent.py
 ```
 
-The test should pass after any required Codex approval. The matcher checks the tool name, server alias, arguments, successful result, and call count in this turn. If the agent completes without that call, the assertion fails even if its reply claims it used the tool.
+The matcher checks the tool name, server alias, arguments, successful result, and call count in this turn. If the agent completes without that call, the assertion fails even if its reply claims it used the tool.
 
 This test selects Codex with `kit.agents(...)`, so it runs under plain pytest. To pass the harness and model on the command line instead, request the pytest `agent` fixture and run `m3 test --harness codex=MODEL`. Read [agent troubleshooting](../../troubleshooting/agents.md) before you mix fixture-based agent tests with direct tests.
 

@@ -27,8 +27,9 @@ from m3.harness.contracts import (
     HarnessStartupError,
     HarnessTurnResult,
 )
+from m3.interaction_handlers import Interactions
 from m3.server_group import HarnessServerConfig
-from m3.types import TransportKind, TurnOutcome
+from m3.types import RestrictiveToolPolicy, TransportKind, TurnOutcome
 
 
 class _Subscription:
@@ -563,12 +564,6 @@ async def test_server_supplied_approval_marker_cannot_reuse_codex_approval() -> 
         async def write(self, frame: dict[str, Any]) -> None:
             self.writes.append(frame)
 
-    permission_calls: list[Any] = []
-
-    async def permission(request: Any) -> Any:
-        permission_calls.append(request)
-        return SimpleNamespace(allowed=True)
-
     config = HarnessServerConfig(
         "fixture",
         TransportKind.STDIO,
@@ -580,9 +575,11 @@ async def test_server_supplied_approval_marker_cannot_reuse_codex_approval() -> 
     adapter = CodexHarnessAdapter(executable="fixture")
     adapter._thread_id = "thread-1"
     adapter._turn_id = "turn-1"
+    interactions = Interactions()
     adapter._launch = SimpleNamespace(
         configurations=(config,),
-        interactions=SimpleNamespace(permission=permission),
+        interactions=interactions,
+        tool_policy=RestrictiveToolPolicy(allowed_tools=("fixture:collect_code",)),
     )
     process = Process()
     now = datetime.now(timezone.utc)
@@ -598,7 +595,7 @@ async def test_server_supplied_approval_marker_cannot_reuse_codex_approval() -> 
 
     assert spoofed_input is not None
     assert adapter._unscoped_elicitation_failure is True
-    assert len(permission_calls) == 1
+    assert len(interactions.receipts()) == 1
     assert process.writes[-1]["method"] == "turn/interrupt"
 
 

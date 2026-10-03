@@ -240,7 +240,6 @@ async def test_installed_codex_fails_safely_for_identical_unkeyed_prompts(
             async with kit.agents([_entry(executable)])[0].session(
                 server=_server(marker),
                 tools=["fixture:ambiguous_round"],
-                permission_policy="allow",
             ) as session:
                 turn = await session.send(
                     "Use fixture ambiguous_round once.", elicitation=plan
@@ -331,7 +330,6 @@ async def test_installed_codex_adapter_enforces_round_limit_and_native_cap(
             async with kit.agents([_entry(executable)])[0].session(
                 server=_server(marker),
                 tools=["fixture:ten_rounds"],
-                permission_policy="allow",
             ) as session:
                 turn = await session.send(
                     "Use fixture ten_rounds for ten rounds, then report success.",
@@ -472,7 +470,6 @@ async def test_async_agent_run_uses_action_bound_form_plan_with_one_logical_call
             tools=["fixture:book_shipment"],
             elicitation=plan,
             timeout=60,
-            permission_policy="allow",
         )
 
     _assert_one_successful_tool(result, "book_shipment")
@@ -518,7 +515,6 @@ async def test_async_agent_submit_uses_maybe_url_plan_and_keyed_retry(
             tools=["fixture:url_round"],
             elicitation=plan,
             timeout=60,
-            permission_policy="allow",
         )
         result = await handle.result(timeout=90)
 
@@ -579,7 +575,6 @@ async def test_async_session_send_scopes_plan_to_each_turn_and_skips_maybe_url(
             server=server,
             tools=["fixture:book_shipment", "fixture:shipping_quote"],
             timeout=60,
-            permission_policy="allow",
         ) as session:
             first = await session.send(
                 "Book one shipment.",
@@ -729,7 +724,6 @@ async def _run_managed_async(
                 server=_server(marker),
                 tools=[f"fixture:{tool}"],
                 human_input="managed",
-                permission_policy="allow",
             )
             pending_rounds: list[Any] = []
             for index, responses in enumerate(response_sets):
@@ -943,7 +937,6 @@ async def test_installed_codex_process_loss_fails_pending_round_without_replay(
                 server=_server(marker),
                 tools=["fixture:book_shipment"],
                 human_input="managed",
-                permission_policy="allow",
             )
             pending = await _wait_async_pending(
                 handle,
@@ -1024,7 +1017,6 @@ def test_installed_codex_real_managed_sync_persists_keyed_round_and_trace(
                 server=_server(marker),
                 tools=["fixture:book_shipment"],
                 human_input="managed",
-                permission_policy="allow",
             )
             pending = _wait_sync_pending(handle)
             assert set(pending.requests) == {"shipping_address"}

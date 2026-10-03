@@ -96,7 +96,6 @@ def test_codex_planned_non_accept_response_omits_wire_content_and_keeps_meta(
         tools=[f"fixture:{tool}"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, {
@@ -176,7 +175,6 @@ def test_same_codex_session_uses_fresh_scope_for_two_planned_turns(
         server=server,
         tools=["fixture:book_shipment", "fixture:book_verified_shipment"],
         timeout=120,
-        permission_policy="allow",
     ) as session:
         first = session.send(
             "Book one local shipment and report its status.",
@@ -258,7 +256,6 @@ def test_installed_codex_fails_when_required_plan_is_unused(
         tools=["fixture:shipping_quote"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     assert result.snapshot.outcome is ExecutionOutcome.FAILED

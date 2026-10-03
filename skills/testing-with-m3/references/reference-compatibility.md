@@ -20,10 +20,11 @@ elicitation, or cancellation behavior. Each agent guide names the tested path.
 
 ## Codex elicitation
 
-Codex owns tool selection, dispatch, approval, retries, and cancellation. M3
-observes and answers supported native requests when their association is
-unambiguous. Overlapping same-server approval or elicitation cannot currently
-be associated reliably and is rejected. The effective tested plan limit is
+Codex owns tool selection, dispatch, retries, and cancellation. M3 answers
+Codex's tool approval for calls to bound servers from the test's tool
+selection, and observes and answers supported native requests when their
+association is unambiguous. Overlapping same-server approval or elicitation
+cannot currently be associated reliably and is rejected. The effective tested plan limit is
 nine surfaced prompts. Prompt/resource elicitation and sampling/roots callbacks
 inside a native Codex tool round are not verified supported paths.
 

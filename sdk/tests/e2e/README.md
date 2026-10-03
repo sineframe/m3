@@ -50,10 +50,10 @@ in the existing push lifecycle and examples jobs. The original four-suite gate
 passed 40 tests; the two approval-spoof cases were added afterward and are now
 included in those required jobs. Coverage includes accept/decline/cancel
 mappings for form and URL prompts, two planned actions in one session, unused
-required-plan failure, and approval-metadata spoofing. The example tests
-explicitly set `permission_policy="allow"` for Codex MCP tool approval; this is
-independent of the action-bound MRTR plan. These tests use a local deterministic
-provider and make no paid provider calls.
+required-plan failure, and approval-metadata spoofing. M3 answers Codex MCP tool
+approval from the session tool selection, independent of the action-bound MRTR
+plan. These tests use a local deterministic provider and make no paid provider
+calls.
 
 Set `M3_CODEX_EXECUTABLE` if the binary is not on `PATH`; the tests require
 `codex-cli 0.156.1`. Read the

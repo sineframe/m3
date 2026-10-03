@@ -138,7 +138,6 @@ def test_qualified_codex_agent_retries_one_logical_tool_call(
         tools=["fixture:book_shipment"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     _assert_completed_call(result, "book_shipment", codex_example)
@@ -170,7 +169,6 @@ def test_unqualified_codex_agent_leaves_tool_choice_to_provider(
         tools=["fixture:book_shipment"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     _assert_completed_call(result, "book_shipment", codex_example)
@@ -204,7 +202,6 @@ def test_codex_address_choice_then_url_in_one_tool_call(
         tools=["fixture:book_verified_shipment"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     _assert_completed_call(result, "book_verified_shipment", codex_example)
@@ -256,7 +253,6 @@ def test_codex_optional_address_choice_then_url(
         tools=["fixture:book_verified_shipment"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     _assert_completed_call(result, "book_verified_shipment", codex_example)
@@ -302,7 +298,6 @@ def test_codex_two_addresses_in_one_round_then_url(
         tools=["fixture:book_verified_shipment"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     _assert_completed_call(result, "book_verified_shipment", codex_example)
@@ -351,7 +346,6 @@ def test_codex_session_attaches_plan_only_to_second_turn(
         server=server,
         tools=["fixture:shipping_quote", "fixture:book_shipment"],
         timeout=120,
-        permission_policy="allow",
     ) as session:
         first = session.send(
             "Use m3-gate:shipping_quote for a 2 kg parcel in the local zone.",
@@ -418,7 +412,6 @@ def test_codex_submit_binds_plan_to_submitted_action(
         tools=["fixture:book_shipment"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
     result = handle.result(timeout=120)
 

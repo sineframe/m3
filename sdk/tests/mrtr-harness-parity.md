@@ -55,7 +55,7 @@ These are observed against unmodified Codex 0.156.1 by
 | Accepted URL response is retried with `content:{}`. Decline/cancel retry with action and optional `_meta`, with content omitted. | **Verified by the 40-test gate:** M3 planned accept/decline/cancel responses for form and URL preserve the native wire shape, including omitted `content` and retained response metadata for non-accept actions. The URL is never visited. |
 | An empty request map is automatically retried using `requestState`, with no native prompt and no `inputResponses`. | Do not consume a plan step or fabricate a prompt for state-only `input_required`; observe and verify Codex's exact retry. |
 | Codex allows nine MRTR prompts/rounds; its tenth is rejected before a tenth native prompt is surfaced. | The effective Codex limit must not exceed nine, regardless of the common API's Pi default. Pi's ten-round success is not portable. |
-| Tool approval is a separate native request marked `_meta.codex_approval_kind=mcp_tool_call`. | Leave tool approval and policy decisions with Codex; never answer approval from an elicitation plan. |
+| Tool approval is a separate native request marked `_meta.codex_approval_kind=mcp_tool_call`. | M3 answers tool approval from the session tool selection, never from an elicitation plan. |
 | Codex App Server 0.156.1 exposes no native request-to-item ID on MCP tool-approval frames. A second same-server approval while an earlier approved item is active is ambiguous with forged server elicitation metadata. | M3 fails closed and rejects the overlapping same-server approval. Concurrent same-server native approvals are unsupported until Codex exposes a reliable association field. |
 | Cancelling with a native elicitation outstanding interrupts the turn; Codex sends no MCP retry/cancel notification and no resolution for that request. | M3 must let Codex own cancellation and terminalize the pending action without manufacturing a response, retry, or cancel notification. |
 
@@ -185,9 +185,9 @@ tests use installed Pi 0.85.1 and a deterministic local provider.
 [`test_modern_mrtr_codex.py`](../examples/tests/test_modern_mrtr_codex.py)
 runs the harness-bound examples from
 the [hosted elicitation guide](https://m3.sineframe.com/docs/guides/elicitation/plans) through installed Codex 0.156.1 and
-the local deterministic provider. Each test gives the separate Codex tool
-approval path an explicit `permission_policy="allow"`, then verifies that the
-MRTR plan handles only native elicitation prompts. Execution reaches the
+the local deterministic provider. M3 answers the separate Codex tool approval
+path from the session tool selection; each test verifies that the MRTR plan
+handles only native elicitation prompts. Execution reaches the
 expected MCP retries and Codex turn completion. All seven guide cases and the
 action-scope cases passed the 40-test pinned binary gate, including the strict
 assertion that each operation is one logical call with its wire attempts
@@ -302,9 +302,10 @@ The pinned Codex 0.156.1 gate checks the following implementation guarantees:
 - [x] Identical exposed prompts with unequal answers fail before any native
   response; equal-response indistinguishable prompts are treated as a
   validated multiset, independent of Codex's reversed order.
-- [x] Tool approval, tool choice, transport forwarding, retry, and cancellation
-  remain Codex-owned. M3 never synthesizes tool calls, retries, approvals, or
-  MCP cancellation notifications.
+- [x] Tool choice, transport forwarding, retry, and cancellation remain
+  Codex-owned. M3 answers native tool approval only from the session tool
+  selection and never synthesizes tool calls, retries, or MCP cancellation
+  notifications.
 - [x] Codex's effective limit cannot exceed nine native MRTR prompts, and
   configured per-action/session limits fail or clamp consistently before
   Codex reaches its unobservable tenth request.
