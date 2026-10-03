@@ -95,9 +95,9 @@ same sources in this order and use the first one that applies:
    - `m3 doctor` has no fallback and reports `no project environment is
      configured; run m3 setup`.
 
-Run `m3 doctor` to see the choice: it prints `project environment source` and
-`project Python` for the interpreter it selected. To work in another
-environment, activate it or pass `--python PATH` to each command:
+When the project environment is ready, `m3 doctor` prints the interpreter it
+checked on a `project Python` line. To work in another environment, activate it
+or pass `--python PATH` to each command:
 
 ```sh
 m3 setup --python /path/to/env/bin/python
@@ -109,16 +109,24 @@ A few differences between the commands matter when the choice is not what you
 expected:
 
 - `m3 setup` installs only into an isolated environment. It refuses a system
-  or global Python, Python older than 3.10, and an active Conda `base`
-  environment (`CONDA_DEFAULT_ENV=base`). `m3 test` and `m3 doctor` do not
-  apply those checks; they only verify that the interpreter can import M3, so
-  they accept any interpreter that has the matching SDK installed.
+  or global Python and Python older than 3.10. When there is no `--python` and
+  no `VIRTUAL_ENV`, it also refuses an active Conda `base` environment:
+  `CONDA_PREFIX` is set and `CONDA_DEFAULT_ENV` is `base`, in any letter case.
+  `m3 test` and `m3 doctor` do not apply those checks; they only verify that
+  the interpreter can import M3, so they accept any interpreter that has the
+  matching SDK installed.
 - If `VIRTUAL_ENV` or `CONDA_PREFIX` points at an environment with no Python
-  executable, `m3 setup` stops with `active VIRTUAL_ENV environment is
-  unavailable`. `m3 test` and `m3 doctor` skip that variable and continue
-  with the project `.venv`. When there is no `.venv`, `m3 test` continues to
-  the system fallback above, and `m3 doctor` stops with `the active project
-  environment is unavailable`.
+  executable, the commands differ:
+  - `m3 setup` stops with `active VIRTUAL_ENV environment is unavailable` (or
+    `active CONDA_PREFIX environment is unavailable`).
+  - `m3 test` skips that variable and moves to the next source in the order
+    above, so an unusable `VIRTUAL_ENV` falls through to `CONDA_PREFIX`, then
+    `.venv`, then the system fallback.
+  - `m3 doctor` looks only at the first variable that is set: `VIRTUAL_ENV`,
+    otherwise `CONDA_PREFIX`. If that environment is unusable, it uses the
+    project `.venv` when `.venv` has a Python executable, and otherwise stops
+    with `the active project environment is unavailable`. It never tries
+    `CONDA_PREFIX` after an unusable `VIRTUAL_ENV`.
 - Because `m3 test` can fall back to the system Python on a project without
   `.venv`, it can report missing M3 packages for an interpreter you never
   chose, while `m3 doctor` reports that no environment is configured. Run

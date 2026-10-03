@@ -6,7 +6,8 @@ M3 picks the project environment from `--python`, `VIRTUAL_ENV`,
 `CONDA_PREFIX`, then the project `.venv`, and the commands differ when nothing
 applies.
 [Choose the project environment](start-install.md#choose-the-project-environment)
-gives the full order. Run `m3 doctor` to see which interpreter it selected.
+gives the full order. When the project environment is ready, `m3 doctor` prints
+the interpreter it checked as `project Python`.
 
 ## `project m3 version ... does not match CLI SDK version ...; install matching versions`
 
@@ -37,18 +38,22 @@ See [Choose the project environment](start-install.md#choose-the-project-environ
 
 ## `active Conda base is not a project environment; create or activate a project environment`
 
-Printed by `m3 setup` when `CONDA_PREFIX` is set and `CONDA_DEFAULT_ENV` is
-`base`. Activate a project environment, deactivate `base`, or pass
-`--python PATH`.
+Printed by `m3 setup` when there is no `--python`, no `VIRTUAL_ENV` is set,
+`CONDA_PREFIX` is set, and `CONDA_DEFAULT_ENV` is `base` in any letter case
+(`BASE` also matches). The check does not look at whether `CONDA_PREFIX` exists.
+With a `VIRTUAL_ENV` set, setup never reaches this check: a usable one is
+selected, and an unusable one stops with the `VIRTUAL_ENV` message below.
+Activate a project environment, deactivate `base`, or pass `--python PATH`.
 
 ## `active VIRTUAL_ENV environment is unavailable`
 
 Printed by `m3 setup` (and `active CONDA_PREFIX environment is unavailable` for
 Conda) when the variable points at a directory with no Python executable, for
 example a deleted environment in a shell that is still activated. Run
-`deactivate`, or recreate the environment. `m3 test` and `m3 doctor` skip such a
-variable instead of stopping; when there is no `.venv`, `m3 doctor` prints `the
-active project environment is unavailable`.
+`deactivate`, or recreate the environment. `m3 test` skips such a variable and
+moves to the next source, while `m3 doctor` falls back to a working `.venv` or
+prints `the active project environment is unavailable` when there is none. See
+[Choose the project environment](start-install.md#choose-the-project-environment).
 
 ## `refusing to install into a system or global Python; use an isolated environment`
 
@@ -67,13 +72,24 @@ Printed by `m3 setup` when `.venv` exists in the project root but has no Python
 executable, for example after its `bin` directory was removed. Delete `.venv` and rerun
 `m3 setup`, or pass `--python PATH`.
 
-## `selected Python executable is unavailable` and `could not be started`
+## `selected Python executable is unavailable`, `could not be started`, and `returned an invalid check result`
 
 `m3 setup --python PATH` prints `selected Python executable is unavailable`
-when `PATH` is not an existing file, and `selected Python executable could not
-be started` when the file does not run as Python. `m3 test --python PATH` and
-`m3 doctor --python PATH` print `the selected project Python could not be
-started` in both cases. Check the path by running it with `--version`.
+when `PATH` is not an existing file. `m3 test --python PATH` and `m3 doctor
+--python PATH` have no such check: a missing path is reported as `the selected
+project Python could not be started`.
+
+`selected Python executable could not be started` (`m3 setup`) and `the
+selected project Python could not be started` (`m3 test`, `m3 doctor`) mean the
+program could not be launched (for example the file is not executable), exited
+with a non-zero status, or did not answer in time.
+
+A program that starts and exits successfully but is not Python, such as
+`/bin/echo`, gives `selected Python executable returned an invalid check
+result` from `m3 setup` and `the selected project Python returned an invalid
+check result` from `m3 test` and `m3 doctor`.
+
+In all cases, check the path by running it with `--version`.
 
 ## `could not install the matching M3 SDK from PyPI`
 
