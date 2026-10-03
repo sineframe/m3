@@ -86,7 +86,8 @@
               "incomplete": 0,
               "passed": 3,
               "pending": 0,
-              "skipped": 0
+              "skipped": 0,
+              "xfailed": 0
             },
             "error_tests": 0,
             "executions": 1,
@@ -96,13 +97,15 @@
             "passed_tests": 3,
             "run_status": "finished",
             "skipped_tests": 0,
+            "xfailed_tests": 0,
             "terminal_executions": 1,
             "test_outcome_counts": {
               "error": 0,
               "failed": 0,
               "not_run": 0,
               "passed": 3,
-              "skipped": 0
+              "skipped": 0,
+              "xfailed": 0
             },
             "tests": 3
           },
@@ -727,7 +730,8 @@
               "incomplete": 0,
               "passed": 0,
               "pending": 0,
-              "skipped": 0
+              "skipped": 0,
+              "xfailed": 0
             },
             "error_tests": 0,
             "executions": 1,
@@ -737,13 +741,15 @@
             "passed_tests": 0,
             "run_status": "finished",
             "skipped_tests": 0,
+            "xfailed_tests": 0,
             "terminal_executions": 1,
             "test_outcome_counts": {
               "error": 0,
               "failed": 2,
               "not_run": 0,
               "passed": 0,
-              "skipped": 0
+              "skipped": 0,
+              "xfailed": 0
             },
             "tests": 2
           },
@@ -1220,7 +1226,8 @@
               "incomplete": 0,
               "passed": 3,
               "pending": 0,
-              "skipped": 0
+              "skipped": 0,
+              "xfailed": 0
             },
             "error_tests": 0,
             "executions": 1,
@@ -1230,13 +1237,15 @@
             "passed_tests": 3,
             "run_status": "finished",
             "skipped_tests": 0,
+            "xfailed_tests": 0,
             "terminal_executions": 1,
             "test_outcome_counts": {
               "error": 0,
               "failed": 0,
               "not_run": 0,
               "passed": 3,
-              "skipped": 0
+              "skipped": 0,
+              "xfailed": 0
             },
             "tests": 3
           },
