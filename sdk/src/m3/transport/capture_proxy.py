@@ -360,6 +360,7 @@ class McpWireEvent:
     latency_ms: float | None = None
     provenance: str = "wire_observed"
     raw_evidence_ref: str | None = None
+    occurred_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -493,6 +494,11 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
                 latency_ms=latency,
                 provenance=provenance,
                 raw_evidence_ref=raw_ref,
+                occurred_at=(
+                    record.get("occurred_at")
+                    if isinstance(record.get("occurred_at"), str)
+                    else None
+                ),
             )
         )
     return tuple(output)

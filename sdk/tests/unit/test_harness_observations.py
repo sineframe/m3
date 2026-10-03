@@ -1,6 +1,7 @@
 """Harness observation contracts and failure-safe sink coverage."""
 
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from m3.harness import (
     UsageObservedObservation,
 )
 from m3.harness.contracts import HarnessAdapter as ContractHarnessAdapter
-from m3.observability import CaptureOptions
+from m3.observability import CaptureOptions, TimingClock
 from m3.storage import (
     InMemoryExecutionStore,
     SQLiteExecutionStore,
@@ -376,7 +377,11 @@ def test_raw_capture_metadata_and_source_timing_survive_projection_and_reopen(
             capture_config=config,
         )
     recorder = ExecutionTraceRecorder(store, f"capture-metadata-{backend}")
-    sink = HarnessObservationSink(recorder, capture_config=config)
+    # The turn began 12.5 ms before the sink, so the observation below
+    # happened at the moment the sink was created.
+    sink = HarnessObservationSink(
+        recorder, capture_config=config, monotonic_origin=time.monotonic() - 0.0125
+    )
     sink.emit(
         RawFrameObservation(
             **_common(
@@ -405,8 +410,11 @@ def test_raw_capture_metadata_and_source_timing_survive_projection_and_reopen(
     assert raw.evidence_ref is not None
     assert raw.size_bytes == 4
     message = next(entry for entry in view.timeline if entry.kind == "message")
-    assert message.timing.started_at == NOW
-    assert message.timing.start_offset_ms == 12.5
+    origin = _event_for_observation(recorder, "timed-message").payload[
+        "harness_clock_origin_ms"
+    ]
+    assert message.timing.clock is TimingClock.HARNESS
+    assert message.timing.start_offset_ms == origin + 12.5
     if backend == "sqlite":
         reopened = SQLiteExecutionStore(
             tmp_path / "capture-metadata.sqlite",
@@ -420,7 +428,8 @@ def test_raw_capture_metadata_and_source_timing_survive_projection_and_reopen(
         reopened_message = next(
             entry for entry in reopened_trace.view().timeline if entry.kind == "message"
         )
-        assert reopened_message.timing.started_at == NOW
+        assert reopened_message.timing.clock is TimingClock.HARNESS
+        assert reopened_message.timing.start_offset_ms == origin + 12.5
 
 
 def test_raw_evidence_uses_utf8_byte_cap() -> None:

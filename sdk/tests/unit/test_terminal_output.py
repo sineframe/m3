@@ -101,6 +101,10 @@ def _items(*nodeids: str) -> SimpleNamespace:
     return SimpleNamespace(items=[SimpleNamespace(nodeid=nodeid) for nodeid in nodeids])
 
 
+def _report(nodeid: str, when: str, outcome: str) -> SimpleNamespace:
+    return SimpleNamespace(nodeid=nodeid, when=when, outcome=outcome)
+
+
 def _run(progress: Any, nodeid: str, outcome: str, **extra: Any) -> None:
     progress.pytest_runtest_logstart(nodeid, ("", 1, ""))
     progress.pytest_runtest_logreport(
@@ -266,6 +270,43 @@ def test_run_panel_summarises_the_run(tmp_path: Path, monkeypatch: Any) -> None:
     assert "0 tool errors · 1 execution" in lines[3]
     assert ".m3/reports/run-1/feedback.json" in lines[4]
     assert len({visible_len(line) for line in lines[1:]}) == 1
+
+
+def test_run_panel_reports_xfailed_after_skipped(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from m3.pytest_plugin import _write_run_panel
+
+    monkeypatch.chdir(tmp_path)
+    reporter = _Reporter()
+    reporter._tw = SimpleNamespace(fullwidth=120)
+    _write_run_panel(
+        reporter,
+        Style(False),
+        "run-1",
+        tmp_path / "feedback.json",
+        [(1, "passed", "passed"), (1, "skipped", "skipped"), (2, "xfailed", "xfailed")],
+        0,
+        1,
+    )
+    assert "1 passed · 1 skipped · 2 xfailed" in reporter.lines[2]
+
+
+def test_live_line_counts_xfail_separately_from_skips() -> None:
+    reporter = _Reporter()
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2, 3]))
+    xfail = _report("x", "call", "skipped")
+    xfail.wasxfail = ""
+    progress.pytest_runtest_logreport(xfail)
+    progress.pytest_runtest_logreport(_report("s", "setup", "skipped"))
+    progress.pytest_runtest_logreport(_report("p", "call", "passed"))
+
+    assert (progress.xfailed, progress.skipped, progress.passed) == (1, 1, 1)
+    assert "xfail 1" in reporter.written[-1]
+
+    progress.pytest_runtest_logreport(_report("x", "teardown", "failed"))
+    assert (progress.xfailed, progress.failed) == (0, 1)
 
 
 def test_box_drops_its_right_edge_when_it_would_wrap() -> None:
@@ -602,3 +643,35 @@ def test_redraws_overwrite_in_place_without_an_empty_frame() -> None:
     # And the final screen is still right.
     screen = _screen(reporter.written)
     assert screen[-1].startswith("  ✗ ") and "3/3" in screen[-1]
+
+
+def test_xfails_are_yellow_cells_file_counts_and_not_regressions() -> None:
+    from m3.feedback import Comparison
+    from m3.pytest_plugin import _baseline_delta
+
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("t.py::a", "t.py::b"))
+    progress.pytest_runtest_logstart("t.py::a", ("", 1, ""))
+    xfail = _report("t.py::a", "call", "skipped")
+    xfail.wasxfail = ""
+    progress.pytest_runtest_logreport(xfail)
+    _run(progress, "t.py::b", "passed")
+    progress.finish()
+    output = "".join(reporter.written)
+    assert "1 xfailed" in _screen(reporter.written)[1]  # the file line
+    assert Style(True).yellow("■") in output
+
+    comparison = Comparison(
+        baseline_run_id="run-base",
+        current_run_id="run-1",
+        test_changes=(
+            {
+                "node_id": "a",
+                "baseline": [{"outcome": "passed"}],
+                "current": [{"outcome": "xfailed"}],
+            },
+        ),
+        coverage={"current_tests": 2},
+    )
+    assert "regressed" not in _baseline_delta(Style(False), comparison)

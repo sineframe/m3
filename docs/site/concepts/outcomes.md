@@ -15,6 +15,14 @@ M3 keeps three judgments separate:
 A plain pytest assertion without an M3 client or agent operation records no
 execution.
 
+## Pytest outcome values
+
+A test's `outcome`, `verdict`, and `effective_verdict` in the feedback bundle
+can be `xfailed`. It means pytest ran a test marked `@pytest.mark.xfail`
+(bare or with a reason) and it failed as expected. `skipped` means the test did
+not run. An xfailed test is not a failure and does not need attention, and its
+reason is saved as `xfail_reason`.
+
 ## Execution outcome values
 
 A finished execution records exactly one `ExecutionOutcome`, saved as

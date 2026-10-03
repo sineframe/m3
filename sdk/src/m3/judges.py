@@ -20,6 +20,7 @@ from .types import (
     EvaluationDecision,
     EvaluationSource,
     EvaluationStatus,
+    JudgeEvidence,
 )
 
 PROMPT_VERSION = "m3-llm-judge.v1"
@@ -155,7 +156,29 @@ class LLMJudge:
             config_digest=self.config_digest,
         )
 
-    def _error(self, code: str, message: str, attempts: int = 0) -> EvaluationDecision:
+    def _evidence(self, payload: Mapping[str, str] | None) -> JudgeEvidence | None:
+        """What this judge was asked to compare, and the bar it applies.
+
+        ``EvaluationRunner`` redacts and bounds the bundle before it is stored.
+        """
+        if payload is None:
+            return None
+        return JudgeEvidence(
+            input=payload["input"],
+            reference=payload["expected"],
+            candidate=payload["actual"],
+            rubric=self.rubric,
+            threshold=self.threshold,
+            config_digest=self.config_digest,
+        )
+
+    def _error(
+        self,
+        code: str,
+        message: str,
+        attempts: int = 0,
+        payload: Mapping[str, str] | None = None,
+    ) -> EvaluationDecision:
         return EvaluationDecision(
             status=EvaluationStatus.ERROR,
             rationale=message[:MAX_RATIONALE],
@@ -165,6 +188,7 @@ class LLMJudge:
                 "prompt_version": PROMPT_VERSION,
             },
             provenance=self._source(),
+            judge_evidence=self._evidence(payload),
         )
 
     def __call__(self, context: EvaluationContext) -> EvaluationDecision:
@@ -175,13 +199,15 @@ class LLMJudge:
         key = os.environ.get(key_name) if self.auth == "env" else ""
         if self.auth == "env" and not key:
             return self._error(
-                "judge_credentials_missing", f"missing judge credential in {key_name}"
+                "judge_credentials_missing",
+                f"missing judge credential in {key_name}",
+                payload=payload,
             )
         try:
             raw, attempts, usage, returned, elapsed = self._request(payload, key or "")
             score, rationale, abstain = _validate(raw)
         except _JudgeFailure as exc:
-            return self._error(exc.code, str(exc), exc.attempts)
+            return self._error(exc.code, str(exc), exc.attempts, payload)
         rationale = _safe_text(rationale, key, payload.values())
         details = {
             "prompt_version": PROMPT_VERSION,
@@ -199,6 +225,7 @@ class LLMJudge:
                 rationale=rationale,
                 details={**details, "error_code": "abstained"},
                 provenance=self._source(),
+                judge_evidence=self._evidence(payload),
             )
         assert score is not None
         return EvaluationDecision(
@@ -209,6 +236,7 @@ class LLMJudge:
             rationale=rationale,
             details=details,
             provenance=self._source(),
+            judge_evidence=self._evidence(payload),
         )
 
     async def evaluate_async(self, context: EvaluationContext) -> EvaluationDecision:
@@ -219,7 +247,9 @@ class LLMJudge:
         key = os.environ.get(key_name) if self.auth == "env" else ""
         if self.auth == "env" and not key:
             return self._error(
-                "judge_credentials_missing", f"missing judge credential in {key_name}"
+                "judge_credentials_missing",
+                f"missing judge credential in {key_name}",
+                payload=payload,
             )
         try:
             raw, attempts, usage, returned, elapsed = await self._request_async(
@@ -227,7 +257,7 @@ class LLMJudge:
             )
             score, rationale, abstain = _validate(raw)
         except _JudgeFailure as exc:
-            return self._error(exc.code, str(exc), exc.attempts)
+            return self._error(exc.code, str(exc), exc.attempts, payload)
         rationale = _safe_text(rationale, key, payload.values())
         details = {
             "prompt_version": PROMPT_VERSION,
@@ -245,6 +275,7 @@ class LLMJudge:
                 rationale=rationale,
                 details={**details, "error_code": "abstained"},
                 provenance=self._source(),
+                judge_evidence=self._evidence(payload),
             )
         assert score is not None
         return EvaluationDecision(
@@ -255,6 +286,7 @@ class LLMJudge:
             rationale=rationale,
             details=details,
             provenance=self._source(),
+            judge_evidence=self._evidence(payload),
         )
 
     @_timing.timed("judge.request")

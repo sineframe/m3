@@ -3112,6 +3112,7 @@ class SQLiteExecutionStore(_SqliteBase):
             "metrics": value.get("metrics", {}),
             "provenance": value.get("provenance"),
             "details": value.get("details", {}),
+            "judge_evidence": value.get("judge_evidence"),
             "context": {
                 "execution_id": context.get("execution_id")
                 or _execution_key(execution_id),

@@ -359,6 +359,9 @@ def test_expected_failure(m3_kit):
     store, run_id, _ = _manifest(database)
     try:
         assert store.get_test_run(run_id)["exit_status"] == 0
+        attempt = store.list_test_results(run_id)[0]
+        assert attempt["outcome"] == "xfailed"
+        assert attempt["xfail_reason"] == "expected protocol failure"
     finally:
         store.close()
 
@@ -393,13 +396,273 @@ def test_xpass(m3_kit):
     m3_kit.evaluate({{}}, 'required.v1', required=True, execution_id=execution_id)
     assert True
 """
-    result, _ = _run(tmp_path, source)
+    result, database = _run(tmp_path, source)
     assert result.returncode == expected, result.stdout + result.stderr
+    store, run_id, _ = _manifest(database)
+    try:
+        attempt = store.list_test_results(run_id)[0]
+    finally:
+        store.close()
+    assert attempt["outcome"] == ("passed" if strict == "False" else "failed")
+    if strict == "False":
+        assert attempt["xfail_reason"] == "expected failure"
 
 
 def test_xfail_helper_rejects_xpass() -> None:
     state = {"phases": {"call": {"outcome": "passed", "wasxfail": True}}}
     assert not xfail_waives_required_evaluations(state)
+
+
+def test_xfail_is_reported_separately_from_skip(tmp_path: Path) -> None:
+    source = """
+def test_ok():
+    assert True
+
+@pytest.mark.xfail(reason='known limitation', strict=True)
+def test_expected_failure():
+    assert False
+
+@pytest.mark.xfail
+def test_bare_expected_failure():
+    assert False
+
+@pytest.mark.skip(reason='not today')
+def test_skipped():
+    pass
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "M3 verdicts: 1 passed, 1 skipped, 2 xfailed" in result.stdout
+    assert "skipped-only" not in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        attempts = {
+            row["node_id"].rsplit("::", 1)[-1]: row
+            for row in store.list_test_results(run_id)
+        }
+    finally:
+        store.close()
+    assert {name: row["outcome"] for name, row in attempts.items()} == {
+        "test_ok": "passed",
+        "test_expected_failure": "xfailed",
+        "test_bare_expected_failure": "xfailed",
+        "test_skipped": "skipped",
+    }
+    assert attempts["test_expected_failure"]["xfail_reason"] == "known limitation"
+    assert attempts["test_bare_expected_failure"]["xfail_reason"] == ""
+    assert attempts["test_bare_expected_failure"]["phases"]["call"]["wasxfail"] is True
+    assert attempts["test_expected_failure"]["phases"]["call"]["outcome"] == "skipped"
+    assert "xfail_reason" not in attempts["test_ok"]
+    assert "xfail_reason" not in attempts["test_skipped"]
+    report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(report.read_text(encoding="utf-8"))
+    tests = {item["node_id"].rsplit("::", 1)[-1]: item for item in feedback["tests"]}
+    assert {name: item["effective_verdict"] for name, item in tests.items()} == {
+        "test_ok": "passed",
+        "test_expected_failure": "xfailed",
+        "test_bare_expected_failure": "xfailed",
+        "test_skipped": "skipped",
+    }
+    assert tests["test_expected_failure"]["verdict"] == "xfailed"
+    summary = feedback["summary"]
+    assert summary["xfailed_tests"] == 2
+    assert summary["skipped_tests"] == 1
+    assert summary["failures"] == 0
+    assert summary["test_outcome_counts"]["xfailed"] == 2
+    assert summary["effective_verdict_counts"]["xfailed"] == 2
+    assert summary["effective_verdict_counts"]["skipped"] == 1
+
+
+_SETUP_XFAIL_SOURCE = """
+@pytest.fixture
+def fixture_xfail():
+    pytest.xfail('fixture says xfail')
+
+def test_ok():
+    assert True
+
+@pytest.mark.xfail(run=False, reason='not run')
+def test_no_run():
+    assert False
+
+def test_fixture_xfail(fixture_xfail):
+    pass
+"""
+
+
+def test_setup_phase_xfails_are_xfailed_and_do_not_block(tmp_path: Path) -> None:
+    result, database = _run(tmp_path, _SETUP_XFAIL_SOURCE)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed, 2 xfailed" in result.stdout
+    assert "M3 verdicts: 1 passed, 2 xfailed" in result.stdout
+    assert "blocked finalization" not in result.stdout
+    assert "incomplete" not in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        attempts = {
+            row["node_id"].rsplit("::", 1)[-1]: row
+            for row in store.list_test_results(run_id)
+        }
+    finally:
+        store.close()
+    assert attempts["test_no_run"]["outcome"] == "xfailed"
+    assert attempts["test_no_run"]["xfail_reason"] == "[NOTRUN] not run"
+    assert attempts["test_fixture_xfail"]["outcome"] == "xfailed"
+    assert attempts["test_fixture_xfail"]["xfail_reason"] == "fixture says xfail"
+    assert attempts["test_no_run"]["phases"]["setup"]["outcome"] == "skipped"
+    report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(report.read_text(encoding="utf-8"))
+    tests = {item["node_id"].rsplit("::", 1)[-1]: item for item in feedback["tests"]}
+    assert tests["test_no_run"]["effective_verdict"] == "xfailed"
+    assert tests["test_fixture_xfail"]["effective_verdict"] == "xfailed"
+    assert tests["test_ok"]["effective_verdict"] == "passed"
+    assert feedback["summary"]["xfailed_tests"] == 2
+
+
+def test_setup_phase_xfail_waives_linked_required_evaluations(
+    tmp_path: Path,
+) -> None:
+    source = """
+from m3 import EvaluationStatus, ExecutionId, ExecutionState
+from m3.evaluations import RequiredEvaluationError
+
+@pytest.fixture
+def fixture_xfail(m3_kit):
+    execution_id = ExecutionId('execution-setup-xfail')
+    m3_kit.store.create(ExecutionState(execution_id=execution_id), run_id=m3_kit.run_id)
+    m3_kit.register_evaluator('required.setup', lambda _context: EvaluationStatus.FAILED)
+    try:
+        m3_kit.evaluate({}, 'required.setup', required=True, execution_id=execution_id)
+    except RequiredEvaluationError:
+        pass
+    pytest.xfail('fixture says xfail')
+
+def test_fixture_xfail(fixture_xfail):
+    pass
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "blocked finalization" not in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        attempt = store.list_test_results(run_id)[0]
+    finally:
+        store.close()
+    assert attempt["outcome"] == "xfailed"
+    assert attempt["xfail_reason"] == "fixture says xfail"
+    report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(report.read_text(encoding="utf-8"))
+    assert feedback["tests"][0]["effective_verdict"] == "xfailed"
+
+
+def test_teardown_phase_xfail_is_xfailed_and_does_not_block(tmp_path: Path) -> None:
+    source = """
+@pytest.fixture
+def teardown_xfail():
+    yield
+    pytest.xfail('teardown says xfail')
+
+def test_teardown_xfail(teardown_xfail):
+    assert True
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "incomplete" not in result.stdout
+    assert "blocked finalization" not in result.stdout
+    assert "M3 verdicts: 1 xfailed" in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        attempt = store.list_test_results(run_id)[0]
+    finally:
+        store.close()
+    assert attempt["outcome"] == "xfailed"
+    assert attempt["xfail_reason"] == "teardown says xfail"
+    report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(report.read_text(encoding="utf-8"))
+    assert feedback["tests"][0]["effective_verdict"] == "xfailed"
+    assert feedback["summary"]["xfailed_tests"] == 1
+
+
+def test_teardown_error_without_xfail_stays_error(tmp_path: Path) -> None:
+    source = """
+@pytest.fixture
+def teardown_error():
+    yield
+    raise RuntimeError('teardown boom')
+
+def test_teardown_error(teardown_error):
+    assert True
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode != 0, result.stdout + result.stderr
+    store, run_id, _ = _manifest(database)
+    try:
+        attempt = store.list_test_results(run_id)[0]
+    finally:
+        store.close()
+    assert attempt["outcome"] == "error"
+    assert not attempt.get("xfail_reason")
+
+
+def test_setup_xfail_normalisation_requires_xfailed_exception_type() -> None:
+    xfailed = {
+        "outcome": "skipped",
+        "phases": {
+            "setup": {
+                "outcome": "skipped",
+                "wasxfail": True,
+                "exception_type": "_pytest.outcomes.XFailed",
+            }
+        },
+    }
+    assert feedback_module._normalised_outcome(xfailed) == "xfailed"
+    # A setup error under an xfail marker, or a legacy row without exception
+    # type, is not a genuine setup-phase xfail.
+    for setup in (
+        {"outcome": "skipped", "wasxfail": True, "exception_type": "RuntimeError"},
+        {"outcome": "skipped", "wasxfail": True},
+    ):
+        row = {"outcome": "skipped", "phases": {"setup": setup}}
+        assert feedback_module._normalised_outcome(row) == "skipped"
+    plain = {"outcome": "skipped", "phases": {"setup": {"outcome": "skipped"}}}
+    assert feedback_module._normalised_outcome(plain) == "skipped"
+
+
+def test_xfail_only_run_counts_as_executed(tmp_path: Path) -> None:
+    source = """
+@pytest.mark.xfail
+def test_expected_failure():
+    assert False
+"""
+    result, _ = _run(tmp_path, source)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no tests executed" not in result.stdout
+    assert "M3 verdicts: 1 xfailed" in result.stdout
+
+
+def test_non_waivable_xfailed_outcome_is_never_passed() -> None:
+    test = {
+        "outcome": "xfailed",
+        "phases": {"call": {"outcome": "skipped", "wasxfail": True}},
+    }
+    assert (
+        feedback_module._effective_verdict(
+            test, "satisfied", valid_xfail=False, running=False
+        )
+        == "xfailed"
+    )
+    assert (
+        feedback_module._effective_verdict(
+            test, "failed", valid_xfail=False, running=False
+        )
+        == "failed"
+    )
+    assert (
+        feedback_module._effective_verdict(
+            test, "incomplete", valid_xfail=False, running=False
+        )
+        == "incomplete"
+    )
 
 
 def test_manifest_not_run_is_deterministic_and_idempotent(tmp_path: Path) -> None:

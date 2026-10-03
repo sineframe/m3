@@ -801,6 +801,90 @@ def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
     )
 
 
+def test_progress_counts_xfail_apart_from_skips() -> None:
+    from m3.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(
+        isatty=True,
+        rewrite=lambda *_args, **_kwargs: None,
+        write_line=lambda *_args: None,
+    )
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.enabled = True
+    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2, 3]))
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="bare", when="call", outcome="skipped", wasxfail="")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="skip", when="call", outcome="skipped")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="xpass", when="call", outcome="passed", wasxfail="r")
+    )
+    assert (progress.completed, progress.passed, progress.skipped) == (3, 1, 1)
+    assert progress.xfailed == 1
+
+
+def test_progress_counts_setup_phase_xfail_as_xfailed() -> None:
+    from m3.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(
+        isatty=True,
+        rewrite=lambda *_args, **_kwargs: None,
+        write_line=lambda *_args: None,
+    )
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.enabled = True
+    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2]))
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="norun", when="setup", outcome="skipped", wasxfail="r")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="skip", when="setup", outcome="skipped")
+    )
+    assert (progress.completed, progress.passed, progress.skipped) == (2, 0, 1)
+    assert progress.xfailed == 1
+
+
+def test_progress_moves_teardown_xfail_from_passed_to_xfailed_once() -> None:
+    from m3.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(
+        isatty=True,
+        rewrite=lambda *_args, **_kwargs: None,
+        write_line=lambda *_args: None,
+    )
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.enabled = True
+    progress.pytest_collection_finish(SimpleNamespace(items=[1]))
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="ok", when="call", outcome="passed")
+    )
+    assert (progress.completed, progress.passed, progress.xfailed) == (1, 1, 0)
+    teardown = SimpleNamespace(
+        nodeid="ok", when="teardown", outcome="skipped", wasxfail="r"
+    )
+    progress.pytest_runtest_logreport(teardown)
+    progress.pytest_runtest_logreport(teardown)
+    assert (progress.completed, progress.passed, progress.xfailed) == (1, 0, 1)
+    assert progress.skipped == 0
+
+
 def test_progress_is_disabled_for_non_tty() -> None:
     from m3.pytest_plugin import _Progress
 

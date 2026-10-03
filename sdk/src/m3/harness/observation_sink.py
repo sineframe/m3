@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -47,6 +48,7 @@ class HarnessObservationSink:
         *,
         capture_config: CaptureOptions | None = None,
         turn_id: TurnId | str | None = None,
+        monotonic_origin: float | None = None,
     ) -> None:
         self._recorder = recorder
         store_config = getattr(
@@ -62,6 +64,15 @@ class HarnessObservationSink:
         # Keep Identifier objects intact: ``str(TurnId(...))`` is the
         # Pydantic ``root='...'`` representation, not the identifier value.
         self._turn_id = turn_id
+        # Observation offsets count from the adapter's ``time.monotonic()``
+        # origin. Read both clocks together to express that origin on the
+        # trace's perf-counter clock without assuming the two clocks match.
+        self._clock_origin_ms: float | None = None
+        convert = getattr(recorder, "offset_for_perf_counter_ns", None)
+        if monotonic_origin is not None and callable(convert):
+            self._clock_origin_ms = convert(time.perf_counter_ns()) - (
+                (time.monotonic() - monotonic_origin) * 1000.0
+            )
 
     @property
     def limitations(self) -> tuple[str, ...]:
@@ -329,8 +340,7 @@ class HarnessObservationSink:
             return EventKind.PROVIDER_EVENT, payload, {}
         raise TypeError("unknown harness observation")
 
-    @staticmethod
-    def _common_payload(observation: HarnessObservation) -> dict[str, Any]:
+    def _common_payload(self, observation: HarnessObservation) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "observation_id": observation.observation_id,
             "harness_kind": observation.harness_kind,
@@ -341,6 +351,8 @@ class HarnessObservationSink:
             "wall_time": observation.wall_time.isoformat(),
             "monotonic_offset_ms": observation.monotonic_offset_ms,
         }
+        if self._clock_origin_ms is not None:
+            payload["harness_clock_origin_ms"] = self._clock_origin_ms
         for name in ("provider_id", "block_id", "call_id"):
             value = getattr(observation, name)
             if value is not None:

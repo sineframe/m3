@@ -116,7 +116,9 @@ suite references now additionally include their own `project_id`.
 outcomes. `effective_verdict_counts` is the count after applying required
 evaluation completeness and execution policy. Both maps contain only
 non-empty string labels with non-negative integer counts; malformed manifest
-entries are omitted from the response.
+entries are omitted from the response. An expected pytest failure (xfail) is
+counted as `xfailed` in both maps, separately from `skipped`, which counts only
+tests that did not run.
 
 ### Where readable executions come from
 
@@ -470,7 +472,7 @@ The persisted `report` contains:
 | `turns` | Finalized agent turn results. The snapshot has `turn_id`, `session_id`, `number`, `lifecycle` (`queued`, `running`, `finished`), `outcome` (`completed`, `failed`, `timed_out`, `cancelled`, `interrupted`), `created_at`, and optional `finished_at`. A turn can include `response:{content,metadata}`, `error`, `trace`, and redaction-safe `evidence`. Content blocks use `text`, `file`, `image`, `audio`, `resource_link`, or `opaque` kinds. |
 | `direct_result` | The direct operation result when the execution was direct; its `kind` discriminator selects tools/resources/prompts/list/ping result fields. Otherwise `null`. |
 | `artifacts`, `artifact_count`, `artifacts_truncated` | Redacted artifact references and bounded artifact paging metadata. Each reference has `artifact_id`, `execution_id`, `name`, optional `media_type`, `size_bytes`, `sha256`, and `redacted: true`. |
-| `evaluations` | Explicitly saved `EvaluationRecord` values: evaluation ID, name, status, `required`, optional message/score/rationale/metrics/provenance/goal, execution/turn/case/run IDs, subject kind/digest, metadata, and `created_at`. Provenance can contain `kind`, `provider`, `model`, `rubric_id`, `rubric_version`, and `config_digest`. |
+| `evaluations` | Explicitly saved `EvaluationRecord` values: evaluation ID, name, status, `required`, optional message/score/rationale/metrics/provenance/goal, execution/turn/case/run IDs, subject kind/digest, metadata, and `created_at`. A judge evaluation can also carry `judge_evidence` (schema `m3.judge_evidence.v1`): redacted, size-bounded `input`, `reference`, `claims`, `candidate`, `rubric`, `threshold`, `rubric_digest`, `config_digest`, and the names of any `truncated` fields; it is absent on records written before it existed. Provenance can contain `kind`, `provider`, `model`, `rubric_id`, `rubric_version`, and `config_digest`. |
 | `error` | Optional typed execution error with `code`, `message`, `retryable`, and `details`. |
 | `evidence` | Optional `complete`/`partial` marker with limitations and a reason. |
 
@@ -796,8 +798,11 @@ Wire responses retain the typed `ExecutionState` model for lifecycle snapshots.
 Execution reports include a `test_results` array for pytest attempts linked to
 the execution. Each entry contains `attempt_id`, `node_id`, the cleaned test
 `description`, raw pytest `outcome`, normalized pytest `verdict`, derived
-`effective_verdict`, and `duration_seconds`. The effective verdict applies the
-run's required-evaluation policy without relabeling the pytest result. Older
+`effective_verdict`, and `duration_seconds`. `outcome`, `verdict`, and
+`effective_verdict` are `xfailed` for a pytest expected failure: the test ran
+and failed as expected, unlike `skipped`, which did not run. The effective
+verdict applies the run's required-evaluation policy without relabeling the
+pytest result. Older
 records without a description return an empty string, and executions without
 linked attempts return an empty array. The execution snapshot's `outcome`
 remains the runtime execution outcome.
@@ -807,6 +812,13 @@ Its `evaluations` entries include both `evaluation_id` and `execution_id`.
 Required evaluations run without an execution identity are owned by the pytest
 attempt, use `execution_id: null`, and still affect `effective_verdict`; they do
 not enter execution-scoped evaluation aggregates.
+
+A test with an xfail marker also carries a top-level `xfail_reason` string,
+which is empty for a bare `@pytest.mark.xfail`. Feedback `summary` includes
+`xfailed` in `test_outcome_counts` and `effective_verdict_counts`, adds
+`xfailed_tests`, and `skipped_tests` counts genuine skips only. An xfailed test
+is never a failure and never needs attention. Runs stored before this change
+with a skipped call phase and `wasxfail` are reported as `xfailed`.
 Each feedback test entry also includes case-level `tool_calls` counts with
 `total`, `successful`, and `failed` fields. These counts are derived once from
 distinct linked execution traces; pytest-only tests report zeroes and calls
@@ -827,7 +839,8 @@ therefore have `verdict: "failed_assertion"`, two passed evaluations, and
 `effective_verdict: "failed"`. An ordinary skip remains skipped only when its
 required evidence is complete; required failures or incomplete evidence take
 precedence. A valid expected xfail waives all required evidence linked to that
-attempt for effective-verdict purposes because pytest does not persist causal
+attempt for effective-verdict purposes and yields effective verdict `xfailed`,
+not `skipped`, because pytest does not persist causal
 evaluation identity, while setup/teardown, collection, and persistence errors
 remain incomplete. Strict xpass is failed; non-strict xpass passes when its
 required evidence is complete.

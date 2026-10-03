@@ -15,7 +15,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ._test_runs import (
     evaluation_lineage as _evaluation_lineage,
@@ -30,9 +30,11 @@ from ._test_runs import (
     required_status_blocks as _required_status_blocks,
 )
 from ._test_runs import (
+    xfail_phase as _xfail_phase,
+)
+from ._test_runs import (
     xfail_waives_required_evaluations as _xfail_waives_required_evaluations,
 )
-from .storage import ExecutionStore
 from .types import (
     EvaluationRecord,
     Event,
@@ -42,6 +44,9 @@ from .types import (
     FrozenModel,
     RunId,
 )
+
+if TYPE_CHECKING:
+    from .storage import ExecutionStore
 
 
 class Comparison(FrozenModel):
@@ -1575,11 +1580,12 @@ def _xfail_state(test: Mapping[str, Any]) -> tuple[bool, bool]:
     if not isinstance(phases, Mapping):
         return False, False
     call = phases.get("call")
-    if not isinstance(call, Mapping) or not call.get("wasxfail"):
-        return False, False
-    # A failed call with wasxfail is strict XPASS; a skipped call is the
-    # ordinary expected-failure path.  The latter is the only waiver case.
-    return call.get("outcome") == "skipped", call.get("outcome") == "passed"
+    if isinstance(call, Mapping) and call.get("wasxfail"):
+        # A failed call with wasxfail is strict XPASS; a skipped call is the
+        # ordinary expected-failure path.  The latter is the only waiver case.
+        return call.get("outcome") == "skipped", call.get("outcome") == "passed"
+    # ``run=False`` and fixture-level ``pytest.xfail()`` skip the setup phase.
+    return _xfail_phase(phases) is not None, False
 
 
 def _effective_verdict(
@@ -1596,7 +1602,7 @@ def _effective_verdict(
         return "incomplete"
     xfail, xpass = _xfail_state(test)
     if xfail and valid_xfail:
-        return "skipped"
+        return "xfailed"
     if xpass:
         if required_state == "failed":
             return "failed"
@@ -1610,8 +1616,8 @@ def _effective_verdict(
         return "failed"
     if required_state == "incomplete":
         return "incomplete"
-    if outcome == "skipped":
-        return "skipped"
+    if outcome in {"skipped", "xfailed"}:
+        return outcome
     return "passed"
 
 
@@ -1638,6 +1644,22 @@ def load_run_entries(store: ExecutionStore, run_id: RunId | str) -> tuple[_Entry
     return _entries(store, normalized)
 
 
+def _normalised_outcome(value: Mapping[str, Any]) -> Any:
+    """Return the stored outcome, mapping legacy xfail rows to ``xfailed``.
+
+    Rows stored before ``xfailed`` existed recorded expected failures as
+    skipped; the call phase (or, for ``run=False``/fixture-level xfails, the
+    setup phase with no call phase) still identifies them.
+    """
+    outcome = value.get("outcome")
+    if outcome != "skipped":
+        return outcome
+    phases = value.get("phases")
+    if isinstance(phases, Mapping) and _xfail_phase(phases) is not None:
+        return "xfailed"
+    return outcome
+
+
 def project_test_attempt(
     value: Mapping[str, Any],
     entries: Sequence[_Entry],
@@ -1652,6 +1674,8 @@ def project_test_attempt(
     linked set of execution entries and need the same contract as feedback.
     """
     raw = dict(value)
+    if raw.get("outcome") == "skipped":
+        raw["outcome"] = _normalised_outcome(raw)
     execution_ids = raw.get("execution_ids", ()) or ()
     linked_entries = [
         entry
@@ -1838,10 +1862,10 @@ def _manifest_failures(
     values: list[Mapping[str, Any]] = []
     for report in manifest.get("collection_reports", ()) or ():
         if isinstance(report, Mapping) and report.get("outcome") == "failed":
-            values.append({"kind": "collection", **dict(report)})
+            values.append({**dict(report), "kind": "collection"})
     for error in manifest.get("worker_errors", ()) or ():
         if isinstance(error, Mapping):
-            values.append({"kind": "worker", **dict(error)})
+            values.append({**dict(error), "kind": "worker"})
     if manifest.get("persistence_error"):
         values.append(
             {
@@ -2037,7 +2061,7 @@ def build_feedback(
                         suite_id = suite_lookup.get(str(value["execution_ids"][0]))
                     grouped[(suite_id, node_id)].append(
                         {
-                            "outcome": value.get("outcome"),
+                            "outcome": _normalised_outcome(value),
                             "effective_verdict": _attempt_effective_verdict(
                                 value, entries_value, manifest_value
                             ),
@@ -2153,11 +2177,18 @@ def build_feedback(
         )
     test_counts = {
         outcome: sum(test.get("outcome") == outcome for test in tests)
-        for outcome in ("passed", "failed", "error", "skipped", "not_run")
+        for outcome in ("passed", "failed", "error", "skipped", "xfailed", "not_run")
     }
     effective_counts = {
         verdict: sum(test.get("effective_verdict") == verdict for test in tests)
-        for verdict in ("pending", "passed", "failed", "incomplete", "skipped")
+        for verdict in (
+            "pending",
+            "passed",
+            "failed",
+            "incomplete",
+            "skipped",
+            "xfailed",
+        )
     }
     not_run_tests = tuple(
         dict.fromkeys(
@@ -2189,6 +2220,7 @@ def build_feedback(
         "failed_tests": test_counts["failed"],
         "error_tests": test_counts["error"],
         "skipped_tests": test_counts["skipped"],
+        "xfailed_tests": test_counts["xfailed"],
         "test_outcome_counts": dict(test_counts),
         "effective_verdict_counts": effective_counts,
         "not_run_tests": not_run_tests,

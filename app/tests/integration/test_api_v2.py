@@ -22,6 +22,7 @@ from m3 import (
     ExecutionSpec,
     ExecutionState,
     InProcessServer,
+    JudgeEvidence,
     MCPTestKit,
     OpenCode,
     RawEvidenceIntegrityError,
@@ -241,6 +242,12 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
                 score=0.91,
                 rationale="The local echo response matched the request.",
                 metrics={"quality": 0.91},
+                judge_evidence=JudgeEvidence(
+                    input="echo this",
+                    reference="echo this",
+                    candidate="echo this",
+                    threshold=0.8,
+                ),
                 provenance=EvaluationSource(
                     kind="local-rule",
                     provider="test-suite",
@@ -271,6 +278,18 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         assert saved_evaluation["metrics"] == {"quality": 0.91}
         assert saved_evaluation["provenance"]["provider"] == "test-suite"
         assert saved_evaluation["provenance"]["rubric_id"] == "echo-quality"
+        assert saved_evaluation["judge_evidence"] == {
+            "schema_version": "m3.judge_evidence.v1",
+            "input": "echo this",
+            "reference": "echo this",
+            "claims": None,
+            "candidate": "echo this",
+            "rubric": None,
+            "threshold": 0.8,
+            "rubric_digest": None,
+            "config_digest": None,
+            "truncated": [],
+        }
         assert saved_evaluation["run_id"] == "api-run"
         assert saved_evaluation["suite_id"] == finished["snapshot"]["suite_id"]
         assert saved_evaluation["suite_name"] == "catalog"
@@ -1164,11 +1183,13 @@ def test_order_tool_catalog():
         "failed_tests": 0,
         "error_tests": 0,
         "skipped_tests": 0,
+        "xfailed_tests": 0,
         "test_outcome_counts": {
             "passed": 1,
             "failed": 0,
             "error": 0,
             "skipped": 0,
+            "xfailed": 0,
             "not_run": 0,
         },
         "effective_verdict_counts": {
@@ -1177,6 +1198,7 @@ def test_order_tool_catalog():
             "failed": 0,
             "incomplete": 0,
             "skipped": 0,
+            "xfailed": 0,
         },
         "not_run_tests": [],
         "collection_errors": 0,
