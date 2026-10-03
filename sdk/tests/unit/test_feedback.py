@@ -1512,6 +1512,81 @@ def test_public_attempt_projection_preserves_execution_evaluation_identity():
     assert projected[0]["evaluation_completeness"]["required_pair_count"] == 2
 
 
+def test_attempt_projection_for_one_execution_loads_only_linked_executions():
+    first = _report("first", "run", "first")
+    second = _report("second", "run", "second")
+    other = _report("other", "run", "other")
+    foreign = _report("foreign", "elsewhere", "foreign")
+    foreign = foreign.model_copy(
+        update={
+            "evaluations": (
+                EvaluationRecord(
+                    evaluation_id=EvaluationId("foreign-quality"),
+                    execution_id=foreign.snapshot.execution_id,
+                    name="quality",
+                    status=EvaluationStatus.FAILED,
+                    required=True,
+                ),
+            )
+        }
+    )
+    second = second.model_copy(
+        update={
+            "evaluations": (
+                EvaluationRecord(
+                    evaluation_id=EvaluationId("second-quality"),
+                    execution_id=second.snapshot.execution_id,
+                    name="quality",
+                    status=EvaluationStatus.FAILED,
+                    required=True,
+                ),
+            )
+        }
+    )
+
+    class _CountingStore(_Store):
+        loaded: ClassVar[list[str]] = []
+
+        def get_report(self, execution_id, **kwargs):
+            self.loaded.append(str(getattr(execution_id, "root", execution_id)))
+            return super().get_report(execution_id, **kwargs)
+
+    store = _CountingStore(
+        (first, second, other, foreign),
+        tests={
+            "run": (
+                {
+                    "attempt_id": "linked-attempt",
+                    "node_id": "test.py::test_linked",
+                    "outcome": "passed",
+                    # Storage doesn't stop an attempt naming another run's
+                    # execution; neither projection may use its evidence.
+                    "execution_ids": ["first", "second", "foreign"],
+                },
+                {
+                    "attempt_id": "other-attempt",
+                    "node_id": "test.py::test_other",
+                    "outcome": "failed",
+                    "execution_ids": ["other"],
+                },
+            )
+        },
+    )
+
+    whole_run = project_test_attempts(store, "run")
+    store.loaded.clear()
+    scoped = project_test_attempts(store, "run", execution_id="second")
+
+    assert sorted(store.loaded) == ["first", "foreign", "second"]
+    assert [item["attempt_id"] for item in scoped] == ["linked-attempt"]
+    assert scoped[0] == whole_run[0]
+    assert "foreign-quality" not in {
+        item["evaluation_id"] for item in scoped[0]["evaluations"]
+    }
+    assert scoped[0]["effective_verdict"] == "failed"
+    assert project_test_attempts(store, "run", execution_id="missing") == ()
+
+
 def test_comparison_excludes_pending_expectations_from_expected_count():
     baseline = _report("baseline-execution", "baseline", "baseline")
     current = _report("current-execution", "current", "current")

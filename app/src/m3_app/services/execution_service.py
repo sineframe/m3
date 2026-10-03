@@ -504,7 +504,9 @@ class AppExecutionService:
             return ()
         try:
             records = project_test_attempts(
-                cast(ExecutionStore, self.store), run_id.root
+                cast(ExecutionStore, self.store),
+                run_id.root,
+                execution_id=identifier.root,
             )
         except (StorageError, TypeError, ValueError, AttributeError) as exc:
             raise AppExecutionError(

@@ -198,35 +198,59 @@ def _entries(store: ExecutionStore, run_id: str) -> tuple[_Entry, ...]:
         if not page.items:
             break
         for snapshot in page.items:
-            report = store.get_report(snapshot.execution_id)
-            if report is not None:
-                get_spec = getattr(store, "get_execution_spec", None)
-                get_trace = getattr(store, "get_trace_view", None)
-                try:
-                    trace = (
-                        get_trace(snapshot.execution_id)
-                        if callable(get_trace)
-                        else None
-                    )
-                except Exception:
-                    trace = None
-                result.append(
-                    _Entry(
-                        report,
-                        get_spec(snapshot.execution_id) if callable(get_spec) else None,
-                        trace,
-                    )
-                )
+            entry = _load_entry(store, snapshot.execution_id)
+            if entry is not None:
+                result.append(entry)
         offset += len(page.items)
         if offset >= page.total:
             break
-    result.sort(
+    return _sorted_entries(result)
+
+
+def _entries_by_id(
+    store: ExecutionStore, run_id: str, execution_ids: Collection[str]
+) -> tuple[_Entry, ...]:
+    """Load the named executions of ``run_id``, ordered as :func:`_entries` does.
+
+    Storage doesn't check that an attempt's ``execution_ids`` belong to its run,
+    so executions from other runs are skipped, as :func:`_entries` skips them.
+    """
+    loaded = (
+        _load_entry(store, execution_id, run_id=run_id)
+        for execution_id in execution_ids
+    )
+    return _sorted_entries([entry for entry in loaded if entry is not None])
+
+
+def _load_entry(
+    store: ExecutionStore, execution_id: Any, *, run_id: str | None = None
+) -> _Entry | None:
+    report = store.get_report(execution_id)
+    if report is None:
+        return None
+    if run_id is not None and _run_key(report.snapshot.run_id) != run_id:
+        return None
+    get_spec = getattr(store, "get_execution_spec", None)
+    get_trace = getattr(store, "get_trace_view", None)
+    try:
+        trace = get_trace(execution_id) if callable(get_trace) else None
+    except Exception:
+        trace = None
+    return _Entry(
+        report,
+        get_spec(execution_id) if callable(get_spec) else None,
+        trace,
+    )
+
+
+def _sorted_entries(entries: list[_Entry]) -> tuple[_Entry, ...]:
+    entries.sort(
         key=lambda item: (
             item.report.snapshot.created_at,
             _id(item.report.snapshot.execution_id),
         )
     )
-    return tuple(result)
+    return tuple(entries)
 
 
 def _retry_missing_traces(
@@ -1709,22 +1733,33 @@ def project_test_attempts(
     run_id: RunId | str,
     *,
     entries: Sequence[_Entry] | None = None,
+    execution_id: str | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
     """Return projected pytest attempts for a run without building full feedback.
 
     Pass ``entries`` from :func:`load_run_entries` to reuse one load; they must
-    belong to ``run_id``.
+    belong to ``run_id``. Pass ``execution_id`` to project only the attempts
+    linked to that execution; then only the executions those attempts link to
+    are loaded, instead of the whole run.
     """
     normalized_run_id = _run_key(run_id)
     if normalized_run_id is None:
         raise ValueError("run_id is required")
-    entries = (
-        _retry_missing_traces(store, entries)
-        if entries is not None
-        else _entries(store, normalized_run_id)
-    )
     results, manifest = _test_values(store, normalized_run_id)
+    # Contexts come from every attempt, so a linked execution gets the same
+    # context it gets in a whole-run projection.
     contexts = _contexts(results, manifest)
+    if execution_id is not None:
+        results = tuple(
+            result for result in results if execution_id in _execution_ids(result)
+        )
+    if entries is not None:
+        entries = _retry_missing_traces(store, entries)
+    elif execution_id is not None:
+        linked = {value for result in results for value in _execution_ids(result)}
+        entries = _entries_by_id(store, normalized_run_id, sorted(linked))
+    else:
+        entries = _entries(store, normalized_run_id)
     execution_kinds = {
         _id(entry.report.snapshot.execution_id): _result_kind(entry)
         for entry in entries
@@ -1739,6 +1774,13 @@ def project_test_attempts(
         )
         for result in results
     )
+
+
+def _execution_ids(result: Mapping[str, Any]) -> set[str]:
+    values = result.get("execution_ids", ()) or ()
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    return {_id(value) for value in values}
 
 
 def _failure_values(
