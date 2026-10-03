@@ -238,6 +238,7 @@ For agent tool-choice tests:
 | Traces | [Traces](references/guides-results-traces.md), [Observability API](references/reference-python-m3-observability.md) |
 | Saved runs and the viewer | [Saved results](references/guides-results-persistence.md), [Viewer](references/guides-results-viewer.md) |
 | Async tests | [Async](references/guides-advanced-async.md) |
+| Run tests in parallel | [pytest reference](references/reference-pytest.md), [CLI reference](references/reference-cli.md) |
 | Running in CI | [Run in CI](references/guides-ci-run.md), [GitHub Actions](references/guides-ci-github-actions.md) |
 | Python API | [Python reference](references/reference-python.md) |
 | Supported harnesses and limits | [Compatibility](references/reference-compatibility.md) |

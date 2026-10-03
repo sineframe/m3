@@ -213,6 +213,12 @@ class _CompatConnection:
         self.close()
 
 
+# A private execution queue is owned by one live store instance, which renews a
+# v2_queue_leases row. Queued commands on a queue whose row is missing or
+# expired were abandoned by a dead process and are interrupted by the sweep.
+_QUEUE_LEASE_SECONDS = 30.0
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -336,6 +342,7 @@ class Command:
     payload: Mapping[str, Any]
     session_id: SessionId | None = None
     turn_id: TurnId | None = None
+    queue_key: str | None = None
 
 
 SCHEMA = """
@@ -446,6 +453,9 @@ CREATE TABLE IF NOT EXISTS v2_leases (
   owner_id TEXT NOT NULL, lease_token TEXT NOT NULL UNIQUE, acquired_at TEXT NOT NULL,
   heartbeat_at TEXT NOT NULL, expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS v2_queue_leases (
+  queue_key TEXT PRIMARY KEY, expires_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS v2_cancellation (
   execution_id TEXT PRIMARY KEY REFERENCES v2_executions(id) ON DELETE CASCADE,
   requested_at TEXT NOT NULL, reason TEXT
@@ -454,7 +464,7 @@ CREATE TABLE IF NOT EXISTS v2_commands (
   id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
   kind TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('queued','claimed','done','failed','cancelled','interrupted')),
   payload_json TEXT NOT NULL, session_id TEXT, turn_id TEXT, created_at TEXT NOT NULL,
-  claimed_at TEXT, owner_id TEXT
+  claimed_at TEXT, owner_id TEXT, queue_key TEXT
 );
 CREATE TABLE IF NOT EXISTS v2_test_runs (
   run_id TEXT PRIMARY KEY, record_json TEXT NOT NULL,
@@ -603,6 +613,7 @@ class _SqliteBase:
                     ("v2_executions", "project_id", "TEXT"),
                     ("v2_test_runs", "project_id", "TEXT"),
                     ("v2_test_runs", "run_label", "TEXT"),
+                    ("v2_commands", "queue_key", "TEXT"),
                 ):
                     columns = connection.execute(
                         f"PRAGMA table_info({table})"
@@ -647,6 +658,9 @@ class _SqliteBase:
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_executions_project ON v2_executions(project_id, created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_commands_queue ON v2_commands(queue_key, status, created_at, id)"
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_suites_project ON v2_suites(project_id, suite_name)"
@@ -1513,10 +1527,19 @@ class SQLiteExecutionStore(_SqliteBase):
         config: RedactionConfig | None = None,
         capture_config: CaptureOptions | None = None,
         payload_blob_threshold: int = 64 * 1024,
+        execution_queue: str | None = None,
         **kwargs: Any,
     ) -> None:
         if payload_blob_threshold < 0:
             raise ValueError("payload_blob_threshold must be non-negative")
+        if execution_queue is not None and (
+            not isinstance(execution_queue, str) or not execution_queue.strip()
+        ):
+            raise ValueError("execution_queue must be a non-empty string")
+        # Commands enqueued and claimed through this store instance use this
+        # queue; None is the shared queue.
+        self.execution_queue = execution_queue
+        self._queue_lease_renewed_at: datetime | None = None
         # Store initialization performs legacy migration before returning, so
         # migration must see the same explicit redaction policy used by all
         # later profile and execution writes.
@@ -1579,6 +1602,16 @@ class SQLiteExecutionStore(_SqliteBase):
                     "LIMIT 1",
                     (_iso(stale_before),),
                 ).fetchone()
+                if row is None:
+                    row = connection.execute(
+                        "SELECT 1 FROM v2_commands c LEFT JOIN v2_queue_leases q "
+                        "ON q.queue_key=c.queue_key WHERE c.status='queued' "
+                        "AND c.queue_key IS NOT NULL "
+                        "AND (q.queue_key IS NULL OR q.expires_at<=?) "
+                        "AND json_extract(c.payload_json,'$.human_input')='managed' "
+                        "LIMIT 1",
+                        (_iso(stale_before),),
+                    ).fetchone()
         return row is not None
 
     def ensure_project(self, project_id: str, project_name: str) -> tuple[str, str]:
@@ -4224,6 +4257,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     and str(existing["payload_json"]) == payload_json
                     and existing["session_id"] == session_key
                     and existing["turn_id"] == turn_key
+                    and existing["queue_key"] == self.execution_queue
                 )
                 if not same:
                     raise StorageConflict(
@@ -4231,8 +4265,9 @@ class SQLiteExecutionStore(_SqliteBase):
                     )
                 self._rollback(connection)
                 return self.get_command(command)  # type: ignore[return-value]
+            now = _utcnow()
             connection.execute(
-                "INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at,queue_key) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     command,
                     execution_key,
@@ -4241,9 +4276,22 @@ class SQLiteExecutionStore(_SqliteBase):
                     payload_json,
                     session_key,
                     turn_key,
-                    _iso(_utcnow()),
+                    _iso(now),
+                    self.execution_queue,
                 ),
             )
+            if self.execution_queue is not None:
+                # Same transaction as the INSERT: a committed private-queue
+                # command always has a live queue lease.
+                connection.execute(
+                    "INSERT INTO v2_queue_leases(queue_key,expires_at) VALUES(?,?) "
+                    "ON CONFLICT(queue_key) DO UPDATE SET expires_at=MAX(expires_at,excluded.expires_at)",
+                    (
+                        self.execution_queue,
+                        _iso(now + timedelta(seconds=_QUEUE_LEASE_SECONDS)),
+                    ),
+                )
+                self._queue_lease_renewed_at = now
             self._commit(connection)
         except Exception as exc:
             self._rollback(connection)
@@ -4273,35 +4321,54 @@ class SQLiteExecutionStore(_SqliteBase):
             _loads(row["payload_json"], {}),
             SessionId(str(row["session_id"])) if row["session_id"] else None,
             TurnId(str(row["turn_id"])) if row["turn_id"] else None,
+            str(row["queue_key"]) if row["queue_key"] is not None else None,
         )
+
+    def _renew_queue_lease(self) -> None:
+        """Extend this private queue's lease, writing at most every TTL/3."""
+        queue = self.execution_queue
+        if queue is None:
+            return
+        now = _utcnow()
+        last = self._queue_lease_renewed_at
+        if last is not None and (now - last).total_seconds() < _QUEUE_LEASE_SECONDS / 3:
+            return
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE v2_queue_leases SET expires_at=? WHERE queue_key=?",
+                (_iso(now + timedelta(seconds=_QUEUE_LEASE_SECONDS)), queue),
+            )
+        self._queue_lease_renewed_at = now
 
     def claim_next(
         self, owner_id: str, *, lease_seconds: float = 30.0
     ) -> tuple[Command, Lease] | None:
+        self._renew_queue_lease()
         if self._has_managed_command():
             self._ensure_managed_input_schema()
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
+            now = _utcnow()
             row = connection.execute(
                 "SELECT c.* FROM v2_commands c JOIN v2_executions e ON e.id=c.execution_id "
                 "LEFT JOIN v2_cancellation x ON x.execution_id=c.execution_id "
-                "WHERE c.status IN ('queued','claimed') "
+                "LEFT JOIN v2_leases l ON l.execution_id=c.execution_id "
+                "WHERE c.queue_key IS ? "
+                "AND c.status IN ('queued','claimed') "
                 "AND (c.status='claimed' OR x.execution_id IS NULL) "
                 "AND json_extract(e.snapshot_json,'$.lifecycle') <> 'finished' "
-                "ORDER BY c.created_at,c.id LIMIT 1"
+                "AND (l.execution_id IS NULL OR l.expires_at<=?) "
+                "ORDER BY c.created_at,c.id LIMIT 1",
+                (self.execution_queue, _iso(now)),
             ).fetchone()
             if row is None:
                 self._rollback(connection)
                 return None
             execution_id = str(row["execution_id"])
-            now = _utcnow()
             current = connection.execute(
                 "SELECT * FROM v2_leases WHERE execution_id=?", (execution_id,)
             ).fetchone()
-            if current and _parse_dt(current["expires_at"]) > now:
-                self._rollback(connection)
-                return None
             if row["status"] == "claimed" and (
                 current is None or _parse_dt(current["expires_at"]) <= now
             ):
@@ -4419,7 +4486,10 @@ class SQLiteExecutionStore(_SqliteBase):
                 "UPDATE v2_leases SET heartbeat_at=?,expires_at=? WHERE lease_token=? AND owner_id=? AND expires_at>?",
                 (_iso(now), _iso(expires), token, owner, _iso(now)),
             )
-            return cursor.rowcount == 1
+            renewed = cursor.rowcount == 1
+        if renewed:
+            self._renew_queue_lease()
+        return renewed
 
     renew_lease = heartbeat
 
@@ -4880,12 +4950,28 @@ class SQLiteExecutionStore(_SqliteBase):
             # Select and transition stale owners under one write transaction.
             # A heartbeat cannot race between the stale check and interruption.
             self._begin(connection, immediate=True)
-            rows = connection.execute(
-                "SELECT execution_id FROM v2_leases WHERE expires_at<=?",
+            rows = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT execution_id FROM v2_leases WHERE expires_at<=?",
+                    (_iso(moment),),
+                ).fetchall()
+            ]
+            # Queued private-queue commands whose queue owner stopped renewing
+            # its lease can never be claimed by any other store; interrupt them
+            # through the same path as an expired execution lease.
+            seen = set(rows)
+            for row in connection.execute(
+                "SELECT DISTINCT c.execution_id FROM v2_commands c "
+                "LEFT JOIN v2_queue_leases q ON q.queue_key=c.queue_key "
+                "WHERE c.status='queued' AND c.queue_key IS NOT NULL "
+                "AND (q.queue_key IS NULL OR q.expires_at<=?)",
                 (_iso(moment),),
-            ).fetchall()
-            for row in rows:
-                key = str(row[0])
+            ).fetchall():
+                if str(row[0]) not in seen:
+                    seen.add(str(row[0]))
+                    rows.append(str(row[0]))
+            for key in rows:
                 execution = connection.execute(
                     "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
                     (key,),

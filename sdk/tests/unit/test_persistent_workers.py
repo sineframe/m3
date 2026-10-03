@@ -181,15 +181,35 @@ def test_stable_store_worker_rejects_terminal_report_after_lease_expiry(tmp_path
         )
 
 
-def test_stable_store_strict_fifo_blocks_newer_command_while_oldest_is_leased(tmp_path):
+def test_store_claims_next_command_while_oldest_is_leased(tmp_path):
     store = _store(tmp_path)
     for name in ("execution-1", "execution-2"):
         store.create(ExecutionState(execution_id=ExecutionId(name)))
     first = store.enqueue_command("execution-1", command_id="command-1")
-    store.enqueue_command("execution-2", command_id="command-2")
+    second = store.enqueue_command("execution-2", command_id="command-2")
     claimed = store.claim_next("worker-a", lease_seconds=30)
     assert claimed is not None and claimed[0].id == first.id
-    assert store.claim_next("worker-b") is None
+    next_claimed = store.claim_next("worker-b", lease_seconds=30)
+    assert next_claimed is not None and next_claimed[0].id == second.id
+    assert store.claim_next("worker-c") is None
+
+
+def test_store_claims_only_its_execution_queue(tmp_path):
+    path = tmp_path / "stable.sqlite"
+    stores = {
+        "a": SQLiteExecutionStore(path, execution_queue="a"),
+        "b": SQLiteExecutionStore(path, execution_queue="b"),
+        None: SQLiteExecutionStore(path),
+    }
+    for key, store in stores.items():
+        name = f"execution-{key}"
+        store.create(ExecutionState(execution_id=ExecutionId(name)))
+        command = store.enqueue_command(name, command_id=f"command-{key}")
+        assert store.get_command(command.id).queue_key == key
+    for key, store in stores.items():
+        claimed = store.claim_next(f"worker-{key}")
+        assert claimed is not None and claimed[0].id == f"command-{key}"
+        assert store.claim_next(f"worker-{key}-again") is None
 
 
 def test_stable_command_retry_is_idempotent_and_key_reuse_conflicts(tmp_path):
@@ -208,6 +228,74 @@ def test_stable_command_retry_is_idempotent_and_key_reuse_conflicts(tmp_path):
         store.enqueue_command(
             "execution-1", command_id="stable", payload={"message": "changed"}
         )
+    other_queue = SQLiteExecutionStore(
+        tmp_path / "stable.sqlite", execution_queue="other"
+    )
+    with pytest.raises(StorageConflict):
+        other_queue.enqueue_command(
+            "execution-1", command_id="stable", payload={"message": "hello"}
+        )
+
+
+def test_execution_queue_rejects_empty_name(tmp_path):
+    with pytest.raises(ValueError):
+        SQLiteExecutionStore(tmp_path / "stable.sqlite", execution_queue=" ")
+
+
+def _queue_command(path: Path, queue: str | None, name: str):
+    store = SQLiteExecutionStore(path, execution_queue=queue)
+    store.create(ExecutionState(execution_id=ExecutionId(name)))
+    store.enqueue_command(name, command_id=f"command-{name}")
+    return store
+
+
+def test_abandoned_private_queue_command_is_interrupted(tmp_path):
+    path = tmp_path / "stable.sqlite"
+    _queue_command(path, "pytest-dead", "execution-dead")
+    other_private = SQLiteExecutionStore(path, execution_queue="pytest-other")
+    shared = SQLiteExecutionStore(path)
+    now = datetime.now(timezone.utc)
+    # Before the queue lease expires the command is left alone.
+    assert other_private.mark_stale_interrupted(now=now + timedelta(seconds=5)) == ()
+    assert shared.get_command("command-execution-dead").status == "queued"
+    swept = shared.mark_stale_interrupted(now=now + timedelta(seconds=120))
+    assert swept == (ExecutionId("execution-dead"),)
+    assert shared.get_command("command-execution-dead").status == "interrupted"
+    _assert_reopenable_terminal(
+        shared, ExecutionId("execution-dead"), ExecutionOutcome.INTERRUPTED
+    )
+    assert other_private.mark_stale_interrupted(now=now + timedelta(seconds=120)) == ()
+
+
+def test_live_private_queue_is_not_swept(tmp_path, monkeypatch):
+    from m3.storage import sqlite as sqlite_module
+
+    path = tmp_path / "stable.sqlite"
+    store = _queue_command(path, "pytest-live", "execution-live")
+    sweeper = SQLiteExecutionStore(path)
+    base = datetime.now(timezone.utc)
+
+    def at(seconds: float) -> None:
+        monkeypatch.setattr(
+            sqlite_module, "_utcnow", lambda: base + timedelta(seconds=seconds)
+        )
+
+    # Idle polling at +25s renews the queue lease (30s TTL) to +55s.
+    at(25)
+    claimed = store.claim_next("worker")
+    assert claimed is not None
+    store.create(ExecutionState(execution_id=ExecutionId("execution-second")))
+    store.enqueue_command("execution-second", command_id="command-second")
+    # +40s would be stale had the lease not been renewed at +25s.
+    assert sweeper.mark_stale_interrupted(now=base + timedelta(seconds=40)) == ()
+    # Busy path: a running execution's heartbeat at +45s renews to +75s.
+    at(45)
+    assert store.heartbeat(claimed[1], lease_seconds=60)
+    assert sweeper.mark_stale_interrupted(now=base + timedelta(seconds=70)) == ()
+    assert sweeper.get_command("command-second").status == "queued"
+    # Once the owner stops renewing, the queue is abandoned.
+    swept = sweeper.mark_stale_interrupted(now=base + timedelta(seconds=120))
+    assert ExecutionId("execution-second") in swept
 
 
 def test_stable_worker_marks_heartbeat_failure_interrupted(tmp_path, monkeypatch):

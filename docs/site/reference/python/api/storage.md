@@ -235,6 +235,7 @@ m3.storage.Command(
     payload: Mapping[str, Any],
     session_id: SessionId | None = None,
     turn_id: TurnId | None = None,
+    queue_key: str | None = None,
 ) -> None
 ```
 
@@ -1345,6 +1346,7 @@ m3.storage.PersistentExecutionStore(
     config: RedactionConfig | None = None,
     capture_config: CaptureOptions | None = None,
     payload_blob_threshold: int = 65536,
+    execution_queue: str | None = None,
     **kwargs: Any,
 ) -> None
 ```
@@ -2272,6 +2274,7 @@ m3.storage.SQLiteExecutionStore(
     config: RedactionConfig | None = None,
     capture_config: CaptureOptions | None = None,
     payload_blob_threshold: int = 65536,
+    execution_queue: str | None = None,
     **kwargs: Any,
 ) -> None
 ```
@@ -3244,6 +3247,7 @@ m3.storage.SQLiteStore(
     config: RedactionConfig | None = None,
     capture_config: CaptureOptions | None = None,
     payload_blob_threshold: int = 65536,
+    execution_queue: str | None = None,
     **kwargs: Any,
 ) -> None
 ```

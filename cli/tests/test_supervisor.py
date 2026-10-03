@@ -556,7 +556,7 @@ def test_ui_is_not_started_for_interrupted_or_collection_status(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
     )
     monkeypatch.setattr(
         supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns()
@@ -581,7 +581,7 @@ def test_ui_launches_for_ordinary_pytest_failure_and_keeps_status(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
     )
     monkeypatch.setattr(
         supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns()
@@ -1128,7 +1128,7 @@ def test_plain_test_child_omits_access_token(monkeypatch, tmp_path, with_env_fil
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
     )
     captured = {}
 
@@ -1198,6 +1198,94 @@ def test_validation_requires_judge_dependency(
         supervisor.validate_project_python(
             Path(sys.executable), cli_sdk_version="0.2.0a13", project_root=tmp_path
         )
+
+
+def test_validation_requires_xdist_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = type(
+        "Result",
+        (),
+        {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {
+                    "checks": {
+                        "pytest": True,
+                        "m3": True,
+                        "m3.pytest_plugin": True,
+                        "openai": True,
+                        "SQLiteExecutionStore": True,
+                        "xdist": False,
+                    },
+                    "version": "0.2.0a13",
+                }
+            ),
+        },
+    )()
+    monkeypatch.setattr(supervisor.subprocess, "run", lambda *_args, **_kwargs: result)
+    assert (
+        supervisor.validate_project_python(
+            Path(sys.executable), cli_sdk_version="0.2.0a13", project_root=tmp_path
+        )
+        == "0.2.0a13"
+    )
+    with pytest.raises(
+        supervisor.ProjectPythonError,
+        match="--num-processes requires pytest-xdist in the project Python",
+    ):
+        supervisor.validate_project_python(
+            Path(sys.executable),
+            cli_sdk_version="0.2.0a13",
+            project_root=tmp_path,
+            require_xdist=True,
+        )
+
+
+def test_command_emits_num_processes_before_passthrough(tmp_path: Path) -> None:
+    command = supervisor.pytest_command(
+        Path("/project/.venv/bin/python"),
+        (tmp_path / "results.sqlite").resolve(),
+        ["-q", "tests"],
+        num_processes="4",
+    )
+    assert command[-4:] == ["-n", "4", "-q", "tests"]
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "x", "", "²", "٣", "03", "1" * 5000])
+def test_num_processes_rejects_invalid_values(value: str) -> None:
+    assert (
+        supervisor._validate_selection_options((), None, (), num_processes=value)
+        == "--num-processes must be a positive integer or auto"
+    )
+
+
+@pytest.mark.parametrize("value", [None, "auto", "3"])
+def test_num_processes_accepts_valid_values(value: str | None) -> None:
+    assert (
+        supervisor._validate_selection_options((), None, (), num_processes=value)
+        is None
+    )
+
+
+def test_cli_rejects_num_processes_with_passthrough_n(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        supervisor,
+        "resolve_project_python",
+        lambda *_args, **_kwargs: Path(sys.executable),
+    )
+    monkeypatch.setattr(
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
+    )
+
+    def spawn(command: list[str], **_: object) -> _Process:
+        raise AssertionError("pytest must not start")
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", spawn)
+    assert main(["test", "-n", "2", "--", "-n", "3"]) == 2
+    assert "cannot be combined with pytest passthrough" in capsys.readouterr().err
 
 
 def test_command_uses_selected_python_and_absolute_database(tmp_path: Path) -> None:

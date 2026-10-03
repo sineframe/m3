@@ -1021,7 +1021,9 @@ class AsyncMCPTestKit:
             # Async kits are often constructed inside an already-running
             # event loop (including the sync portal). Start ownership here so
             # a second toolkit can claim durable work submitted by another
-            # process/toolkit before its first local submit.
+            # process/toolkit before its first local submit. Kits on a private
+            # execution queue (pytest-scoped stores) only claim their own
+            # submissions.
             try:
                 self._execution_controller.start_embedded_worker()
             except RuntimeError:
