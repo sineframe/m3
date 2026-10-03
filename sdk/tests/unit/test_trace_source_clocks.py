@@ -72,6 +72,7 @@ def _wire_call(
     request_wire_ms: float,
     response_wire_ms: float,
     origin_ms: float | None,
+    call_id: str | None = None,
 ) -> tuple[tuple[EventKind, dict[str, Any]], ...]:
     """One tools/call exchange replayed into the trace after the turn ended."""
 
@@ -84,6 +85,7 @@ def _wire_call(
         "params": {"name": "echo", "arguments": {"text": "hi"}},
         "wire_offset_ms": request_wire_ms,
         **clock,
+        **({} if call_id is None else {"call_id": call_id}),
     }
     response = {
         "evidence_mode": "wire_observed",
@@ -222,6 +224,44 @@ def test_harness_offsets_without_turn_origin_are_labelled_ingested() -> None:
     assert call.timing.start_offset_ms == pytest.approx(20_000.0)
 
 
+def test_correlated_call_keeps_wire_timing_over_ingested_report() -> None:
+    # Adapters that build observations after the turn report the call at the
+    # turn's end; joining that would stretch the 5 ms call to 8.75 s.
+    trace = _trace(
+        _harness_call(None),
+        *_wire_call(
+            ingested_ms=20_000.0,
+            request_wire_ms=11_000.0,
+            response_wire_ms=11_005.0,
+            origin_ms=250.0,
+            call_id="reported-1",
+        ),
+    )
+
+    (call,) = trace.view().tool_calls
+
+    assert call.correlation.value == "correlated"
+    assert call.timing.clock is TimingClock.WIRE
+    assert call.timing.start_offset_ms == pytest.approx(11_250.0)
+    assert call.timing.duration_ms == pytest.approx(5.0)
+
+
+def test_reopened_recorder_maps_new_readings_after_persisted_history() -> None:
+    store = InMemoryExecutionStore()
+    first = ExecutionTraceRecorder(store, "clock-reopen")
+    first.emit(EventKind.DIAGNOSTIC, payload={"code": "before_restart"})
+    persisted = max(event.monotonic_offset_ms for event in first.events())
+
+    reopened = ExecutionTraceRecorder(store, "clock-reopen")
+    now = reopened.offset_for_perf_counter_ns(time.perf_counter_ns())
+    reopened.emit(EventKind.DIAGNOSTIC, payload={"code": "after_restart"})
+
+    # A capture started now lands after the persisted history, and the
+    # recorder's own next event agrees with that mapping.
+    assert persisted <= now < persisted + 1_000.0
+    assert reopened.events()[-1].monotonic_offset_ms >= now
+
+
 def test_sink_expresses_the_turn_origin_on_the_trace_clock() -> None:
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "clock-sink")
     turn_origin = time.monotonic()
@@ -243,7 +283,6 @@ def test_sink_expresses_the_turn_origin_on_the_trace_clock() -> None:
 
     (call,) = trace.view().tool_calls
 
-    assert expected is not None
     assert call.timing.clock is TimingClock.HARNESS
     # Both clocks were read within microseconds of each other.
     assert call.timing.start_offset_ms == pytest.approx(expected, abs=1.0)

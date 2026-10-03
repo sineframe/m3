@@ -302,8 +302,9 @@ class TurnEvidence(FrozenModel):
     observations: tuple[HarnessObservation, ...] = ()
     limitations: tuple[str, ...] = ()
     # ``time.monotonic()`` reading, in seconds, that the observations'
-    # ``monotonic_offset_ms`` values are measured from. Without it the
-    # offsets cannot be placed on the trace clock.
+    # ``monotonic_offset_ms`` values are measured from. Set it only when each
+    # offset was taken as its observation arrived; otherwise leave it unset so
+    # the trace labels the timing as ingested instead of placing it.
     monotonic_origin: float | None = None
 
     @field_validator("sequence", mode="before")

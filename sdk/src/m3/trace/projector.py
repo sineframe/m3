@@ -286,24 +286,37 @@ def _joined_clock(left: TraceTiming, right: TraceTiming) -> TimingClock:
     return left.clock if left.clock is right.clock else TimingClock.MIXED
 
 
-def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCallEntry:
-    """Build one correlated entry with wire fields authoritative."""
-    first_timing = min(
-        (reported.timing, wire.timing), key=lambda timing: timing.start_offset_ms
-    )
-    last_timing = max(
-        (reported.timing, wire.timing), key=lambda timing: timing.end_offset_ms
-    )
-    timing = first_timing.model_copy(
+def _merged_call_timing(reported: TraceTiming, wire: TraceTiming) -> TraceTiming:
+    """Span covering both sides, unless one side's timing is only approximate.
+
+    An ingested side was placed when M3 received it, often the end of the turn;
+    joining it would stretch an accurately timed call across that gap.
+    """
+    if (
+        reported.clock is TimingClock.INGESTED
+        and wire.clock is not TimingClock.INGESTED
+    ):
+        return wire
+    if (
+        wire.clock is TimingClock.INGESTED
+        and reported.clock is not TimingClock.INGESTED
+    ):
+        return reported
+    first = min((reported, wire), key=lambda timing: timing.start_offset_ms)
+    last = max((reported, wire), key=lambda timing: timing.end_offset_ms)
+    return first.model_copy(
         update={
-            "finished_at": last_timing.finished_at,
-            "end_offset_ms": last_timing.end_offset_ms,
-            "duration_ms": max(
-                0.0, last_timing.end_offset_ms - first_timing.start_offset_ms
-            ),
-            "clock": _joined_clock(reported.timing, wire.timing),
+            "finished_at": last.finished_at,
+            "end_offset_ms": last.end_offset_ms,
+            "duration_ms": max(0.0, last.end_offset_ms - first.start_offset_ms),
+            "clock": _joined_clock(reported, wire),
         }
     )
+
+
+def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCallEntry:
+    """Build one correlated entry with wire fields authoritative."""
+    timing = _merged_call_timing(reported.timing, wire.timing)
     provider_call_id = (
         reported.provider_call_id
         if reported.provider_call_id.state is ObservationState.OBSERVED

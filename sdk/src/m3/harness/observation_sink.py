@@ -70,11 +70,9 @@ class HarnessObservationSink:
         self._clock_origin_ms: float | None = None
         convert = getattr(recorder, "offset_for_perf_counter_ns", None)
         if monotonic_origin is not None and callable(convert):
-            now_ms = convert(time.perf_counter_ns())
-            if now_ms is not None:
-                self._clock_origin_ms = now_ms - (
-                    (time.monotonic() - monotonic_origin) * 1000.0
-                )
+            self._clock_origin_ms = convert(time.perf_counter_ns()) - (
+                (time.monotonic() - monotonic_origin) * 1000.0
+            )
 
     @property
     def limitations(self) -> tuple[str, ...]:
