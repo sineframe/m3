@@ -86,7 +86,7 @@
 - [Troubleshooting](troubleshooting.md): Start with the symptom:
 - [Agent readiness, approvals, and timeouts](troubleshooting-agents.md): Use m3 doctor --require harness:NAME for a system runtime, or select a managed runtime/version supported on the current OS and CPU.
 - [CI credentials and uploads](troubleshooting-ci.md): An ambient variable takes precedence even when its value is empty. Unset it if the file should supply the value. M3 does not interpolate dotenv values.
-- [Installation and project Python](troubleshooting-install.md): Run m3 setup from the project root. It installs the SDK version matching the standalone CLI into the selected isolated environment. If M3 selected the wrong environment, pass --python PATH to setup and doctor.
+- [Installation and project Python](troubleshooting-install.md): Run m3 setup from the project root. It installs the SDK version matching the standalone CLI into the selected isolated environment. If M3 selected the wrong environment, pass --python PATH to setup, test, and doctor.
 - [Missing traces or saved results](troubleshooting-results.md): Use m3 test, or configure SQLiteExecutionStore explicitly in direct SDK code. Plain pytest without the storage plugin keeps SDK executions in memory.
 - [Server startup and connection failures](troubleshooting-servers.md): Run the configured command directly from the configured working directory. Check that its stdout contains only MCP protocol traffic; write diagnostics to stderr. Confirm every argument is a separate StdioServer.args value.
 
