@@ -291,6 +291,20 @@
       ]
     },
     {
+      "id": "guides-results-timings",
+      "title": "Find slow steps in a test run",
+      "source": "guides/results/timings.md",
+      "description": "Set M3_TIMINGS=1 to record where time goes in an m3 test run: a summary table, a per-step JSON file, and a trace you can open in Perfetto.",
+      "kind": "guides",
+      "searchAliases": [
+        "performance",
+        "slow tests",
+        "profiling",
+        "timings",
+        "M3_TIMINGS"
+      ]
+    },
+    {
       "id": "guides-results-traces",
       "title": "Read a finalized trace",
       "source": "guides/results/traces.md",
@@ -742,7 +756,8 @@
             "guides-results-viewer",
             "guides-results-traces",
             "guides-results-persistence",
-            "guides-results-baselines"
+            "guides-results-baselines",
+            "guides-results-timings"
           ]
         },
         {

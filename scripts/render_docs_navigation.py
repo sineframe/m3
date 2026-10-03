@@ -70,6 +70,7 @@ NAVIGATION = [
                     "guides-results-traces",
                     "guides-results-persistence",
                     "guides-results-baselines",
+                    "guides-results-timings",
                 ],
             },
             {
@@ -206,6 +207,13 @@ ALIASES = {
     ],
     "reference-pytest": ["suite_name", "pytest marker", "fixtures"],
     "guides-results-baselines": ["compare runs", "baseline run ID"],
+    "guides-results-timings": [
+        "performance",
+        "slow tests",
+        "profiling",
+        "timings",
+        "M3_TIMINGS",
+    ],
     "guides-results-persistence": ["results database", "saved runs"],
     "guides-evaluations-judges": ["M3_JUDGE_API_KEY"],
     "guides-credentials": [

@@ -91,10 +91,15 @@ marker server list entirely, including trust settings. Cases are the product
 of harnesses, servers, and trials, so 2 harnesses × 2 servers × 2 trials
 creates 8 cases. Blank `--suite` input exits with status 2.
 
+Set `M3_TIMINGS=1` to print a step-timing summary after the run; see
+[Find slow steps in a test run](../../guides/results/timings.md).
+
 ## `m3 ci test`
 
 Accepts the test options except viewer options. It applies CI marker selection.
 `--ci-metadata PATH` supplies supported CI metadata overrides.
+`M3_TIMINGS=1` also applies here and adds the timing tables to the GitHub job
+summary; see [Find slow steps in a test run](../../guides/results/timings.md).
 
 ## Publishing
 

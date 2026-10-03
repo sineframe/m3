@@ -15,6 +15,16 @@ The CLI automatically loads `.env` from the project root (`--project-root`, or t
 
 See the [credential reference](credentials.md) for credential destinations and their resolution behavior.
 
+## Diagnostics
+
+`M3_TIMINGS` turns on step timings for a run. It is an environment variable only; there is no `[tool.m3]` key and no SDK argument.
+
+| Variable | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `M3_TIMINGS` | `1`, `true`, `yes`, `on` (case-insensitive) | unset | Records step timings under `.m3/reports/<run-id>/timings/` during `m3 test`, `m3 ci test`, and `pytest`, and prints a summary after the run. Any other value, or unset, records and prints nothing. |
+
+See [Find slow steps in a test run](../guides/results/timings.md).
+
 ## SDK settings
 
 The SDK resolves two settings. Each can come from an explicit argument, an `M3_*` environment variable, or a `[tool.m3]` table in `pyproject.toml`.

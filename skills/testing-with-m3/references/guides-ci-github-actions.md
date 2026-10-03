@@ -127,6 +127,8 @@ jobs:
           npm ci
           npm run build
       - run: m3 ci test --python .venv/bin/python -- tests m3_tests -q
+        env:
+          M3_TIMINGS: "1"
       - name: Upload M3 reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -138,6 +140,7 @@ jobs:
 ```
 
 - **Reports.** `m3 ci test` writes each run to `.m3/reports/<run-id>/feedback.json` under the project root, next to the run's traces, artifacts, and evidence, and prints `Run ID:` and `Local report:` lines with the path. The report is written when tests fail too (exit code 1), so the artifact step uses `if: always()`; without it, a failing test step skips the upload of exactly the report you need. `retention-days` limits how long GitHub keeps the artifact.
+- **Timings.** `M3_TIMINGS: "1"` makes the run write `.m3/reports/<run-id>/timings/` and append step and counter tables to the job summary, so slow steps show on the workflow run page. The `.m3/reports/` artifact upload already includes the `timings/` folder. See [Find slow steps in a test run](guides-results-timings.md).
 - **Timeout.** `timeout-minutes` on the job stops a run that hangs, for example on a model call or a server that never starts. GitHub's default is 360 minutes. Pick a limit comfortably above your normal run time.
 - **Server build.** A server that needs compiling, such as a Node project, has no build output on a fresh runner. Set up its toolchain with a pinned action and run its build in its own step before `m3 ci test`, so a build failure appears as a build failure and not as a test failure.
 - **Test directories.** pytest reads `testpaths` only when no path is given. Paths after `--` replace it, so list every directory that holds M3 tests: `m3 ci test -- tests m3_tests` collects both, even when `testpaths = ["tests"]` in `pyproject.toml`. Replace `tests` and `m3_tests` with your own directories.

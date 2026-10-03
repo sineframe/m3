@@ -14,6 +14,7 @@
 | `M3 execution timeout` | One execution reached a deadline. It is printed once per timed-out execution: `id`, `stage`, `elapsed`, `feedback`. | Informational. The run's result is the pytest outcome, so a test that expects a timeout can still pass. Inspect the execution's diagnostics when the timeout was not expected. |
 | `M3 test manifest persistence was incomplete` | Pytest results were not fully saved. | Saved history for this run is incomplete; do not use it as a baseline. |
 | `M3 required evaluations blocked finalization` | A `required=True` evaluation did not pass. | The run is not successful even if test code caught the exception. |
+| `M3 timings` | Only with `M3_TIMINGS=1`: the timings directory, followed by step and counter tables, the slowest tests, and a `report built in ...; N records dropped` line. | Read the tables to find slow steps; see [Find slow steps in a test run](guides-results-timings.md). |
 | `M3 CI excluded` | `m3 ci test` only: the number of tests excluded by markers with `ci=False`. | Informational. |
 | `M3 feedback export failed` | `feedback.json` was not written. | The run's database records remain; rerun to get a feedback file. |
 
