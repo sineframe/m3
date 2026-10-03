@@ -30,7 +30,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from m3 import _timing, _timing_report
-from m3._terminal import Style, hyperlink, supports_hyperlinks
+from m3._terminal import Style, fit, hyperlink, supports_hyperlinks, visible_len
 
 from . import console
 from .branding import M3_ASCII_ART, M3_TAGLINE
@@ -1327,14 +1327,24 @@ def _serve_styled(
     )
     arrow = style.cyan(style.glyphs.arrow)
     clickable = supports_hyperlinks()
-    print()
-    for label, url in links:
-        name = style.bold(style.cyan(label))
-        if clickable:
-            print(f"  {arrow}  {hyperlink(url, name)}")
-        else:
-            print(f"  {arrow}  {name}  {style.underline(url)}")
+    width = console.terminal_width()
     with console.KeyReader() as keys:
+        print()
+        for label, url in links:
+            name = style.bold(style.cyan(label))
+            if keys.enabled:
+                # o opens and c copies the full link, so show a short form
+                # that never wraps; it is also clickable where supported.
+                prefix = f"  {arrow}  {name}  "
+                room = max(12, width - visible_len(prefix))
+                short = style.underline(fit(url.split("#", 1)[0], room))
+                print(prefix + (hyperlink(url, short) if clickable else short))
+            elif clickable:
+                print(f"  {arrow}  {hyperlink(url, name)}")
+            else:
+                # No keys to copy with: the full link, on a line of its own.
+                print(f"  {arrow}  {name}")
+                print(f"     {style.underline(url)}")
         if keys.enabled:
             hints = [("o", "reopen"), ("c", "copy link")]
             if compare_url is not None and compare_with is not None:
@@ -1346,6 +1356,8 @@ def _serve_styled(
         else:
             line = style.dim("press Ctrl-C to stop the UI server")
         print("     " + line, flush=True)
+        # The cursor would sit at the end of the status line.
+        sys.stdout.write("\x1b[?25l")
         try:
             time.sleep(1)
             if not child.alive():
@@ -1401,8 +1413,8 @@ def _serve_styled(
                             style, "no earlier run to compare with yet", ok=False
                         )
         finally:
-            # Leave the shell prompt on a fresh line.
-            sys.stdout.write("\n")
+            # Leave the shell prompt on a fresh line, with its cursor.
+            sys.stdout.write("\x1b[?25h\n")
             sys.stdout.flush()
 
 
@@ -1425,6 +1437,21 @@ def _open_ui_in_browser(
             "Warning: could not open a browser; use the printed UI link.",
             file=sys.stderr,
         )
+
+
+def _run_pytest_with_cursor(interactive: bool, *args: Any, **kwargs: Any) -> int:
+    """Run pytest; on a terminal, make sure the cursor is visible afterwards.
+
+    The plugin hides it while its live block is drawn and shows it again at
+    the end, but a crashed or killed pytest would leave it hidden.
+    """
+
+    try:
+        return _run_pytest_timed(*args, **kwargs)
+    finally:
+        if interactive:
+            sys.stdout.write("\x1b[?25h")
+            sys.stdout.flush()
 
 
 def _run_pytest_timed(*args: Any, **kwargs: Any) -> int:
@@ -1731,7 +1758,8 @@ def run_test_with_runs(
         return TestRunResult(
             OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
         )
-    exit_code = _run_pytest_timed(
+    exit_code = _run_pytest_with_cursor(
+        no_header,
         selected,
         database_path,
         pytest_args,
@@ -1906,7 +1934,8 @@ def run_test(
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR
-    return _run_pytest_timed(
+    return _run_pytest_with_cursor(
+        no_header,
         selected,
         database_path,
         pytest_args,

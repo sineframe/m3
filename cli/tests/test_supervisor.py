@@ -2072,7 +2072,8 @@ def test_ui_server_on_a_terminal_prints_styled_report_links(
     output = stream.getvalue()
     # The banner was printed before pytest; the end of the run shows links only.
     assert M3_ASCII_ART.splitlines()[0] not in output
-    assert f"  ➜  Report  {opened[0]}" in output
+    # No keys to copy with: the full link goes on its own line.
+    assert f"  ➜  Report\n     {opened[0]}\n" in output
     assert "press Ctrl-C to stop the UI server" in output
 
 
@@ -2238,3 +2239,42 @@ def test_compare_url_encodes_both_run_ids() -> None:
         supervisor.build_compare_url("run a", "run/b", 8000, "tok")
         == "http://127.0.0.1:8000/reports/runs/run%20a?baseline_run_id=run%2Fb#m3_token=tok"
     )
+
+
+def test_ui_link_is_short_and_fits_when_keys_are_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("COLUMNS", "60")
+    _code, output, opened, _copied = _serve_with_keys(
+        monkeypatch, ["q"], compare_with=None
+    )
+    token = opened[0].split("#m3_token=", 1)[1]
+    link_line = next(line for line in output.splitlines() if "➜" in line)
+    assert token not in output  # o and c use the full link; it is not shown
+    assert link_line.startswith("  ➜  Report  http://127.0.0.1:8123/")
+    assert len(link_line) <= 59
+
+
+def test_ui_hides_the_cursor_while_waiting_and_restores_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _code, output, _opened, _copied = _serve_with_keys(
+        monkeypatch, ["q"], compare_with=None
+    )
+    assert output.index("\x1b[?25l") < output.rindex("\x1b[?25h")
+    assert output.endswith("\x1b[?25h\n")
+
+
+def test_cursor_is_restored_even_if_pytest_dies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = _TTYStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+
+    def crash(*_args: object, **_kwargs: object) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(supervisor, "_run_pytest_timed", crash)
+    with pytest.raises(KeyboardInterrupt):
+        supervisor._run_pytest_with_cursor(True)
+    assert stream.getvalue() == "\x1b[?25h"

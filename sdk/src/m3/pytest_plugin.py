@@ -1836,7 +1836,9 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             reporter.write_line(
                 "M3: no tests executed; skipped-only runs fail", red=True
             )
-        for execution_id, stage, elapsed in timeout_summaries:
+        if style is not None and timeout_summaries:
+            _write_timeouts(reporter, style, timeout_summaries)
+        for execution_id, stage, elapsed in timeout_summaries if style is None else ():
             elapsed_text = (
                 f"{elapsed:.3f}s" if isinstance(elapsed, float) else "unknown"
             )
@@ -1865,7 +1867,7 @@ def _write_run_panel(
     completed: int,
     *,
     comparison: _Any = None,
-    slowest: list[tuple[str, float]] | None = None,
+    slowest: list[tuple[str, str, float]] | None = None,
 ) -> None:
     """Terminal rendering of the M3 run summary for interactive sessions."""
 
@@ -1901,16 +1903,27 @@ def _write_run_panel(
     rows.append(("observations", observations))
     slowest = slowest or []
     if slowest:
-        name_width = min(34, max(len(name) for name, _ in slowest))
-        longest = slowest[0][1]
-        for index, (name, seconds) in enumerate(slowest):
+        # The row must fit inside the closed panel. The test name matters
+        # most and gets the room left after the bar and the time; the file
+        # name is shown only when it fits whole.
+        terminal = width if isinstance(width, int) and width > 0 else 80
+        key_width = 16  # the panel's key column ("observations" + gap)
+        available = terminal - 1 - 2 - 2 - 1 - key_width
+        fixed = 1 + 12 + 1 + 6  # " " + bar + " " + "123.4s"
+        name_width = max(
+            12, min(max(len(name) for name, _, _ in slowest), available - fixed)
+        )
+        longest = slowest[0][2]
+        for index, (name, file, seconds) in enumerate(slowest):
             filled = max(1, round(12 * seconds / longest)) if longest else 1
+            show_file = file and name_width + fixed + 2 + len(file) <= available
             rows.append(
                 (
                     "slowest" if index == 0 else "",
                     f"{_truncate(name, name_width, style.glyphs.ellipsis, keep='start'):<{name_width}} "
                     f"{style.cyan(style.glyphs.bar_full * filled)}{' ' * (12 - filled)} "
-                    f"{style.dim(f'{seconds:.1f}s')}",
+                    f"{style.dim(f'{seconds:>5.1f}s')}"
+                    + (f"  {style.dim(file)}" if show_file else ""),
                 )
             )
     path_text = style.dim(str(feedback))
@@ -1922,6 +1935,34 @@ def _write_run_panel(
     reporter.write_line("")
     for line in style.box(title, rows, width if isinstance(width, int) else 80):
         reporter.write_line(line)
+
+
+def _write_timeouts(
+    reporter: _Any, style: _Style, timeouts: list[tuple[str, str, float | None]]
+) -> None:
+    """Compact timeout lines under the panel; the plain lines stay for pipes."""
+
+    width = getattr(getattr(reporter, "_tw", None), "fullwidth", 80)
+    width = (width if isinstance(width, int) and width > 1 else 80) - 1
+    shown = timeouts[:3]
+    for execution_id, stage, elapsed in shown:
+        details = [
+            style.dim(_truncate(execution_id, 24, style.glyphs.ellipsis, keep="start"))
+        ]
+        if stage and stage != "unknown":
+            details.append(f"stage {stage}")
+        if isinstance(elapsed, float):
+            details.append(f"after {elapsed:.1f}s")
+        line = (
+            f"  {style.yellow(style.glyphs.warning + ' execution timed out')}  "
+            + "  ".join(details)
+        )
+        reporter.write_line(_fit(line, width))
+    more = len(timeouts) - len(shown)
+    tail = f"{more} more {style.glyphs.dot} " if more else ""
+    reporter.write_line(
+        _fit(f"    {style.dim(tail + 'details in feedback.json')}", width)
+    )
 
 
 def _baseline_delta(style: _Style, comparison: _Any) -> str:
@@ -2041,6 +2082,8 @@ def _terminal_style(reporter: _Any) -> _Style | None:
     )
 
 
+_MATRIX_COLUMNS = 48
+_MATRIX_ROWS = 3
 _CELL_RANK = {"failed": 4, "running": 3, "pending": 2, "skipped": 1, "passed": 0}
 _NOTIFY_TERMINALS = frozenset({"iTerm.app", "ghostty", "WezTerm"})
 _NOTIFY_AFTER_SECONDS = 30.0
@@ -2073,6 +2116,7 @@ class _Progress:
         self._file_started = 0.0
         self._running: set[str] = set()
         self._attached = False
+        self._cursor_hidden = False
         option = config.option
         # With xdist workers, tests from several files run at once, so the
         # per-file lines are left out; the main process still sees every
@@ -2222,22 +2266,24 @@ class _Progress:
             self._report_failure(report)
         self._write(force=report.outcome == "failed")
 
-    def slowest(self, count: int = 3) -> list[tuple[str, float]]:
+    def slowest(self, count: int = 3) -> list[tuple[str, str, float]]:
         """The slowest tests (setup + call + teardown) that took 0.5s or more.
 
-        Parametrized cases are grouped under their test name, since parameter
-        values may contain secrets; the slowest case represents the group.
+        Returns (test name, file name, seconds). Parametrized cases are
+        grouped under their test name, since parameter values may contain
+        secrets; the slowest case represents the group.
         """
 
-        groups: dict[str, tuple[float, int]] = {}
+        groups: dict[tuple[str, str], tuple[float, int]] = {}
         for nodeid, seconds in self._durations.items():
-            name = nodeid.split("[", 1)[0].rsplit("/", 1)[-1]
-            longest, cases = groups.get(name, (0.0, 0))
-            groups[name] = (max(longest, seconds), cases + 1)
+            path, _, test = nodeid.split("[", 1)[0].partition("::")
+            key = (test or path, path.rsplit("/", 1)[-1] if test else "")
+            longest, cases = groups.get(key, (0.0, 0))
+            groups[key] = (max(longest, seconds), cases + 1)
         ranked = sorted(groups.items(), key=lambda item: -item[1][0])
         return [
-            (name if cases == 1 else f"{name} ({cases} cases)", seconds)
-            for name, (seconds, cases) in ranked[:count]
+            (test if cases == 1 else f"{test} ({cases} cases)", file, seconds)
+            for (test, file), (seconds, cases) in ranked[:count]
             if seconds >= 0.5
         ]
 
@@ -2259,6 +2305,10 @@ class _Progress:
 
     def _emit(self, text: str) -> None:
         if self.reporter is not None and self._is_tty():
+            if self.enabled and not self._cursor_hidden and not self._finished:
+                # A blinking cursor at the end of the live block is noise.
+                text = "\x1b[?25l" + text
+                self._cursor_hidden = True
             self.reporter.rewrite(text, flush=True)
 
     def _clear_live(self) -> str:
@@ -2324,8 +2374,10 @@ class _Progress:
         if not self._cells or not style.color:
             # Without colour every state would look the same.
             return []
-        per_row = max(1, width - 4)
-        capacity = per_row * 3
+        # A balanced block: at most 48 columns and 3 rows, with rows of
+        # (nearly) equal length so it never looks like a wrapped line.
+        max_columns = max(1, min(_MATRIX_COLUMNS, width - 4))
+        capacity = max_columns * _MATRIX_ROWS
         # Large suites: one cell stands for several tests and shows the most
         # important state among them.
         size = max(1, -(-len(self._cells) // capacity))
@@ -2333,6 +2385,8 @@ class _Progress:
             max(self._cells[start : start + size], key=_CELL_RANK.__getitem__)
             for start in range(0, len(self._cells), size)
         ]
+        rows = -(-len(buckets) // max_columns)
+        per_row = -(-len(buckets) // rows)
         full = "■" if style.glyphs.passed == "✓" else "#"
         paint = {
             "passed": style.green(full),
@@ -2349,7 +2403,7 @@ class _Progress:
     def _block(self, *, done: bool = False) -> str:
         style = self._style()
         width = self._width()
-        lines = ["", *self._matrix(style, width), self._line(done=done)]
+        lines = [*self._matrix(style, width), self._line(done=done)]
         self._live_height = len(lines)
         return "\n".join(_fit(line, width) + "\x1b[K" for line in lines)
 
@@ -2485,6 +2539,9 @@ class _Progress:
         if self._title_pushed:
             self._emit("\x1b[23;0t")
             self._title_pushed = False
+        if self._cursor_hidden:
+            self._emit("\x1b[?25h")
+            self._cursor_hidden = False
         self._notify()
         if self._is_tty():
             self.reporter.write_line("")

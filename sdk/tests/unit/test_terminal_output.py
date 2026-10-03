@@ -127,16 +127,15 @@ def test_live_block_flows_file_lines_and_failures_above_it() -> None:
 
     screen = _screen(reporter.written)
     assert "hunter2" not in "".join(reporter.written)
-    assert screen[:5] == [
+    assert screen[:4] == [
         "  x tests/test_api.py::test_login",
         "      assert 'open' == 'escalated'  - test_api.py:88",
         "  x tests/test_api.py  1 passed - 1 failed  0.0s",
         "  + tests/test_b.py  1 skipped  0.0s",
-        "",
     ]
     # Without colour the matrix is left out: its cells would all look alike.
-    assert screen[5].startswith("  x ") and "3/3" in screen[5]
-    assert len(screen) == 6
+    assert screen[4].startswith("  x ") and "3/3" in screen[4]
+    assert len(screen) == 5
     assert reporter.lines == [""]
 
 
@@ -150,8 +149,8 @@ def test_live_block_stays_within_the_terminal_width() -> None:
     )
     screen = _screen(reporter.written)
     assert all(len(line) < 60 for line in screen)
-    # 500 tests fold into at most three matrix rows.
-    assert len(screen) <= 1 + 3 + 1
+    # Without colour there is no matrix: just the progress line.
+    assert len(screen) == 1
 
 
 def test_matrix_shows_each_test_state_in_colour() -> None:
@@ -186,9 +185,9 @@ def test_window_title_is_saved_shown_and_restored() -> None:
     _run(progress, "a", "failed")
     progress.finish()
     output = "".join(reporter.written)
-    assert output.startswith("\x1b[22;0t")
+    assert output.startswith("\x1b[?25l\x1b[22;0t")
     assert "\x1b]2;m3 - 1/1 - x 1\x1b\\" in output
-    assert output.endswith("\x1b[23;0t")
+    assert output.endswith("\x1b[23;0t\x1b[?25h")
 
 
 def test_slowest_tests_group_cases_and_skip_fast_tests() -> None:
@@ -206,7 +205,10 @@ def test_slowest_tests_group_cases_and_skip_fast_tests() -> None:
                 nodeid=nodeid, when=when, outcome="passed", duration=seconds
             )
         )
-    assert progress.slowest() == [("a.py::slow (2 cases)", 1.5), ("b.py::medium", 0.6)]
+    assert progress.slowest() == [
+        ("slow (2 cases)", "a.py", 1.5),
+        ("medium", "b.py", 0.6),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -324,15 +326,16 @@ def test_run_panel_adds_baseline_and_slowest_rows(
         0,
         0,
         comparison=comparison,
-        slowest=[("a.py::slow", 2.0), ("b.py::fast", 0.5)],
+        slowest=[("test_slow", "a.py", 2.0), ("test_fast", "b.py", 0.5)],
     )
     text = "\n".join(reporter.lines)
     assert (
         "vs baseline   1 fixed · 1 regressed · 1 new · 1 removed · 7 unchanged  vs Run 7f3e1a0"
         in text
     )
-    assert "slowest       a.py::slow ━━━━━━━━━━━━ 2.0s" in text
-    assert "              b.py::fast ━━━          0.5s" in text
+    # The test name comes first; the file is last, so it is cut first.
+    assert "slowest       test_slow ━━━━━━━━━━━━   2.0s  a.py" in text
+    assert "              test_fast ━━━            0.5s  b.py" in text
     assert len({visible_len(line) for line in reporter.lines[1:]}) == 1
 
 
@@ -437,3 +440,64 @@ def test_piped_xdist_run_keeps_pytest_letters() -> None:
     assert stop.value.value == ("passed", ".", "PASSED")
     assert progress.enabled is False
     assert reporter._show_progress_info == "count"
+
+
+def _colour_reporter(width: int) -> _Reporter:
+    reporter = _Reporter()
+    reporter._tw = SimpleNamespace(
+        fullwidth=width, hasmarkup=True, _file=SimpleNamespace(encoding="utf-8")
+    )
+    return reporter
+
+
+@pytest.mark.parametrize(
+    ("tests", "width", "rows"),
+    [
+        (95, 90, [48, 47]),  # the reported case: balanced, not 86 + 9
+        (95, 200, [48, 47]),  # wide terminals still cap at 48 columns
+        (20, 90, [20]),
+        (500, 90, [42, 42, 41]),  # folded: 3 tests per cell
+        (95, 40, [32, 32, 31]),  # narrow: still 3 equal rows
+    ],
+)
+def test_matrix_is_a_balanced_block(tests: int, width: int, rows: list[int]) -> None:
+    reporter = _colour_reporter(width)
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items(*(f"t.py::t{i}" for i in range(tests))))
+    progress.pytest_runtest_logstart("t.py::t0", ("", 1, ""))
+    screen = _screen(reporter.written)
+    matrix = screen[:-1]
+    assert [len(line) - 2 for line in matrix] == rows
+    assert all(len(line) < width for line in screen)
+
+
+def test_live_block_hides_the_cursor_and_restores_it() -> None:
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("a"))
+    _run(progress, "a", "passed")
+    progress.finish()
+    output = "".join(reporter.written)
+    assert output.count("\x1b[?25l") == 1
+    assert output.rindex("\x1b[?25h") > output.rindex("\x1b[?25l")
+
+
+def test_timeouts_are_compact_lines_under_the_panel() -> None:
+    from m3.pytest_plugin import _write_timeouts
+
+    reporter = _Reporter()
+    reporter._tw = SimpleNamespace(fullwidth=80)
+    timeouts = [
+        ("execution-0bb6b55effb0494a9736a16e0f4bddcf", "unknown", None),
+        ("execution-2", "turn", 12.34),
+        ("execution-3", "turn", 1.0),
+        ("execution-4", "turn", 1.0),
+    ]
+    _write_timeouts(reporter, Style(False), timeouts)
+    assert reporter.lines == [
+        "  ⚠ execution timed out  execution-0bb6b55effb04…",
+        "  ⚠ execution timed out  execution-2  stage turn  after 12.3s",
+        "  ⚠ execution timed out  execution-3  stage turn  after 1.0s",
+        "    1 more · details in feedback.json",
+    ]
+    assert all(visible_len(line) < 80 for line in reporter.lines)
