@@ -65,6 +65,14 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
                 "execution_ids": [execution_id],
             },
         )
+        store.save_test_run(
+            "run-upload",
+            {
+                "run_id": "run-upload",
+                "status": "finished",
+                "selection": ["tests/test_upload.py"],
+            },
+        )
         feedback = build_feedback(store, "run-upload")
         directory = root / "reports" / "run-upload"
         export_feedback(feedback, store, directory)
@@ -100,6 +108,13 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
         execution = json.loads(sent[1][1])
         assert summary["execution_ids"] == [execution_id]
         assert summary["feedback"]["feedback"]["run_id"] == "run-upload"
+        assert summary["comparison_input"]["schema_version"] == 1
+        assert summary["comparison_input"]["manifest"]["selection"] == [
+            "tests/test_upload.py"
+        ]
+        assert summary["comparison_input"]["test_results"][0]["execution_ids"] == [
+            execution_id
+        ]
         assert execution["snapshot"]["execution_id"] == execution_id
         assert execution["snapshot"]["run_id"] == "run-upload"
         assert execution["snapshot"]["lifecycle"] == "finished"

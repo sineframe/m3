@@ -15,7 +15,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ._test_runs import (
     evaluation_lineage as _evaluation_lineage,
@@ -32,7 +32,6 @@ from ._test_runs import (
 from ._test_runs import (
     xfail_waives_required_evaluations as _xfail_waives_required_evaluations,
 )
-from .storage import ExecutionStore
 from .types import (
     EvaluationRecord,
     Event,
@@ -42,6 +41,9 @@ from .types import (
     FrozenModel,
     RunId,
 )
+
+if TYPE_CHECKING:
+    from .storage import ExecutionStore
 
 
 class Comparison(FrozenModel):
