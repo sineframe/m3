@@ -290,6 +290,11 @@ class ExecutionTraceRecorder:
                 self._last_offset_ms = max(
                     event.monotonic_offset_ms for event in existing_events
                 )
+                # Continue the persisted timeline from its last offset, so
+                # perf-counter readings from now on map onto it faithfully.
+                self._started_monotonic_ns = perf_counter_ns() - round(
+                    self._last_offset_ms * 1_000_000
+                )
             if self._has_committed_terminal():
                 existing = self._project_trace()
                 existing.view()
@@ -637,6 +642,17 @@ class ExecutionTraceRecorder:
         ):
             raise TraceRecorderError("event identity changed during redaction")
         return safe_event
+
+    def offset_for_perf_counter_ns(self, value_ns: int) -> float:
+        """Return the trace offset of a ``time.perf_counter_ns()`` reading.
+
+        Other observers (such as MCP capture writers) measure on the same
+        clock from their own baseline; this converts that baseline into the
+        trace's clock domain. The result may be negative when the reading
+        predates this recorder.
+        """
+
+        return (value_ns - self._started_monotonic_ns) / 1_000_000
 
     def _clock(self) -> tuple[datetime, float]:
         with self._clock_lock:

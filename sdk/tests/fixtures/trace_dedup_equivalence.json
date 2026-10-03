@@ -695,6 +695,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -922,6 +923,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -1308,6 +1310,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -1601,6 +1604,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -1894,6 +1898,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -2190,6 +2195,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -2480,6 +2486,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -2785,6 +2792,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -3097,6 +3105,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -3193,6 +3202,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 75.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -3459,6 +3469,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -3661,6 +3672,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -3897,6 +3909,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -4121,6 +4134,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -4498,6 +4512,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -4788,6 +4803,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -5075,6 +5091,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -5374,6 +5391,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -5683,6 +5701,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -5779,6 +5798,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 75.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -6042,6 +6062,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -6241,6 +6262,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -6474,6 +6496,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -6811,6 +6834,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -7439,6 +7463,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -7910,6 +7935,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -8381,6 +8407,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -9009,6 +9036,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -9489,6 +9517,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -9847,6 +9876,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -10266,6 +10296,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -10360,6 +10391,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 75.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -11201,6 +11233,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -11295,6 +11328,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 75.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -11935,6 +11969,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -12286,6 +12321,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -12392,6 +12428,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 75.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -12787,6 +12824,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -13145,6 +13183,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -13573,6 +13612,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -13676,6 +13716,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 90.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -14258,6 +14299,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -14356,6 +14398,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 75.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -14733,6 +14776,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -14829,6 +14873,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 75.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -15205,6 +15250,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -15484,6 +15530,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -16001,6 +16048,7 @@
         "session_id": null,
         "status": "incomplete",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
@@ -16481,6 +16529,7 @@
         "session_id": null,
         "status": "completed",
         "timing": {
+          "clock": "recorded",
           "duration_ms": 7.5,
           "end_offset_ms": 60.0,
           "finished_at": "2026-01-01T00:00:00Z",
