@@ -68,6 +68,48 @@ def test_empty_sqlite_run_uploads_feedback_then_publishes(tmp_path, monkeypatch)
         store.close()
 
 
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            {"published": True, "run_url": "https://x/reports/runs/r"},
+            "https://x/reports/runs/r",
+        ),
+        ({"published": True, "run_url": "http://x/reports/runs/r"}, None),
+        ({"published": True}, None),
+        (None, None),
+    ],
+)
+def test_upload_returns_https_run_url_from_publish_response(
+    tmp_path, monkeypatch, response, expected
+):
+    import m3_cli.control_plane as control_plane
+
+    root = tmp_path.resolve()
+    store = SQLiteExecutionStore(root / "results.sqlite")
+    try:
+        feedback = build_feedback(store, "run-test")
+        directory = root / "reports" / "run-test"
+        export_feedback(feedback, store, directory)
+        monkeypatch.setattr(
+            control_plane,
+            "_post",
+            lambda url, *_args: response if url.endswith("/publish") else None,
+        )
+        assert (
+            upload_current_run(
+                feedback,
+                store,
+                directory,
+                base_url="https://control-plane.example",
+                token="m3pat_test",
+            )
+            == expected
+        )
+    finally:
+        store.close()
+
+
 def test_execution_id_summary_uses_separate_cache_file(tmp_path, monkeypatch):
     import m3_cli.control_plane as control_plane
 

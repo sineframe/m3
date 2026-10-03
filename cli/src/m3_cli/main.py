@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -275,7 +276,11 @@ def _finish_upload_run(
         raise CLIError("the selected run has no saved results to publish")
     from m3 import _timing
 
-    from .ci_upload import publish_run, record_upload_inspection
+    from .ci_upload import (
+        publish_run,
+        record_upload_inspection,
+        write_github_summary,
+    )
 
     try:
         with _timing.span("cli.upload.inspect"):
@@ -285,7 +290,7 @@ def _finish_upload_run(
         return result.exit_code or 2
     try:
         with _timing.span("cli.upload.publish"):
-            publish_run(
+            published = publish_run(
                 run_id, project_root=root, database=database, environment=resolved
             )
     except Exception as exc:
@@ -299,7 +304,11 @@ def _finish_upload_run(
             file=sys.stderr,
         )
         return result.exit_code or 2
-    print("Published: yes")
+    label = published.run_label or run_id
+    print(f"Published: {label}")
+    if published.run_url:
+        print(f"Hosted report: {published.run_url}")
+    write_github_summary(resolved, label, published.run_url, command_name)
     return result.exit_code
 
 
@@ -449,15 +458,19 @@ def main(argv: list[str] | None = None) -> int:
                             )
                     test_kwargs["env_file"] = None
                     test_kwargs["environment"] = test_environment(resolved)
+                    from .ci_metadata import resolve_ci_metadata
+
                     if is_ci:
-                        from .ci_metadata import resolve_ci_metadata
                         from .supervisor import run_ci_test
 
-                        test_kwargs["ci_metadata"] = resolve_ci_metadata(
-                            resolved, args.ci_metadata
+                        test_kwargs["ci_metadata"] = (
+                            resolve_ci_metadata(resolved, args.ci_metadata) or None
                         )
                         result = run_ci_test(**test_kwargs)
                     else:
+                        test_kwargs["ci_metadata"] = (
+                            resolve_ci_metadata(resolved) or None
+                        )
                         result = run_test_with_runs(**test_kwargs)
                     return _finish_upload_run(
                         result,
@@ -470,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 _finish_timings()
         if args.command == "upload":
-            from .ci_upload import publish_run
+            from .ci_upload import publish_run, write_github_summary
             from .supervisor import (
                 _absolute_database,
                 discover_env_file,
@@ -483,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
 
             try:
                 with _timing.span("cli.upload.publish"):
-                    publish_run(
+                    published = publish_run(
                         args.run_id,
                         project_root=root,
                         database=database,
@@ -500,7 +513,15 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
-            print(f"Published: {args.run_id}")
+            print(f"Published: {published.run_label or args.run_id}")
+            if published.run_url:
+                print(f"Hosted report: {published.run_url}")
+            write_github_summary(
+                os.environ,
+                published.run_label or args.run_id,
+                published.run_url,
+                "upload",
+            )
             return 0
         if args.command == "auth":
             from . import auth

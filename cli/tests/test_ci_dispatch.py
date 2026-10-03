@@ -77,6 +77,7 @@ def test_ci_upload_publishes_exact_run_and_strips_access_token(monkeypatch, tmp_
 
     def publish(run_id, **kwargs):
         captured["upload"] = (run_id, kwargs)
+        return ci_upload.PublishResult(None, None)
 
     monkeypatch.setattr(supervisor, "run_ci_test", run_ci_test)
     monkeypatch.setattr(ci_upload, "publish_run", publish)
@@ -288,7 +289,11 @@ def test_ci_upload_inspects_with_mapped_source_names(monkeypatch, tmp_path):
         "record_upload_inspection",
         lambda *args: captured.append(args),
     )
-    monkeypatch.setattr(ci_upload, "publish_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: ci_upload.PublishResult(None, None),
+    )
     assert (
         main(
             [
@@ -488,6 +493,101 @@ def test_test_upload_records_inspection_and_publishes_run(monkeypatch, tmp_path)
         store.close()
     assert len(uploaded) == 1
     assert uploaded[0][0][0].run_id == "run-test"
+
+
+def _stub_test_upload(monkeypatch, tmp_path, captured):
+    import m3_cli.ci_upload as ci_upload
+    import m3_cli.supervisor as supervisor
+
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+
+    def run_test(**kwargs):
+        captured["test"] = kwargs
+        return RunResult(
+            0,
+            run_id="run-test",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        )
+
+    monkeypatch.setattr(supervisor, "run_test_with_runs", run_test)
+    monkeypatch.setattr(ci_upload, "record_upload_inspection", lambda *_args: None)
+
+
+def test_test_upload_in_github_actions_passes_ci_metadata(monkeypatch, tmp_path):
+    import m3_cli.ci_upload as ci_upload
+
+    captured = {}
+    _stub_test_upload(monkeypatch, tmp_path, captured)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "org/repo")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: ci_upload.PublishResult(None, None),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
+    assert captured["test"]["ci_metadata"]["provider"] == "github"
+    assert captured["test"]["ci_metadata"]["repository"] == "org/repo"
+
+
+def test_test_upload_outside_ci_has_no_ci_metadata(monkeypatch, tmp_path):
+    import m3_cli.ci_upload as ci_upload
+
+    captured = {}
+    _stub_test_upload(monkeypatch, tmp_path, captured)
+    for name in ("GITHUB_ACTIONS", "CI"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: ci_upload.PublishResult(None, None),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
+    assert captured["test"]["ci_metadata"] is None
+
+
+def test_upload_prints_hosted_link_and_writes_github_summary(
+    monkeypatch, tmp_path, capsys
+):
+    import m3_cli.ci_upload as ci_upload
+
+    summary = tmp_path / "summary.md"
+    _stub_test_upload(monkeypatch, tmp_path, {})
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: ci_upload.PublishResult(
+            "Run 1b74a51", "https://app.example/reports/runs/x"
+        ),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "Published: Run 1b74a51\n" in output
+    assert "Hosted report: https://app.example/reports/runs/x\n" in output
+    assert summary.read_text(encoding="utf-8") == (
+        "M3 published [Run 1b74a51](https://app.example/reports/runs/x)\n"
+    )
+
+
+def test_unwritable_github_summary_warns_and_keeps_exit_code(
+    monkeypatch, tmp_path, capsys
+):
+    import m3_cli.ci_upload as ci_upload
+
+    _stub_test_upload(monkeypatch, tmp_path, {})
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path))
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: ci_upload.PublishResult("Run 1b74a51", None),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
+    assert "m3 test: could not write the GitHub job summary" in capsys.readouterr().err
 
 
 def test_test_upload_inspection_failure_keeps_pytest_status_and_skips_upload(

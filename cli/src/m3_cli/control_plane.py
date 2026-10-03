@@ -18,7 +18,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib import error, request
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlsplit
 
 from m3 import _timing
 from m3.feedback import Feedback, load_run_entries, project_test_attempts
@@ -36,6 +36,7 @@ _RETRIES = 3
 _MAX_EXECUTION_BYTES = 16 << 20
 _MAX_SUMMARY_BYTES = 1 << 20
 _MAX_ERROR_BODY_BYTES = 4 << 10
+_MAX_RESPONSE_BYTES = 64 << 10
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 
@@ -70,7 +71,16 @@ def _json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _post(url: str, token: str, body: bytes, subject: str) -> None:
+def _read_json_object(response: Any) -> dict[str, Any] | None:
+    """Decode at most 64 KiB of ``response`` as a JSON object, else ``None``."""
+    try:
+        decoded = json.loads(response.read(_MAX_RESPONSE_BYTES))
+    except (OSError, http.client.HTTPException, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _post(url: str, token: str, body: bytes, subject: str) -> dict[str, Any] | None:
     """POST ``body``, retrying rate limits, server errors, and network failures.
 
     ``subject`` names what is sent. It must contain only validated identifiers
@@ -93,8 +103,8 @@ def _post(url: str, token: str, body: bytes, subject: str) -> None:
         )
         try:
             # The opener raises HTTPError for every non-2xx response.
-            with _OPENER.open(req, timeout=30):
-                return
+            with _OPENER.open(req, timeout=30) as response:
+                return _read_json_object(response)
         except error.HTTPError as exc:
             status, code = exc.code, _error_code(exc)
             if status < 500 and status != 429:
@@ -356,7 +366,7 @@ def upload_current_run(
     token: str,
     sensitive_values: Sequence[str] = (),
     expected_digest: str | None = None,
-) -> None:
+) -> str | None:
     """Upload summary, complete current-run executions, then publish.
 
     Every body is cached before its first request, making retries byte-identical.
@@ -497,12 +507,16 @@ def upload_current_run(
         with _timing.count("upload.post"):
             _post(url, token, body, subject)
     with _timing.count("upload.post"):
-        _post(
+        published = _post(
             base + "/publish",
             token,
             _json_bytes({"transport_version": 1}),
             f"run {run_id} publication",
         )
+    run_url = published.get("run_url") if published else None
+    if isinstance(run_url, str) and urlsplit(run_url).scheme == "https":
+        return run_url
+    return None
 
 
 def _cache(path: Path, data: bytes) -> None:

@@ -349,6 +349,32 @@ def test_ci_metadata_uses_allowlist_and_explicit_overrides(tmp_path):
         resolve_ci_metadata({}, path)
 
 
+def test_ci_metadata_github_pull_request_links_and_branch():
+    values = resolve_ci_metadata(
+        {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_SERVER_URL": "https://ghe.example/",
+            "GITHUB_REPOSITORY": "org/repo",
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_RUN_ATTEMPT": "2",
+            "GITHUB_REF": "refs/pull/7/merge",
+            "GITHUB_HEAD_REF": "feat/x",
+            "GITHUB_REF_NAME": "7/merge",
+        }
+    )
+    assert (
+        values["job_url"] == "https://ghe.example/org/repo/actions/runs/123/attempts/2"
+    )
+    assert values["pr_number"] == "7"
+    assert values["branch"] == "feat/x"
+
+
+def test_ci_metadata_generic_ci_flag():
+    assert resolve_ci_metadata({"CI": "true"}) == {"provider": "ci"}
+    assert resolve_ci_metadata({"CI": "false"}) == {}
+    assert resolve_ci_metadata({}) == {}
+
+
 def test_upload_rejects_path_like_run_id_before_opening_store(tmp_path):
     from m3_cli.ci_upload import publish_run
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Sequence
+import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +70,12 @@ def record_upload_inspection(
         store.close()
 
 
+@dataclass(frozen=True)
+class PublishResult:
+    run_label: str | None
+    run_url: str | None
+
+
 def publish_run(
     run_id: str,
     *,
@@ -75,7 +83,7 @@ def publish_run(
     database: Path,
     environment: dict[str, str] | None = None,
     env_file: str | os.PathLike[str] | None = None,
-) -> None:
+) -> PublishResult:
     """Read the exported run and send it with the existing uploader."""
     env = resolved_environment(env_file) if environment is None else environment
     if not _SAFE_ID.fullmatch(run_id) or ".." in run_id:
@@ -116,7 +124,7 @@ def publish_run(
         ):
             raise CLIError(f"run {run_id} has unreadable credential scan data")
         sensitive_values = _sensitive_values(env, source_names=sources)
-        upload_current_run(
+        run_url = upload_current_run(
             feedback,
             store,
             directory,
@@ -124,6 +132,10 @@ def publish_run(
             token=token,
             sensitive_values=sensitive_values,
             expected_digest=digest,
+        )
+        label = manifest.get("run_label")
+        return PublishResult(
+            label if isinstance(label, str) and label else None, run_url
         )
     finally:
         store.close()
@@ -181,9 +193,31 @@ def _credential_source_names(credential_env: Sequence[str]) -> tuple[str, ...]:
     )
 
 
+def write_github_summary(
+    environment: Mapping[str, str],
+    label: str,
+    run_url: str | None,
+    command: str,
+) -> None:
+    """Append the published run to the GitHub job summary; failures only warn."""
+    path = environment.get("GITHUB_STEP_SUMMARY")
+    if environment.get("GITHUB_ACTIONS") != "true" or not path:
+        return
+    line = (
+        f"M3 published [{label}]({run_url})\n" if run_url else f"M3 published {label}\n"
+    )
+    try:
+        with open(path, "a", encoding="utf-8") as summary:
+            summary.write(line)
+    except OSError:
+        print(f"m3 {command}: could not write the GitHub job summary", file=sys.stderr)
+
+
 __all__ = [
     "DEFAULT_CONTROL_PLANE_URL",
+    "PublishResult",
     "control_plane_url",
     "publish_run",
     "record_upload_inspection",
+    "write_github_summary",
 ]

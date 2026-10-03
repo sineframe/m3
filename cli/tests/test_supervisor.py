@@ -1777,8 +1777,9 @@ def test_upload_from_subdirectory_uses_the_discovered_root(
     monkeypatch.chdir(subdirectory)
     seen: dict[str, Any] = {}
 
-    def publish(run_id: str, **kwargs: Any) -> None:
+    def publish(run_id: str, **kwargs: Any) -> ci_upload.PublishResult:
         seen.update(kwargs)
+        return ci_upload.PublishResult(None, None)
 
     monkeypatch.setattr(ci_upload, "publish_run", publish)
     assert main(["upload", "run-1"]) == 0

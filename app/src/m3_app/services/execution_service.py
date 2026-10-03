@@ -633,21 +633,13 @@ class AppExecutionService:
                     limit=None, offset=0, suite_id=suite_id, project_id=project_id
                 )
                 term = q.strip().casefold()
-                exact_label = term.startswith("run #") and term[5:].isdigit()
 
                 def matches_query(run: Mapping[str, object]) -> bool:
                     identifier = run.get("run_id")
                     label = run.get("run_label")
                     return (
                         isinstance(identifier, str) and term in identifier.casefold()
-                    ) or (
-                        isinstance(label, str)
-                        and (
-                            label.casefold() == term
-                            if exact_label
-                            else term in label.casefold()
-                        )
-                    )
+                    ) or (isinstance(label, str) and term in label.casefold())
 
                 matches = tuple(run for run in runs if matches_query(run))
                 end = None if limit is None else offset + limit
