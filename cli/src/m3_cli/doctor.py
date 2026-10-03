@@ -291,7 +291,7 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     include_config = any(kind == "config" for kind, _ in requirements)
     if include_config:
         try:
-            config = load_config(env=environment, cwd=root)
+            config = load_config(env=environment, cwd=args.project_root)
         except ConfigError as error:
             raise DoctorConfigurationError(error) from None
         except (OSError, TypeError, ValueError):

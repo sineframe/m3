@@ -87,6 +87,25 @@ def test_doctor_discovers_project_root_env(tmp_path: Path, monkeypatch, capsys) 
     assert report["configuration"]["settings"]["artifact_policy"] == "always"
 
 
+def test_doctor_reads_config_from_the_invocation_directory(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # Implicit-root test runs keep the invocation cwd, so the SDK reads the
+    # nearest pyproject.toml from there; doctor must validate the same file.
+    (tmp_path / "m3.toml").write_text("", encoding="utf-8")
+    package = tmp_path / "packages" / "server"
+    package.mkdir(parents=True)
+    (package / "pyproject.toml").write_text(
+        '[tool.m3]\nartifact_policy = "sometimes"\n', encoding="utf-8"
+    )
+    monkeypatch.delenv("M3_ARTIFACT_POLICY", raising=False)
+    monkeypatch.chdir(package)
+
+    assert main(["doctor", "--require", "config", "--json"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["field"] == "artifact_policy"
+
+
 def test_doctor_rejects_invalid_requirement_without_echoing_input(capsys) -> None:
     secret = "secret-token-value"
     assert main(["doctor", "--require", secret]) == 2
