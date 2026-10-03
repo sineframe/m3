@@ -116,7 +116,9 @@ suite references now additionally include their own `project_id`.
 outcomes. `effective_verdict_counts` is the count after applying required
 evaluation completeness and execution policy. Both maps contain only
 non-empty string labels with non-negative integer counts; malformed manifest
-entries are omitted from the response.
+entries are omitted from the response. An expected pytest failure (xfail) is
+counted as `xfailed` in both maps, separately from `skipped`, which counts only
+tests that did not run.
 
 ### Where readable executions come from
 
@@ -796,8 +798,11 @@ Wire responses retain the typed `ExecutionState` model for lifecycle snapshots.
 Execution reports include a `test_results` array for pytest attempts linked to
 the execution. Each entry contains `attempt_id`, `node_id`, the cleaned test
 `description`, raw pytest `outcome`, normalized pytest `verdict`, derived
-`effective_verdict`, and `duration_seconds`. The effective verdict applies the
-run's required-evaluation policy without relabeling the pytest result. Older
+`effective_verdict`, and `duration_seconds`. `outcome`, `verdict`, and
+`effective_verdict` are `xfailed` for a pytest expected failure: the test ran
+and failed as expected, unlike `skipped`, which did not run. The effective
+verdict applies the run's required-evaluation policy without relabeling the
+pytest result. Older
 records without a description return an empty string, and executions without
 linked attempts return an empty array. The execution snapshot's `outcome`
 remains the runtime execution outcome.
@@ -807,6 +812,13 @@ Its `evaluations` entries include both `evaluation_id` and `execution_id`.
 Required evaluations run without an execution identity are owned by the pytest
 attempt, use `execution_id: null`, and still affect `effective_verdict`; they do
 not enter execution-scoped evaluation aggregates.
+
+A test with an xfail marker also carries a top-level `xfail_reason` string,
+which is empty for a bare `@pytest.mark.xfail`. Feedback `summary` includes
+`xfailed` in `test_outcome_counts` and `effective_verdict_counts`, adds
+`xfailed_tests`, and `skipped_tests` counts genuine skips only. An xfailed test
+is never a failure and never needs attention. Runs stored before this change
+with a skipped call phase and `wasxfail` are reported as `xfailed`.
 Each feedback test entry also includes case-level `tool_calls` counts with
 `total`, `successful`, and `failed` fields. These counts are derived once from
 distinct linked execution traces; pytest-only tests report zeroes and calls
@@ -827,7 +839,8 @@ therefore have `verdict: "failed_assertion"`, two passed evaluations, and
 `effective_verdict: "failed"`. An ordinary skip remains skipped only when its
 required evidence is complete; required failures or incomplete evidence take
 precedence. A valid expected xfail waives all required evidence linked to that
-attempt for effective-verdict purposes because pytest does not persist causal
+attempt for effective-verdict purposes and yields effective verdict `xfailed`,
+not `skipped`, because pytest does not persist causal
 evaluation identity, while setup/teardown, collection, and persistence errors
 remain incomplete. Strict xpass is failed; non-strict xpass passes when its
 required evidence is complete.

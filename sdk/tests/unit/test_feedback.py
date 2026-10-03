@@ -1376,7 +1376,7 @@ def test_detached_required_evidence_controls_effective_verdict(
     assert test["evaluation_reasons"][0]["evaluation_id"] == "detached-evaluation"
 
 
-def test_valid_xfail_waives_detached_required_evidence_for_effective_verdict():
+def test_valid_legacy_xfail_row_is_normalised_and_waives_detached_evidence():
     report = _report("execution", "run", "detached xfail")
     store = _Store(
         (report,),
@@ -1405,9 +1405,17 @@ def test_valid_xfail_waives_detached_required_evidence_for_effective_verdict():
         },
     )
 
-    test = build_feedback(store, "run").tests[0]
+    feedback = build_feedback(store, "run")
+    test = feedback.tests[0]
 
-    assert test["effective_verdict"] == "skipped"
+    assert test["outcome"] == "xfailed"
+    assert test["verdict"] == "xfailed"
+    assert test["effective_verdict"] == "xfailed"
+    assert feedback.summary["xfailed_tests"] == 1
+    assert feedback.summary["skipped_tests"] == 0
+    assert feedback.summary["test_outcome_counts"]["xfailed"] == 1
+    assert feedback.summary["effective_verdict_counts"]["xfailed"] == 1
+    assert feedback.summary["failures"] == 0
     assert test["evaluations"][0]["status"] == "error"
     assert test["evaluation_reasons"][0]["evaluation_id"] == "detached-xfail"
 

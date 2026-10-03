@@ -139,6 +139,43 @@ def test_run_panel_summarises_the_run(tmp_path: Path, monkeypatch: Any) -> None:
     assert len({visible_len(line) for line in lines[1:]}) == 1
 
 
+def test_run_panel_reports_xfailed_after_skipped(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from m3.pytest_plugin import _write_run_panel
+
+    monkeypatch.chdir(tmp_path)
+    reporter = _Reporter()
+    reporter._tw = SimpleNamespace(fullwidth=120)
+    _write_run_panel(
+        reporter,
+        Style(False),
+        "run-1",
+        tmp_path / "feedback.json",
+        [(1, "passed", "passed"), (1, "skipped", "skipped"), (2, "xfailed", "xfailed")],
+        0,
+        1,
+    )
+    assert "1 passed · 1 skipped · 2 xfailed" in reporter.lines[2]
+
+
+def test_live_line_counts_xfail_separately_from_skips() -> None:
+    reporter = _Reporter()
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2, 3]))
+    xfail = _report("x", "call", "skipped")
+    xfail.wasxfail = ""
+    progress.pytest_runtest_logreport(xfail)
+    progress.pytest_runtest_logreport(_report("s", "setup", "skipped"))
+    progress.pytest_runtest_logreport(_report("p", "call", "passed"))
+
+    assert (progress.xfailed, progress.skipped, progress.passed) == (1, 1, 1)
+    assert "xfail 1" in reporter.written[-1]
+
+    progress.pytest_runtest_logreport(_report("x", "teardown", "failed"))
+    assert (progress.xfailed, progress.failed) == (0, 1)
+
+
 def test_box_drops_its_right_edge_when_it_would_wrap() -> None:
     lines = Style(False).box("T", [("key", "x" * 50)], width=40)
     assert not lines[1].endswith("│")

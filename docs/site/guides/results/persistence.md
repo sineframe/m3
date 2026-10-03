@@ -19,14 +19,22 @@ This writes `.m3/executions.sqlite` and a feedback bundle under
 The CLI prints `M3 feedback: .m3/reports/RUN_ID/feedback.json`. The bundle's
 top-level fields include `summary`, `limitations`, and `evaluation_stats`.
 `summary.executions` counts executions, while `summary.failures` counts
-failed or errored cases plus collection errors. `evaluation_stats` groups
+failed or errored cases plus collection errors. `summary.test_outcome_counts`
+and `summary.effective_verdict_counts` include `xfailed` beside `skipped`, and
+`summary.xfailed_tests` counts expected failures. `summary.skipped_tests`
+counts only genuine skips. `evaluation_stats` groups
 explicit saved evaluations by name.
 
 Each `tests[]` entry has `node_id`, `outcome`, `verdict`,
 `effective_verdict`, `tool_result`, and `execution_ids`. `outcome` is the
 pytest case outcome. `verdict` distinguishes assertion, protocol, setup,
 teardown, and other results. `effective_verdict` applies the required-
-evaluation policy without relabeling `outcome`.
+evaluation policy without relabeling `outcome`. All three are `xfailed` for a
+pytest expected failure: the test ran and failed as expected. This differs
+from `skipped`, where the test did not run. An xfailed test is not a failure
+and does not need attention. A test with an xfail marker also has a top-level
+`xfail_reason`, which is `""` for a bare `@pytest.mark.xfail`. Runs saved
+before this field existed report skipped xfail tests as `xfailed`.
 
 The `failures[]` array includes failed pytest cases copied from `tests[]`.
 Those entries include `node_id`, `outcome`, `verdict`, `effective_verdict`,

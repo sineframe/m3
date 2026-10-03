@@ -1180,6 +1180,10 @@ def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> _Iterator[_Any]:
     finally:
         state["finished_at"] = _now_iso()
         state["outcome"] = _attempt_outcome(state)
+        phases = state.get("phases")
+        call_phase = phases.get("call") if isinstance(phases, dict) else None
+        if isinstance(call_phase, dict) and call_phase.get("wasxfail"):
+            state["xfail_reason"] = str(call_phase.get("xfail_reason", ""))
         _save_attempt(config, state)
         _reset_test(token)
 
@@ -1199,6 +1203,9 @@ def _attempt_outcome(state: dict[str, object]) -> str:
         if phase != "call"
     ):
         return "error"
+    call_phase = values.get("call", {})
+    if call_phase.get("outcome") == "skipped" and call_phase.get("wasxfail"):
+        return "xfailed"
     if any(value.get("outcome") == "skipped" for value in values.values()):
         return "skipped"
     if values.get("call", {}).get("outcome") == "passed":
@@ -1213,11 +1220,14 @@ def _pytest_runtest_logreport(report: _Any) -> None:
     phases = state.setdefault("phases", {})
     if not isinstance(phases, dict):
         return
-    phases[str(report.when)] = {
+    phase_record: dict[str, object] = {
         "outcome": str(report.outcome),
         "duration_seconds": float(getattr(report, "duration", 0.0) or 0.0),
-        "wasxfail": bool(getattr(report, "wasxfail", False)),
+        "wasxfail": hasattr(report, "wasxfail"),
     }
+    if hasattr(report, "wasxfail"):
+        phase_record["xfail_reason"] = str(report.wasxfail)
+    phases[str(report.when)] = phase_record
     exception_types = state.get("_m3_exception_types")
     exception_type = (
         exception_types.pop(str(report.when), None)
@@ -1567,10 +1577,11 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         collected = {str(item) for item in record.get("collected_node_ids", ())}
         attempts = store.list_test_results(run_id.root)
         recorded = {str(item.get("node_id")) for item in attempts}
-        # A genuine xfail is represented as a skipped call phase by pytest,
-        # but the test did execute. Ordinary skips still do not count.
+        # A genuine xfail is an executed test even though pytest reports its
+        # call phase as skipped. Legacy rows stored it as "skipped" with a
+        # wasxfail phase. Ordinary skips still do not count.
         executed_attempt = any(
-            item.get("outcome") in {"passed", "failed", "error"}
+            item.get("outcome") in {"passed", "failed", "error", "xfailed"}
             or (
                 item.get("outcome") == "skipped"
                 and isinstance(item.get("phases"), _Mapping)
@@ -1791,6 +1802,7 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             ("teardown_error", "teardown error"),
             ("pytest_error", "pytest error"),
             ("skipped", "skipped"),
+            ("xfailed", "xfailed"),
         )
         tool_errors = sum(
             test.get("tool_result") == "tool_error" for test in feedback.tests
@@ -1866,7 +1878,7 @@ def _write_run_panel(
             style.green
             if kind == "passed"
             else style.yellow
-            if kind == "skipped"
+            if kind in {"skipped", "xfailed"}
             else style.red
         )
         verdict_parts.append(paint(f"{count} {label}"))
@@ -1968,6 +1980,7 @@ class _Progress:
         self.config = config
         self.reporter: _Any = None
         self.total = self.completed = self.passed = self.failed = self.skipped = 0
+        self.xfailed = 0
         self._counted: set[str] = set()
         self._outcomes: dict[str, str] = {}
         self._last_write = 0.0
@@ -2040,6 +2053,8 @@ class _Progress:
                     self.passed -= 1
                 elif previous == "skipped":
                     self.skipped -= 1
+                elif previous == "xfailed":
+                    self.xfailed -= 1
                 self.failed += 1
                 self._outcomes[report.nodeid] = "failed"
                 self._report_failure(report.nodeid)
@@ -2053,13 +2068,21 @@ class _Progress:
         if report.when != "call" and report.outcome not in {"failed", "skipped"}:
             return
         self._counted.add(report.nodeid)
-        self._outcomes[report.nodeid] = report.outcome
+        outcome = report.outcome
+        is_xfail = (
+            outcome == "skipped"
+            and report.when == "call"
+            and hasattr(report, "wasxfail")
+        )
+        self._outcomes[report.nodeid] = "xfailed" if is_xfail else outcome
         self.completed += 1
-        if report.outcome == "passed":
+        if outcome == "passed":
             self.passed += 1
-        elif report.outcome == "failed":
+        elif outcome == "failed":
             self.failed += 1
             self._report_failure(report.nodeid)
+        elif is_xfail:
+            self.xfailed += 1
         else:
             self.skipped += 1
         self._write(force=report.outcome == "failed")
@@ -2107,12 +2130,18 @@ class _Progress:
             f"   {style.green(f'{glyphs.passed} {self.passed:<{digits}}')}"
             f"  {(style.red if self.failed else style.grey)(f'{glyphs.failed} {self.failed:<{digits}}')}"
             f"  {(style.yellow if self.skipped else style.grey)(f'{glyphs.skipped} {self.skipped:<{digits}}')}"
-            f" {style.dim(f'{_time.monotonic() - self._started:5.1f}s')}"
+            + (
+                f"  {style.yellow(f'xfail {self.xfailed:<{digits}}')}"
+                if self.xfailed
+                else ""
+            )
+            + f" {style.dim(f'{_time.monotonic() - self._started:5.1f}s')}"
         )
         fraction = (
             f"  {style.bold(f'{self.completed:>{digits}}')}{style.dim(f'/{total}')}"
         )
-        bar_width = max(10, min(28, width - 64))
+        xfail_width = 8 + digits if self.xfailed else 0
+        bar_width = max(10, min(28, width - 64 - xfail_width))
         line = (
             f"  {lead} {style.bar(self.completed, total, bar_width)}{fraction}{counts}"
         )

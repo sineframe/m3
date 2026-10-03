@@ -801,6 +801,35 @@ def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
     )
 
 
+def test_progress_counts_xfail_apart_from_skips() -> None:
+    from m3.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(
+        isatty=True,
+        rewrite=lambda *_args, **_kwargs: None,
+        write_line=lambda *_args: None,
+    )
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.enabled = True
+    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2, 3]))
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="bare", when="call", outcome="skipped", wasxfail="")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="skip", when="call", outcome="skipped")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="xpass", when="call", outcome="passed", wasxfail="r")
+    )
+    assert (progress.completed, progress.passed, progress.skipped) == (3, 1, 1)
+    assert progress.xfailed == 1
+
+
 def test_progress_is_disabled_for_non_tty() -> None:
     from m3.pytest_plugin import _Progress
 
