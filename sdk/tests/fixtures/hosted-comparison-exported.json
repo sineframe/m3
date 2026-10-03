@@ -488,6 +488,7 @@
                 "metrics": {},
                 "provenance": null,
                 "details": {},
+                "judge_evidence": null,
                 "goal": null,
                 "metadata": {
                   "harness_config": "model-a",
@@ -514,6 +515,7 @@
                 "metrics": {},
                 "provenance": null,
                 "details": {},
+                "judge_evidence": null,
                 "goal": null,
                 "metadata": {
                   "harness_config": "model-a",
@@ -1089,6 +1091,7 @@
                 "metrics": {},
                 "provenance": null,
                 "details": {},
+                "judge_evidence": null,
                 "goal": null,
                 "metadata": {
                   "harness_config": "model-b",
@@ -1115,6 +1118,7 @@
                 "metrics": {},
                 "provenance": null,
                 "details": {},
+                "judge_evidence": null,
                 "goal": null,
                 "metadata": {
                   "harness_config": "model-b",
@@ -1618,6 +1622,7 @@
                 "metrics": {},
                 "provenance": null,
                 "details": {},
+                "judge_evidence": null,
                 "goal": null,
                 "metadata": {
                   "harness_config": "model-a",
@@ -1644,6 +1649,7 @@
                 "metrics": {},
                 "provenance": null,
                 "details": {},
+                "judge_evidence": null,
                 "goal": null,
                 "metadata": {
                   "harness_config": "model-a",
