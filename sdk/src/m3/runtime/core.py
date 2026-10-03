@@ -455,6 +455,7 @@ class RuntimeManager:
                     resolved_version=version,
                 )
                 return await asyncio.to_thread(self._lease, cached)
+        from_manifest = False
         url = spec.get("url") or spec.get("asset_url") or spec.get("download_url")
         manifest_url = spec.get("manifest_url")
         if not url and not manifest_url and version == "latest":
@@ -478,6 +479,7 @@ class RuntimeManager:
             )
             if not resolved_manifest_version:
                 resolved_manifest_version = manifest.get("version")
+            from_manifest = True
             spec = {**spec, **item}
             url = spec.get("url") or spec.get("asset_url")
             if version == "latest":
@@ -502,6 +504,11 @@ class RuntimeManager:
             }.get(kind, kind)
         )
         executable_name = _safe_relative(executable_name, "executable")
+        companions = [
+            _safe_relative(str(entry), "companion")
+            for entry in spec.get("companions") or []
+        ]
+        source = (item.get("source") or "manifest") if from_manifest else "selector"
         destination = (
             self.cache_root
             / kind
@@ -518,7 +525,17 @@ class RuntimeManager:
         downloaded_size = 0
         try:
             async with _async_entry_lock(destination):
-                if not self._receipt_valid(destination):
+                if self._receipt_valid(destination):
+                    await asyncio.to_thread(
+                        self._verify_requirements,
+                        destination,
+                        executable_name,
+                        companions,
+                        spec.get("package_manifest"),
+                        spec.get("package_target"),
+                        version,
+                    )
+                else:
                     self.progress.emit(
                         "acquire_start",
                         phase="download",
@@ -600,34 +617,14 @@ class RuntimeManager:
                         raise RuntimeValidationError(
                             "runtime archive contains no expected executable"
                         )
-                    companions = [
-                        _safe_relative(str(item), "companion")
-                        for item in spec.get("companions") or []
-                    ]
-                    for companion in companions:
-                        companion_path = staging_destination / companion
-                        if (
-                            not companion_path.is_file()
-                            or companion_path.is_symlink()
-                            or staging_destination
-                            not in companion_path.resolve().parents
-                            or (
-                                os.name != "nt"
-                                and not companion_path.stat().st_mode & stat.S_IXUSR
-                            )
-                        ):
-                            raise RuntimeValidationError(
-                                "runtime archive lacks required companion executable"
-                            )
-                    package_manifest = spec.get("package_manifest")
-                    if package_manifest:
-                        self._verify_package_metadata(
-                            staging_destination,
-                            _safe_relative(str(package_manifest), "package_manifest"),
-                            executable_name,
-                            version,
-                            spec.get("package_target"),
-                        )
+                    self._verify_requirements(
+                        staging_destination,
+                        executable_name,
+                        companions,
+                        spec.get("package_manifest"),
+                        spec.get("package_target"),
+                        version,
+                    )
                     try:
                         with tempfile.TemporaryDirectory(
                             prefix=".smoke-", dir=self.cache_root
@@ -659,7 +656,7 @@ class RuntimeManager:
                         "target": target,
                         "url": _url_no_query(url),
                         "sha256": digest,
-                        "source": spec.get("source", "selector"),
+                        "source": source,
                         "executable": executable_name,
                         "asset_name": spec.get("asset_name"),
                         "verification_method": spec.get(
@@ -717,6 +714,37 @@ class RuntimeManager:
             bytes=0,
         )
         return lease
+
+    @staticmethod
+    def _verify_requirements(
+        root: Path,
+        executable_name: str,
+        companions: list[str],
+        package_manifest: Any,
+        package_target: Any,
+        version: str,
+    ) -> None:
+        for companion in companions:
+            companion_path = root / companion
+            if (
+                not companion_path.is_file()
+                or companion_path.is_symlink()
+                or root not in companion_path.resolve().parents
+                or (
+                    os.name != "nt" and not companion_path.stat().st_mode & stat.S_IXUSR
+                )
+            ):
+                raise RuntimeValidationError(
+                    "runtime archive lacks required companion executable"
+                )
+        if package_manifest:
+            RuntimeManager._verify_package_metadata(
+                root,
+                _safe_relative(str(package_manifest), "package_manifest"),
+                executable_name,
+                version,
+                package_target,
+            )
 
     @staticmethod
     def _verify_package_metadata(
@@ -786,8 +814,17 @@ class RuntimeManager:
             for path in parent.glob("sha256-*")
             if not _cache_path_has_symlink(path, self.cache_root)
             and self._receipt_valid(path)
+            and self._receipt_source(path) != "selector"
         ]
         return candidates[0] if len(candidates) == 1 else None
+
+    @staticmethod
+    def _receipt_source(root: Path) -> Any:
+        try:
+            receipt = json.loads((root / "receipt.json").read_text(encoding="utf-8"))
+            return receipt["provenance"].get("source")
+        except (OSError, ValueError, KeyError, AttributeError, TypeError):
+            return "selector"
 
     def _lease(
         self, destination: Path, executable_name: str | None = None
@@ -1128,6 +1165,7 @@ class RuntimeManager:
                 "sha256": digest,
                 "executable": executable,
                 "asset_name": asset["name"],
+                "source": "github-release",
                 "verification_method": "github_asset_digest",
                 "immutable_release": (
                     bool(manifest["immutable"]) if "immutable" in manifest else None

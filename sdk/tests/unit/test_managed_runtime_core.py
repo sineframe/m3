@@ -131,7 +131,11 @@ async def test_acquire_receipt_cache_hit_progress_and_prune(
     manager = RuntimeManager(cache, project, tmp_path / "invoke", events)
     try:
         first = await manager.acquire(
-            "claude", {"version": "1.2.3", "url": archive_server, "sha256": digest}
+            "claude",
+            {
+                "version": "1.2.3",
+                "manifest_url": archive_server.replace("/asset.zip", "/manifest.json"),
+            },
         )
         entries = list_cache(cache)
         assert len(entries) == 1
@@ -144,10 +148,11 @@ async def test_acquire_receipt_cache_hit_progress_and_prune(
         assert entries[0]["files"]["claude"] == hashlib.sha256(FAKE_BINARY).hexdigest()
 
         event_count = len(events.read_text().splitlines())
+        requests_before = _Server.requests
         second = await manager.acquire("claude", "1.2.3")
         assert second.executable == first.executable
         assert second.executable.name == "claude"
-        assert _Server.requests == 1
+        assert _Server.requests == requests_before
         lines = [json.loads(line) for line in events.read_text().splitlines()]
         assert [line["event"] for line in lines[event_count:]] == ["cache_hit"]
         assert all("?" not in str(line.get("url", "")) for line in lines)
@@ -1239,3 +1244,139 @@ async def test_companion_losing_executable_bit_makes_entry_corrupt(
     (entry / "bin" / "codex-code-mode-host").chmod(0o644)
     assert not _CoreManager._receipt_valid(entry)
     assert [item["status"] for item in list_cache(cache)] == ["corrupt"]
+
+
+@posix_only
+@pytest.mark.asyncio
+async def test_cache_hit_revalidates_current_companions_and_package_metadata(
+    tmp_path: Path, archive_server: str
+) -> None:
+    _Server.body = _tar_bytes(
+        [
+            ("bin/codex", CODEX_SCRIPT, 0o755),
+            (
+                "codex-package.json",
+                json.dumps(
+                    {
+                        "layoutVersion": 1,
+                        "version": "1.2.3",
+                        "target": CODEX_TARGET,
+                        "entrypoint": "bin/wrong",
+                    }
+                ).encode(),
+                0o644,
+            ),
+        ]
+    )
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    base = {
+        "version": "1.2.3",
+        "url": archive_server,
+        "sha256": hashlib.sha256(_Server.body).hexdigest(),
+        "executable": "bin/codex",
+    }
+    lease = await manager.acquire("codex", base)
+    await lease.release()
+    requests = _Server.requests
+
+    with pytest.raises(RuntimeValidationError, match="lacks required companion"):
+        await manager.acquire(
+            "codex",
+            {
+                **base,
+                "companions": ["bin/codex-code-mode-host"],
+                "package_manifest": "codex-package.json",
+                "package_target": CODEX_TARGET,
+            },
+        )
+    with pytest.raises(RuntimeValidationError, match="codex package metadata does not"):
+        await manager.acquire(
+            "codex",
+            {
+                **base,
+                "package_manifest": "codex-package.json",
+                "package_target": CODEX_TARGET,
+            },
+        )
+    assert _Server.requests == requests
+    assert [item["status"] for item in list_cache(cache)] == ["ready"]
+
+
+@pytest.mark.asyncio
+async def test_plain_pin_never_reuses_selector_sourced_entry(
+    tmp_path: Path, archive_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import m3.runtime.core as core
+
+    manifest = archive_server.replace("/asset.zip", "/manifest.json")
+    monkeypatch.setattr(core, "default_manifest_url", lambda *_args: manifest)
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    target = detect_target("claude")
+    explicit = await manager.acquire(
+        "claude",
+        {
+            "version": "1.2.3",
+            "url": archive_server,
+            "sha256": hashlib.sha256(_Server.body).hexdigest(),
+        },
+    )
+    await explicit.release()
+    assert _Server.requests == 1
+    assert manager._cached_version("claude", "1.2.3", target) is None
+
+    plain = await manager.acquire("claude", "1.2.3")
+    await plain.release()
+    # The plain pin resolved through the manifest instead of the offline path.
+    assert _Server.requests == 2
+    assert manager._cached_version("claude", "1.2.3", target) is None
+
+
+@pytest.mark.asyncio
+async def test_provenance_source_is_computed_not_caller_supplied(
+    tmp_path: Path, archive_server: str
+) -> None:
+    manifest = archive_server.replace("/asset.zip", "/manifest.json")
+    digest = hashlib.sha256(_Server.body).hexdigest()
+    explicit_cache = tmp_path / "explicit"
+    manager = RuntimeManager(explicit_cache, tmp_path / "project")
+    lease = await manager.acquire(
+        "claude",
+        {
+            "version": "1.2.3",
+            "url": archive_server,
+            "sha256": digest,
+            "source": "github-release",
+        },
+    )
+    await lease.release()
+    assert list_cache(explicit_cache)[0]["provenance"]["source"] == "selector"
+
+    manifest_cache = tmp_path / "manifest"
+    manager = RuntimeManager(manifest_cache, tmp_path / "project")
+    lease = await manager.acquire(
+        "claude",
+        {"version": "1.2.3", "manifest_url": manifest, "source": "github-release"},
+    )
+    await lease.release()
+    assert list_cache(manifest_cache)[0]["provenance"]["source"] == "manifest"
+
+
+def test_github_release_selection_records_github_release_source() -> None:
+    selected = _CoreManager._select_manifest_asset(
+        "opencode",
+        {
+            "tag_name": "v1.2.3",
+            "assets": [
+                {
+                    "name": "opencode-darwin-arm64.tar.gz",
+                    "browser_download_url": "https://example.test/o.tar.gz",
+                    "digest": "sha256:" + "a" * 64,
+                }
+            ],
+        },
+        "darwin-arm64-64",
+        "1.2.3",
+    )
+    assert selected["source"] == "github-release"

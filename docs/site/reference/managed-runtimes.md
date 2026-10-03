@@ -39,8 +39,11 @@ selection. A custom ACP agent owns its launch executable and cache.
 
 `latest` uses release metadata. The CLI creates an invocation-scoped pin shared
 by workers in that `m3 test` invocation, including xdist workers. A later CLI
-invocation resolves it again. A concrete version can use a valid matching
-cache entry without a metadata request. Cache hits are keyed by harness,
+invocation resolves it again. A plain concrete version can use a valid matching
+cache entry without a metadata request only when that entry was resolved from
+release or manifest metadata (provenance `source` other than `selector`).
+Entries installed from an explicit download URL are reused only by selectors
+that name the same digest. Cache hits are keyed by harness,
 resolved version, target, and archive digest.
 
 ## Release metadata and target rules
@@ -157,10 +160,17 @@ The receipt stores a top-level `format` number (currently `2`), the
 `executables`, the sorted relative paths of files with the owner execute bit
 (an empty list on Windows). The `provenance` object stores `kind`, `version`,
 `target`, query-stripped `url`, `sha256`, `source`, `executable`, `companions`,
-`asset_name`, `verification_method`, and `immutable_release`. A cache entry is
+`asset_name`, `verification_method`, and `immutable_release`. `source` records
+where the asset metadata came from: `github-release`, `claude-manifest`,
+`manifest` (any other manifest URL), or `selector` (an explicit download URL in
+the selector). M3 sets it; selector keys cannot override it. A cache entry is
 reused only when the receipt format matches, the file hashes and executable
 list match the installed tree, and the main executable and every companion are
-still executable on POSIX systems.
+still executable on POSIX systems. Reuse also re-checks the selected release's
+requirements: the required companions must be present and executable, and
+`codex-package.json` must match. A cached archive that does not meet them fails
+with the same errors as installation. M3 does not reinstall it, because the
+digest identifies the same bytes.
 
 `m3 runtime cache list --cache-dir PATH` reports entries by kind, version,
 target, digest, and status:
