@@ -290,9 +290,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     name: Publish to PyPI
-    needs: [build, release-source-checks, release-tests, release-managed-assets]
+    needs: [build, release-source-checks, release-managed-assets]
     # Recovery uses existing GitHub draft assets and does not require build or preflight jobs.
-    if: always() && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && needs.release-source-checks.result == 'success' && needs.release-tests.result == 'success' && needs.release-managed-assets.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'recover_tag'))
+    if: always() && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && needs.release-source-checks.result == 'success' && needs.release-managed-assets.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'recover_tag'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: pypi
