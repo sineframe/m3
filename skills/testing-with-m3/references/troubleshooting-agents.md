@@ -2,6 +2,24 @@
 
 # Agent readiness, approvals, and timeouts
 
+## Agent test requires --harness
+
+pytest stops during collection with
+`agent test requires --harness or m3(agents=[...])` when a test requests the
+`agent` fixture and nothing selects a harness for it. Select one in either
+place:
+
+- on the command line: `m3 test --harness KIND=MODEL`
+- on the test: `pytest.mark.m3(agents=[...])`
+
+A test can also skip the fixture and select its agent with
+`kit.agents([...])`, as [the first agent test](guides-agents-first-test.md)
+does. That test runs under plain pytest with no flags.
+
+`-k` does not avoid the error, because collection fails before deselection.
+Keep agent tests in their own file so that direct tests can run by path
+without a harness. See [the pytest plugin reference](reference-pytest.md).
+
 ## Harness executable is unavailable
 
 Use `m3 doctor --require harness:NAME` for a system runtime, or select a managed

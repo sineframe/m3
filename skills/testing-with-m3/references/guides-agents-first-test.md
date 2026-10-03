@@ -150,6 +150,8 @@ python -m pytest -q test_agent.py
 
 The test should pass after any required Codex approval. The matcher checks the tool name, server alias, arguments, successful result, and call count in this turn. If the agent completes without that call, the assertion fails even if its reply claims it used the tool.
 
+This test selects Codex with `kit.agents(...)`, so it runs under plain pytest. To pass the harness and model on the command line instead, request the pytest `agent` fixture and run `m3 test --harness codex=MODEL`. Read [agent troubleshooting](troubleshooting-agents.md) before you mix fixture-based agent tests with direct tests.
+
 To test a different server, change the `StdioServer` command and arguments, then update the alias, allowed tool, prompt, and expected call together. Keep `arguments` explicit in the matcher when argument selection is part of the behavior under test.
 
 If Codex is unavailable or the test times out, first run `codex --version`, confirm the selected model is available, and inspect the M3 turn result. Do not treat an unavailable harness as a passing agent test.

@@ -251,7 +251,7 @@ Check in this order and read the matching page:
 
 1. Collection and environment: [Install problems](references/troubleshooting-install.md)
 2. Server startup or connection: [Server problems](references/troubleshooting-servers.md)
-3. Harness and provider setup: [Agent problems](references/troubleshooting-agents.md)
+3. Harness selection, setup, and provider: [Agent problems](references/troubleshooting-agents.md)
 4. The test's own assertions
 5. Evaluator status: [Evaluations API](references/reference-python-m3-evaluations.md)
 6. Saved results and traces: [Result problems](references/troubleshooting-results.md)
