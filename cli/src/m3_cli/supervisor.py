@@ -782,6 +782,10 @@ def _wait_ready(child: _ServerChild, timeout: float = 20.0) -> bool:
     return False
 
 
+# The UI server's own diagnostics settings, passed through despite the M3_ filter.
+_SERVER_DIAGNOSTIC_VARIABLES = frozenset({"M3_LOG_LEVEL", "M3_LOG_FILE"})
+
+
 def _server_environment(source: Mapping[str, str] | None = None) -> dict[str, str]:
     """Isolate the viewer from project test settings and credentials."""
 
@@ -796,7 +800,10 @@ def _server_environment(source: Mapping[str, str] | None = None) -> dict[str, st
         key: value
         for key, value in values.items()
         if key.upper() not in environment_links
-        and not key.upper().startswith("M3_")
+        and (
+            key.upper() in _SERVER_DIAGNOSTIC_VARIABLES
+            or not key.upper().startswith("M3_")
+        )
         and not any(
             part in key.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD")
         )
