@@ -84,16 +84,71 @@ jobs:
           sh -n scripts/install.sh.in scripts/install-latest.sh
 
   release-tests:
-    name: Tests (Python ${{ matrix.python-version }})
+    name: Tests (Python ${{ matrix.python-version }}, ${{ matrix.shard.name }})
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'build')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    env:
+      M3_REQUIRE_PI_MRTR: "1"
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10"]
         # Restore the full Python compatibility matrix when release runs are stable.
         # python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Shards mirror the main CI jobs so the release suite runs in parallel.
+        shard:
+          - name: sdk
+            run: >-
+              uv run --locked --no-sync --project sdk --extra judge
+              pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle" sdk/tests
+          - name: sdk-processes-pi
+            run: >-
+              uv run --locked --no-sync --project sdk --extra judge
+              pytest -q -m "not live and process_lifecycle"
+              sdk/tests/e2e/test_real_pi_mrtr_gate.py
+              sdk/tests/e2e/test_pi_control_real.py
+          - name: sdk-processes-codex
+            run: >-
+              uv run --locked --no-sync --project sdk --extra judge
+              pytest -q -m "not live and process_lifecycle"
+              sdk/tests/e2e/test_real_codex_native_mrtr.py
+              sdk/tests/e2e/test_real_codex_managed_mrtr.py
+          - name: sdk-processes-other
+            run: >-
+              uv run --locked --no-sync --project sdk --extra judge
+              pytest -q -m "not live and process_lifecycle" sdk/tests
+              --ignore=sdk/tests/e2e/test_real_pi_mrtr_gate.py
+              --ignore=sdk/tests/e2e/test_pi_control_real.py
+              --ignore=sdk/tests/e2e/test_real_codex_native_mrtr.py
+              --ignore=sdk/tests/e2e/test_real_codex_managed_mrtr.py
+          - name: sdk-examples
+            run: >-
+              uv run --locked --no-sync --project sdk --extra judge
+              pytest -q -n 2 --dist worksteal -m "not live" sdk/examples/tests
+          - name: app
+            run: >-
+              uv run --locked --no-sync --project app
+              pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle" app/tests
+          - name: app-processes
+            run: >-
+              uv run --locked --no-sync --project app
+              pytest -q --timeout=90 --timeout-method=signal -m "not live and process_lifecycle" app/tests
+          - name: cli-suite-selection
+            run: >-
+              uv run --locked --no-sync --project cli
+              pytest -q -m "not live" cli/tests/test_suite_selection.py
+          - name: cli-credentials-doctor
+            run: >-
+              uv run --locked --no-sync --project cli
+              pytest -q -m "not live" cli/tests/test_cli_credentials_integration.py cli/tests/test_doctor.py
+          - name: cli-other
+            run: >-
+              uv run --locked --no-sync --project cli
+              pytest -q -m "not live" cli/tests
+              --ignore=cli/tests/test_suite_selection.py
+              --ignore=cli/tests/test_cli_credentials_integration.py
+              --ignore=cli/tests/test_doctor.py
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -122,18 +177,14 @@ jobs:
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
           node-version: 24
+      - name: Install verified Pi version
+        run: npm install --global @earendil-works/pi-coding-agent@0.85.1
       - name: Install pinned Codex CLI
         run: npm install --global @openai/codex@0.156.1
       - name: Verify Codex CLI version
         run: test "$(codex --version)" = "codex-cli 0.156.1"
-      - name: Run complete non-live test suite
-        run: |
-          set -euo pipefail
-          uv run --locked --no-sync --project sdk --extra judge pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle" sdk/tests
-          uv run --locked --no-sync --project sdk --extra judge pytest -q -m "not live and process_lifecycle" sdk/tests
-          uv run --locked --no-sync --project sdk --extra judge pytest -q -n 2 --dist worksteal -m "not live" sdk/examples/tests
-          uv run --locked --no-sync --project app pytest -q -n 2 --dist worksteal -m "not live" app/tests
-          uv run --locked --no-sync --project cli pytest -q -m "not live" cli/tests
+      - name: Run non-live test shard
+        run: ${{ matrix.shard.run }}
 
   release-managed-assets:
     name: Managed assets (${{ matrix.os }}, ${{ matrix.kind }})
