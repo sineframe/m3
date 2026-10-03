@@ -8,7 +8,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from types import ModuleType
 from typing import TYPE_CHECKING, NoReturn
 
 from .branding import M3_ASCII_ART
@@ -19,12 +18,34 @@ if TYPE_CHECKING:
     from .supervisor import TestRunResult
 
 
-def _doctor() -> ModuleType:
+def _doctor_error_exit(exc: CLIError, effective_argv: list[str]) -> int:
+    """Report an error raised by `m3 doctor`, as text or JSON."""
+
     # Imported on use: it loads the whole SDK, which `m3 test` must not wait
-    # for before showing its banner. Only reached for doctor or its errors.
+    # for before showing its banner.
     from . import doctor
 
-    return doctor
+    as_json = "--json" in effective_argv
+    if isinstance(exc, doctor.DoctorConfigurationError):
+        if as_json:
+            payload = doctor._configuration_error_payload(exc.configuration_error)
+            print(json.dumps({"ready": False, "error": payload}))
+        else:
+            doctor.print_configuration_error(exc.configuration_error)
+    elif isinstance(exc, doctor.DoctorArgumentError):
+        if as_json:
+            print(json.dumps({"ready": False, "error": str(exc)}))
+        else:
+            print(f"m3 doctor: {exc}", file=sys.stderr)
+    elif isinstance(exc, doctor.DoctorProjectPythonError):
+        if as_json:
+            error = {"code": "project_python_unavailable", "reason": str(exc)}
+            print(json.dumps({"ready": False, "error": error}))
+        else:
+            print(f"m3 doctor: {exc}", file=sys.stderr)
+    else:
+        print(f"m3 doctor: {exc}", file=sys.stderr)
+    return 2
 
 
 class _RedactingArgumentParser(argparse.ArgumentParser):
@@ -386,6 +407,21 @@ def main(argv: list[str] | None = None) -> int:
             args = _parser().parse_args(effective_argv)
         except SystemExit as exc:
             return exc.code if isinstance(exc.code, int) else 2
+        if args.command == "test" or args.command == "ci":
+            # Cheap checks first, so a bad command fails before the banner.
+            from .pytest_options import passthrough_option_error
+
+            if args.credential_env:
+                from .ci_credentials import validate_credential_mappings
+
+                validate_credential_mappings(args.credential_env)
+            passthrough_error = passthrough_option_error(pytest_args)
+            if passthrough_error is not None:
+                print(f"m3 {args.command}: {passthrough_error}", file=sys.stderr)
+                return 2
+            if args.command == "test" and args.upload and args.ui:
+                print("m3 test: --upload cannot be combined with --ui", file=sys.stderr)
+                return 2
         early_run_id: str | None = None
         banner_shown = False
         if args.command == "test":
@@ -405,29 +441,10 @@ def main(argv: list[str] | None = None) -> int:
                 num_processes=args.num_processes,
             )
         if args.command == "test" or args.command == "ci":
-            from .ci_credentials import validate_credential_mappings
-            from .supervisor import (
-                _finish_timings,
-                _passthrough_option_error,
-                run_test,
-            )
-
-            validate_credential_mappings(args.credential_env)
-
-            passthrough_error = _passthrough_option_error(pytest_args)
-            if passthrough_error is not None:
-                print(f"m3 {args.command}: {passthrough_error}", file=sys.stderr)
-                return 2
+            from .supervisor import _finish_timings, run_test
 
             try:
                 is_ci = args.command == "ci"
-
-                if args.command == "test" and args.upload and args.ui:
-                    print(
-                        "m3 test: --upload cannot be combined with --ui",
-                        file=sys.stderr,
-                    )
-                    return 2
 
                 server_selections = normalize_server_groups(
                     getattr(args, "_server_groups", None)
@@ -595,47 +612,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             doctor.print_human(report)
         return code
-    except _doctor().DoctorConfigurationError as exc:
-        if "--json" in effective_argv:
-            print(
-                json.dumps(
-                    {
-                        "ready": False,
-                        "error": _doctor()._configuration_error_payload(
-                            exc.configuration_error
-                        ),
-                    }
-                )
-            )
-        else:
-            _doctor().print_configuration_error(exc.configuration_error)
-        return 2
-    except _doctor().DoctorArgumentError as exc:
-        if "--json" in effective_argv:
-            print(json.dumps({"ready": False, "error": str(exc)}))
-        else:
-            print(f"m3 doctor: {exc}", file=sys.stderr)
-        return 2
-    except _doctor().DoctorProjectPythonError as exc:
-        if "--json" in effective_argv:
-            print(
-                json.dumps(
-                    {
-                        "ready": False,
-                        "error": {
-                            "code": "project_python_unavailable",
-                            "reason": str(exc),
-                        },
-                    }
-                )
-            )
-        else:
-            print(f"m3 doctor: {exc}", file=sys.stderr)
-        return 2
-    except _doctor().DoctorCLIError as exc:
-        print(f"m3 doctor: {exc}", file=sys.stderr)
-        return 2
     except CLIError as exc:
+        # Doctor's errors are CLIErrors; only they need the doctor module,
+        # which loads the whole SDK, so it is imported for them alone.
+        if type(exc).__module__ == f"{__package__}.doctor":
+            return _doctor_error_exit(exc, effective_argv)
         if "--json" in effective_argv:
             print(
                 json.dumps(

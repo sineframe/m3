@@ -24,12 +24,12 @@ def _load() -> ModuleType:
     if loaded is not None:
         return loaded
     package = importlib.util.find_spec("m3")
-    locations = package.submodule_search_locations if package else None
+    locations = list(package.submodule_search_locations or ()) if package else []
+    source = Path(locations[0]) / "_terminal.py" if locations else None
+    # Installs without .py sources (compiled-only, zip) use the normal import.
     spec = (
-        importlib.util.spec_from_file_location(
-            _NAME, Path(next(iter(locations))) / "_terminal.py"
-        )
-        if locations
+        importlib.util.spec_from_file_location(_NAME, source)
+        if source is not None and source.is_file()
         else None
     )
     if spec is None or spec.loader is None:

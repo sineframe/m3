@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
@@ -47,8 +48,22 @@ UNICODE = Glyphs(
 ASCII = Glyphs("+", "x", "s", "!", ">", "-", "...", "#", "#", "-", "|/-\\", "++++-|")
 
 
+def _char_cells(char: str) -> int:
+    if unicodedata.combining(char) or unicodedata.category(char) in {"Mn", "Me", "Cf"}:
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+
+
+def cells(text: str) -> int:
+    """Terminal cells taken by plain ``text`` (wide CJK characters take two)."""
+
+    if text.isascii():
+        return len(text)
+    return sum(_char_cells(char) for char in text)
+
+
 def visible_len(text: str) -> int:
-    return len(_ANSI.sub("", text))
+    return cells(_ANSI.sub("", text))
 
 
 def truncate(text: str, width: int, ellipsis: str = "…", *, keep: str = "end") -> str:
@@ -56,12 +71,22 @@ def truncate(text: str, width: int, ellipsis: str = "…", *, keep: str = "end")
 
     if width <= 0:
         return ""
-    if len(text) <= width:
+    if cells(text) <= width:
         return text
-    if width <= len(ellipsis):
-        return text[:width] if keep == "start" else text[-width:]
-    room = width - len(ellipsis)
-    return text[:room] + ellipsis if keep == "start" else ellipsis + text[-room:]
+    room = max(0, width - cells(ellipsis))
+    if room == 0:
+        return ellipsis[:width]
+    chars = text if keep == "start" else text[::-1]
+    kept, used = [], 0
+    for char in chars:
+        size = _char_cells(char)
+        if used + size > room:
+            break
+        kept.append(char)
+        used += size
+    if keep == "start":
+        return "".join(kept) + ellipsis
+    return ellipsis + "".join(reversed(kept))
 
 
 def fit(text: str, width: int, ellipsis: str = "…") -> str:
@@ -73,21 +98,24 @@ def fit(text: str, width: int, ellipsis: str = "…") -> str:
         return ""
     pieces: list[str] = []
     shown = index = 0
-    limit = max(0, width - len(ellipsis))
-    while index < len(text) and shown < limit:
+    limit = max(0, width - cells(ellipsis))
+    while index < len(text):
         match = _ANSI.match(text, index)
         if match:
             pieces.append(match.group())
             index = match.end()
             continue
+        size = _char_cells(text[index])
+        if shown + size > limit:
+            break
         pieces.append(text[index])
-        shown += 1
+        shown += size
         index += 1
     reset = "\x1b[0m" if "\x1b[" in text else ""
     # Close a hyperlink that was cut, or it would swallow the rest of the line.
     if "\x1b]8;;" in "".join(pieces):
         reset += "\x1b]8;;\x1b\\"
-    return "".join(pieces) + reset + ellipsis[: width - shown]
+    return "".join(pieces) + reset + ellipsis[: max(0, width - shown)]
 
 
 def supports_hyperlinks() -> bool:

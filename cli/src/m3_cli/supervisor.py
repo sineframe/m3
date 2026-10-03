@@ -36,6 +36,7 @@ from . import console
 from .branding import M3_ASCII_ART, M3_TAGLINE
 from .ci_credentials import ACCESS_TOKEN_ENV, parse_credential_mapping
 from .project import resolve_project_root
+from .pytest_options import RESERVED_PYTEST_OPTIONS, passthrough_option_error
 
 if typing.TYPE_CHECKING:
     import tomli as _tomllib
@@ -934,29 +935,8 @@ def _has_rootdir_option(args: Sequence[str]) -> bool:
     return any(arg == "--rootdir" or arg.startswith("--rootdir=") for arg in args)
 
 
-_RESERVED_PYTEST_OPTIONS = frozenset(
-    {
-        "--results-db",
-        "--project-root",
-        "--credential-env",
-        "--m3-server-selections",
-        "--m3-ci",
-        "--m3-run-id",
-        "--m3-timings-owner",
-        "--m3-ci-metadata",
-    }
-)
-
-
-def _passthrough_option_error(args: Sequence[str]) -> str | None:
-    """Keep CLI-owned run state out of raw pytest passthrough arguments."""
-    for arg in args:
-        if arg.startswith("@"):
-            return "pytest response files are not supported in m3 passthrough"
-        option = arg.split("=", 1)[0]
-        if option in _RESERVED_PYTEST_OPTIONS:
-            return f"{option} must be set through m3, not pytest passthrough"
-    return None
+_RESERVED_PYTEST_OPTIONS = RESERVED_PYTEST_OPTIONS
+_passthrough_option_error = passthrough_option_error
 
 
 def _num_processes_conflict(
@@ -1328,7 +1308,7 @@ def _serve_styled(
     arrow = style.cyan(style.glyphs.arrow)
     clickable = supports_hyperlinks()
     width = console.terminal_width()
-    with console.KeyReader() as keys:
+    with console.KeyReader(hide_cursor=True) as keys:
         print()
         for label, url in links:
             name = style.bold(style.cyan(label))
@@ -1356,8 +1336,6 @@ def _serve_styled(
         else:
             line = style.dim("press Ctrl-C to stop the UI server")
         print("     " + line, flush=True)
-        # The cursor would sit at the end of the status line.
-        sys.stdout.write("\x1b[?25l")
         try:
             time.sleep(1)
             if not child.alive():
@@ -1413,9 +1391,13 @@ def _serve_styled(
                             style, "no earlier run to compare with yet", ok=False
                         )
         finally:
-            # Leave the shell prompt on a fresh line, with its cursor.
-            sys.stdout.write("\x1b[?25h\n")
-            sys.stdout.flush()
+            # Leave the shell prompt on a fresh line (the key reader shows the
+            # cursor again on exit).
+            try:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            except (OSError, ValueError):
+                pass
 
 
 def _open_ui_in_browser(
@@ -1439,19 +1421,38 @@ def _open_ui_in_browser(
         )
 
 
-def _run_pytest_with_cursor(interactive: bool, *args: Any, **kwargs: Any) -> int:
-    """Run pytest; on a terminal, make sure the cursor is visible afterwards.
+_TITLE_OWNER_ENV = "M3_TERMINAL_TITLE_OWNER"
 
-    The plugin hides it while its live block is drawn and shows it again at
-    the end, but a crashed or killed pytest would leave it hidden.
+
+def _run_pytest_with_cursor(interactive: bool, *args: Any, **kwargs: Any) -> int:
+    """Run pytest; on a terminal, restore the cursor and window title after.
+
+    The plugin hides the cursor and shows progress in the title while its
+    live block is drawn. A crashed or killed pytest cannot clean up, so the
+    CLI saves the title before and restores both afterwards (and tells the
+    plugin, which then leaves the title stack alone).
     """
 
+    if not interactive:
+        return _run_pytest_timed(*args, **kwargs)
+    environment = kwargs.get("environment")
+    kwargs["environment"] = {
+        **(dict(environment) if environment is not None else dict(os.environ)),
+        _TITLE_OWNER_ENV: "cli",
+    }
+    _write_terminal("\x1b[22;0t")
     try:
         return _run_pytest_timed(*args, **kwargs)
     finally:
-        if interactive:
-            sys.stdout.write("\x1b[?25h")
-            sys.stdout.flush()
+        _write_terminal("\x1b[23;0t\x1b[?25h")
+
+
+def _write_terminal(sequence: str) -> None:
+    try:
+        sys.stdout.write(sequence)
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
 
 
 def _run_pytest_timed(*args: Any, **kwargs: Any) -> int:

@@ -12,6 +12,21 @@ import pytest
 from m3._terminal import Style, truncate, visible_len
 
 
+@pytest.fixture(autouse=True)
+def _simulated_terminal_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use each test's simulated width, not the terminal running the tests."""
+
+    import os
+
+    from m3 import pytest_plugin
+
+    monkeypatch.setattr(
+        pytest_plugin._shutil,
+        "get_terminal_size",
+        lambda fallback=(80, 24): os.terminal_size(fallback),
+    )
+
+
 class _Reporter:
     def __init__(self, *, isatty: bool = True) -> None:
         self.isatty = isatty
@@ -675,3 +690,136 @@ def test_xfails_are_yellow_cells_file_counts_and_not_regressions() -> None:
         coverage={"current_tests": 2},
     )
     assert "regressed" not in _baseline_delta(Style(False), comparison)
+
+
+# Review findings: each test names the scenario it pins.
+
+
+def test_crashed_xdist_worker_counts_its_test_as_failed() -> None:
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter, numprocesses=2)
+    progress.pytest_collection_finish(_items())
+    progress.pytest_xdist_node_collection_finished(
+        node=None, ids=["t.py::a", "t.py::b"]
+    )
+    progress.pytest_runtest_logstart("t.py::a", ("", 1, ""))
+    progress.pytest_runtest_logstart("t.py::b", ("", 1, ""))
+    progress.pytest_testnodedown(node=None, error="crashed")
+    progress.pytest_runtest_logreport(_report("t.py::a", "???", "failed"))
+    _run(progress, "t.py::b", "passed")
+    progress.pytest_runtest_logreport(_report("t.py::b", "teardown", "passed"))
+    assert (progress.failed, progress.passed, progress.completed) == (1, 1, 2)
+    assert progress._cells == ["failed", "passed"]
+    assert progress._running == set()
+    progress.finish()
+    screen = _screen(reporter.written)
+    assert "  ✗ t.py::a" in screen
+    assert screen[-1].startswith("  ✗ ") and "2/2" in screen[-1]
+
+
+def test_rerun_attempts_are_not_counted() -> None:
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("t.py::a"))
+    progress.pytest_runtest_logstart("t.py::a", ("", 1, ""))
+    progress.pytest_runtest_logreport(_report("t.py::a", "call", "rerun"))
+    _run(progress, "t.py::a", "passed")
+    assert (progress.passed, progress.failed, progress.completed) == (1, 0, 1)
+    assert progress._cells == ["passed"]
+    assert progress._file_counts == {"passed": 1}
+
+
+def test_narrow_terminals_use_the_real_width_or_skip_the_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from m3 import pytest_plugin
+
+    def size(columns: int) -> Any:
+        return lambda fallback=(80, 24): os.terminal_size((columns, 24))
+
+    # Pytest would report 80 for a 35-column pane; the block uses 34.
+    monkeypatch.setattr(pytest_plugin._shutil, "get_terminal_size", size(35))
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter)
+    progress._attach()
+    assert progress.enabled and progress._width() == 34
+    # Below 30 columns pytest's own output takes over.
+    monkeypatch.setattr(pytest_plugin._shutil, "get_terminal_size", size(25))
+    narrow = _progress(_colour_reporter(80))
+    narrow._attach()
+    assert narrow.enabled is False
+
+
+def test_collect_only_and_collection_errors_draw_nothing() -> None:
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter, collectonly=True)
+    progress._attach()
+    assert progress.enabled is False
+
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("a", "b"))  # then collection fails
+    progress.finish()
+    output = "".join(reporter.written)
+    assert "■" not in output and "0/2" not in output
+    assert reporter.lines == []
+    # Whatever was set up is still undone.
+    assert output.count("\x1b[22;0t") == output.count("\x1b[23;0t")
+
+
+def test_under_the_cli_the_title_stack_is_left_to_the_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("M3_TERMINAL_TITLE_OWNER", "cli")
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("a"))
+    _run(progress, "a", "passed")
+    progress.finish()
+    output = "".join(reporter.written)
+    assert "\x1b[22;0t" not in output and "\x1b[23;0t" not in output
+    assert "\x1b]2;m3 · 1/1" in output  # the title still shows progress
+
+
+@pytest.mark.parametrize(
+    ("baseline", "current", "word"),
+    [
+        ("passed", "failed", "regressed"),
+        ("failed", "passed", "fixed"),
+        ("passed", "incomplete", "regressed"),
+    ],
+)
+def test_baseline_uses_the_effective_verdict(
+    baseline: str, current: str, word: str
+) -> None:
+    from m3.feedback import Comparison
+    from m3.pytest_plugin import _baseline_delta
+
+    def attempt(verdict: str) -> list[dict[str, str]]:
+        # pytest passed both times; a required evaluation decides the verdict.
+        return [{"outcome": "passed", "effective_verdict": verdict}]
+
+    comparison = Comparison(
+        baseline_run_id="run-base",
+        current_run_id="run-1",
+        test_changes=(
+            {
+                "node_id": "a",
+                "baseline": attempt(baseline),
+                "current": attempt(current),
+            },
+        ),
+        coverage={"current_tests": 9},  # attempts, not distinct tests
+    )
+    text = _baseline_delta(Style(False), comparison, current_tests=5)
+    assert f"1 {word}" in text and "4 unchanged" in text
+
+
+def test_wide_characters_count_as_two_cells() -> None:
+    from m3._terminal import cells, fit
+
+    assert cells("テスト") == 6 and visible_len("\x1b[31mテスト\x1b[0m") == 6
+    assert truncate("テスト名前", 5, keep="start") == "テス…"
+    assert visible_len(fit("テストテスト", 5)) == 5

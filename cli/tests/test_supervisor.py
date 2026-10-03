@@ -7,6 +7,7 @@ import re
 import signal
 import socket
 import sqlite3
+import subprocess
 import sys
 from collections import deque
 from datetime import datetime, timezone
@@ -2081,8 +2082,10 @@ class _ScriptedKeys:
     """Stands in for console.KeyReader: returns the scripted keys in order."""
 
     script: ClassVar[list[str | None]] = []
+    hide_cursor: ClassVar[list[bool]] = []
 
-    def __init__(self) -> None:
+    def __init__(self, *, hide_cursor: bool = False) -> None:
+        _ScriptedKeys.hide_cursor.append(hide_cursor)
         self.enabled = True
         self._keys = list(self.script)
 
@@ -2255,14 +2258,16 @@ def test_ui_link_is_short_and_fits_when_keys_are_available(
     assert len(link_line) <= 59
 
 
-def test_ui_hides_the_cursor_while_waiting_and_restores_it(
+def test_ui_key_prompt_hides_the_cursor_through_the_key_reader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _ScriptedKeys.hide_cursor = []
     _code, output, _opened, _copied = _serve_with_keys(
         monkeypatch, ["q"], compare_with=None
     )
-    assert output.index("\x1b[?25l") < output.rindex("\x1b[?25h")
-    assert output.endswith("\x1b[?25h\n")
+    # The key reader hides it, and restores it on exit, Ctrl-Z and fg.
+    assert _ScriptedKeys.hide_cursor == [True]
+    assert output.endswith("\n")
 
 
 def test_cursor_is_restored_even_if_pytest_dies(
@@ -2277,4 +2282,65 @@ def test_cursor_is_restored_even_if_pytest_dies(
     monkeypatch.setattr(supervisor, "_run_pytest_timed", crash)
     with pytest.raises(KeyboardInterrupt):
         supervisor._run_pytest_with_cursor(True)
-    assert stream.getvalue() == "\x1b[?25h"
+    # The title is saved before pytest and restored with the cursor after,
+    # even though pytest never got to clean up.
+    assert stream.getvalue() == "\x1b[22;0t\x1b[23;0t\x1b[?25h"
+
+
+def test_pytest_is_told_the_cli_owns_the_window_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "stdout", _TTYStream())
+    seen: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_run_pytest_timed",
+        lambda *_args, **kwargs: seen.append(kwargs["environment"]) or 0,
+    )
+    assert supervisor._run_pytest_with_cursor(True, environment={"A": "1"}) == 0
+    assert seen == [{"A": "1", "M3_TERMINAL_TITLE_OWNER": "cli"}]
+    # Off a terminal nothing is added.
+    assert supervisor._run_pytest_with_cursor(False, environment={"A": "1"}) == 0
+    assert seen[-1] == {"A": "1"}
+
+
+def test_bad_test_options_fail_before_the_banner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = _TTYStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+    assert main(["test", "--upload", "--ui"]) == 2
+    assert main(["test", "--", "--results-db=x"]) == 2
+    assert M3_ASCII_ART.splitlines()[0] not in stream.getvalue()
+    assert stream.getvalue() == ""
+
+
+def test_test_command_errors_do_not_load_the_sdk(tmp_path: Path) -> None:
+    script = (
+        "import sys\n"
+        "from m3_cli.main import main\n"
+        "code = main(['test', '--', '--results-db=x'])\n"
+        "print(code, 'm3' in sys.modules, 'm3_cli.doctor' in sys.modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.stdout.split() == ["2", "False", "False"]
+
+
+def test_terminal_module_falls_back_without_source_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import importlib.util
+
+    from m3_cli import terminal
+
+    sentinel = object()
+    monkeypatch.delitem(sys.modules, "m3._terminal")
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda _name: SimpleNamespace(submodule_search_locations=[str(tmp_path)]),
+    )
+    monkeypatch.setattr(terminal.importlib, "import_module", lambda _name: sentinel)
+    assert terminal._load() is sentinel

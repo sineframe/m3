@@ -9,8 +9,10 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -128,18 +130,30 @@ class KeyReader:
 
     It is inactive (``enabled`` is False) when stdin is not a terminal or the
     process is in the background, so scripted and piped runs are unaffected.
-    The terminal mode is always restored on exit.
+    With ``hide_cursor`` it also hides the cursor while active. The terminal
+    mode and cursor are restored on exit, on Ctrl-Z (and re-applied on
+    ``fg``), and keys are not read while the job is in the background.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, hide_cursor: bool = False) -> None:
         self.enabled = False
+        self._hide_cursor = hide_cursor
+        self._cursor_hidden = False
         self._fd: int | None = None
         self._saved: Any = None
         self._pending = b""
+        self._previous_handlers: dict[int, Any] = {}
 
     def __enter__(self) -> KeyReader:
         try:
-            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            interactive = sys.stdout.isatty()
+        except (AttributeError, OSError, ValueError):
+            interactive = False
+        if self._hide_cursor and interactive:
+            self._set_cursor(visible=False)
+        try:
+            if not (interactive and sys.stdin.isatty()):
+                self._watch_job_control()
                 return self
             fd = sys.stdin.fileno()
         except (AttributeError, OSError, ValueError):
@@ -147,19 +161,13 @@ class KeyReader:
         if os.name == "nt":
             self.enabled = True
             return self
-        try:
-            import termios
-            import tty
-
-            # Changing the mode from a background job would stop it (SIGTTOU).
-            if os.getpgrp() != os.tcgetpgrp(fd):
-                return self
-            self._saved = termios.tcgetattr(fd)
-            tty.setcbreak(fd)
-        except (ImportError, OSError):
-            return self
         self._fd = fd
+        if not self._foreground() or not self._apply_mode():
+            self._fd = None
+            self._watch_job_control()
+            return self
         self.enabled = True
+        self._watch_job_control()
         return self
 
     def __exit__(
@@ -168,15 +176,105 @@ class KeyReader:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        if self._fd is not None and self._saved is not None:
-            import termios
-
+        for signum, handler in self._previous_handlers.items():
             try:
-                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._saved)
-            except OSError:
+                signal.signal(signum, handler)
+            except (OSError, ValueError):
                 pass
+        self._previous_handlers = {}
+        self._restore_mode()
+        self._set_cursor(visible=True)
         self._fd = self._saved = None
         self.enabled = False
+
+    def _foreground(self) -> bool:
+        if self._fd is None or os.name == "nt":
+            return self._fd is not None
+        try:
+            return os.getpgrp() == os.tcgetpgrp(self._fd)
+        except OSError:
+            return False
+
+    def _apply_mode(self) -> bool:
+        """Switch to cbreak mode (no echo, keys without Enter)."""
+
+        try:
+            import termios
+            import tty
+        except ImportError:
+            return False
+        assert self._fd is not None
+        try:
+            if self._saved is None:
+                self._saved = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+        except (OSError, termios.error):
+            return False
+        return True
+
+    def _restore_mode(self) -> None:
+        if self._fd is None or self._saved is None:
+            return
+        import termios
+
+        # Restoring from a background job would stop it (SIGTTOU) unless the
+        # signal is ignored for the call.
+        previous = None
+        try:
+            previous = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+        except (AttributeError, OSError, ValueError):
+            pass
+        try:
+            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._saved)
+        except (OSError, termios.error):
+            pass
+        finally:
+            if previous is not None:
+                try:
+                    signal.signal(signal.SIGTTOU, previous)
+                except (OSError, ValueError):
+                    pass
+
+    def _set_cursor(self, *, visible: bool) -> None:
+        if not self._hide_cursor or visible != self._cursor_hidden:
+            return
+        try:
+            sys.stdout.write("\x1b[?25h" if visible else "\x1b[?25l")
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            return
+        self._cursor_hidden = not visible
+
+    def _watch_job_control(self) -> None:
+        """Restore the terminal on Ctrl-Z and re-apply it on ``fg``."""
+
+        if os.name == "nt" or threading.current_thread() is not threading.main_thread():
+            return
+        for signum, handler in (
+            (signal.SIGTSTP, self._on_stop),
+            (signal.SIGCONT, self._on_continue),
+        ):
+            try:
+                self._previous_handlers[signum] = signal.signal(signum, handler)
+            except (OSError, ValueError):
+                pass
+
+    def _on_stop(self, signum: int, _frame: object) -> None:
+        self._restore_mode()
+        self._set_cursor(visible=True)
+        # Stop for real with the default action; SIGCONT re-installs us.
+        signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTSTP)
+
+    def _on_continue(self, signum: int, _frame: object) -> None:
+        try:
+            signal.signal(signal.SIGTSTP, self._on_stop)
+        except (OSError, ValueError):
+            pass
+        if self.enabled and self._foreground():
+            self._apply_mode()
+        if self._foreground() or self._fd is None:
+            self._set_cursor(visible=False)
 
     def read(self, timeout: float) -> str | None:
         """Return one lower-case key, or None after ``timeout`` seconds."""
@@ -201,6 +299,10 @@ class KeyReader:
         import select
 
         assert self._fd is not None
+        if not self._foreground():
+            # Reading the terminal from a background job would stop it.
+            time.sleep(timeout)
+            return None
         if not self._pending:
             ready, _, _ = select.select([self._fd], [], [], timeout)
             if not ready:
