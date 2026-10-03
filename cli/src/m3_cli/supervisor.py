@@ -30,10 +30,13 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from m3 import _timing, _timing_report
-from m3._terminal import Style, stream_is_utf8
+from m3._terminal import Style, fit, hyperlink, supports_hyperlinks, visible_len
 
-from .branding import M3_ASCII_ART, M3_TAGLINE, render_banner
+from . import console
+from .branding import M3_ASCII_ART, M3_TAGLINE
 from .ci_credentials import ACCESS_TOKEN_ENV, parse_credential_mapping
+from .project import resolve_project_root
+from .pytest_options import RESERVED_PYTEST_OPTIONS, passthrough_option_error
 
 if typing.TYPE_CHECKING:
     import tomli as _tomllib
@@ -437,23 +440,6 @@ def validate_project_python(
     return project_version
 
 
-def resolve_project_root(explicit: Path | None = None) -> Path:
-    """Return the explicit root, else the nearest ``m3.toml`` directory above cwd.
-
-    The walk stops after checking a directory that contains ``.git``; without an
-    ``m3.toml`` the current directory is the root.
-    """
-    if explicit is not None:
-        return explicit.expanduser().resolve()
-    start = Path.cwd().resolve()
-    for directory in (start, *start.parents):
-        if (directory / "m3.toml").is_file():
-            return directory
-        if (directory / ".git").exists():
-            break
-    return start
-
-
 def _absolute_database(
     value: str | os.PathLike[str] | None, *, project_root: Path | None = None
 ) -> Path:
@@ -655,6 +641,24 @@ def baseline_exists(
                 pass
 
 
+def _comparison_target(
+    baseline: str | None, before: StoredRuns
+) -> tuple[str, str] | None:
+    """The run to compare with: ``--baseline``, else the latest earlier run.
+
+    Returns (run ID, label), or None when there is no earlier run.
+    """
+
+    labels = {run.run_id: run.run_label for run in before.runs}
+    if baseline is not None:
+        run_id = baseline
+    elif before.runs:
+        run_id = max(before.runs, key=lambda run: (run.created_at, run.run_id)).run_id
+    else:
+        return None
+    return run_id, labels.get(run_id) or f"Run {run_id.removeprefix('run-')[:7]}"
+
+
 def find_new_runs(before: StoredRuns, after: StoredRuns) -> tuple[StoredRun, ...]:
     """Return after-runs whose IDs were absent before pytest started."""
 
@@ -673,6 +677,15 @@ def build_run_url(run_id: str, port: int, auth_token: str | None = None) -> str:
     encoded_run_id = quote(str(run_id), safe="")
     url = f"{origin}/reports/runs/{encoded_run_id}"
     return f"{url}#m3_token={auth_token}" if auth_token is not None else url
+
+
+def build_compare_url(
+    run_id: str, baseline_run_id: str, port: int, auth_token: str
+) -> str:
+    """Build the report URL for ``run_id`` compared with ``baseline_run_id``."""
+
+    query = f"?baseline_run_id={quote(str(baseline_run_id), safe='')}"
+    return f"{build_run_url(run_id, port)}{query}#m3_token={auth_token}"
 
 
 def build_ui_url(port: int, auth_token: str) -> str:
@@ -922,29 +935,8 @@ def _has_rootdir_option(args: Sequence[str]) -> bool:
     return any(arg == "--rootdir" or arg.startswith("--rootdir=") for arg in args)
 
 
-_RESERVED_PYTEST_OPTIONS = frozenset(
-    {
-        "--results-db",
-        "--project-root",
-        "--credential-env",
-        "--m3-server-selections",
-        "--m3-ci",
-        "--m3-run-id",
-        "--m3-timings-owner",
-        "--m3-ci-metadata",
-    }
-)
-
-
-def _passthrough_option_error(args: Sequence[str]) -> str | None:
-    """Keep CLI-owned run state out of raw pytest passthrough arguments."""
-    for arg in args:
-        if arg.startswith("@"):
-            return "pytest response files are not supported in m3 passthrough"
-        option = arg.split("=", 1)[0]
-        if option in _RESERVED_PYTEST_OPTIONS:
-            return f"{option} must be set through m3, not pytest passthrough"
-    return None
+_RESERVED_PYTEST_OPTIONS = RESERVED_PYTEST_OPTIONS
+_passthrough_option_error = passthrough_option_error
 
 
 def _num_processes_conflict(
@@ -1226,24 +1218,7 @@ def _stop_server(child: _ServerChild | None) -> None:
 
 
 def _stdout_style() -> Style | None:
-    """Styling for an interactive stdout, or None to keep the plain output."""
-
-    try:
-        interactive = sys.stdout.isatty()
-    except (AttributeError, OSError, ValueError):
-        return None
-    if not interactive or os.environ.get("TERM") == "dumb":
-        return None
-    return Style("NO_COLOR" not in os.environ, unicode=stream_is_utf8(sys.stdout))
-
-
-def _project_name(root: Path) -> str | None:
-    try:
-        value = _tomllib.loads((root / "m3.toml").read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return None
-    name = value.get("project_name")
-    return name.strip() if isinstance(name, str) and name.strip() else None
+    return console.stdout_style()
 
 
 def _print_start_banner(
@@ -1255,42 +1230,14 @@ def _print_start_banner(
     suite: str | None,
     num_processes: str | None,
 ) -> bool:
-    """Print the banner before pytest starts; return whether it was shown."""
-
-    style = _stdout_style()
-    if style is None:
-        return False
-    try:
-        version = importlib.metadata.version("sf-m3-cli")
-    except importlib.metadata.PackageNotFoundError:
-        version = ""
-    dot = f" {style.dim(style.glyphs.dot)} "
-
-    def row(key: str, value: str) -> str:
-        return f"{style.grey(key.ljust(9))}{value}"
-
-    details = []
-    if suite is not None:
-        details.append(f"suite {suite}")
-    if harnesses:
-        details.append(", ".join(harnesses))
-    if num_processes is not None:
-        details.append(f"{num_processes} workers")
-    info = [
-        f"{style.bold('m3')} {style.dim(version)}".rstrip(),
-        style.dim(M3_TAGLINE),
-        "",
-        row("project", _project_name(root) or root.name),
-        row("run", run_id.removeprefix("run-")[:7]),
-    ]
-    if details:
-        info.append(row("with", dot.join(details)))
-    if ui:
-        info.append(row("report", "opens in your browser when the run ends"))
-    print(file=sys.stdout)
-    print(render_banner(style, info), flush=True)
-    print(flush=True)
-    return True
+    return console.print_start_banner(
+        root,
+        run_id,
+        ui=ui,
+        harnesses=harnesses,
+        suite=suite,
+        num_processes=num_processes,
+    )
 
 
 def _print_ui_output(
@@ -1316,20 +1263,33 @@ def _print_ui_output(
         print(f"Run: {build_run_url(run.run_id, port, auth_token)}", flush=True)
 
 
-def _print_styled_ui_output(
+def _open_url(url: str) -> bool:
+    try:
+        return bool(webbrowser.open(url))
+    except (OSError, webbrowser.Error):
+        return False
+
+
+def _serve_styled(
     style: Style,
+    child: _ServerChild,
     port: int,
     auth_token: str,
     new_runs: Sequence[StoredRun],
     warnings: Sequence[str],
     *,
-    history_index: bool = False,
-) -> None:
-    """Interactive counterpart of ``_print_ui_output``."""
+    history_index: bool,
+    compare_with: tuple[str, str] | None,
+) -> bool:
+    """Interactive counterpart of the plain UI output and wait loop.
+
+    The report opens automatically; ``o``, ``c``, ``b`` and ``q`` reopen it,
+    copy its link, open the comparison with ``compare_with`` (run ID, label),
+    or stop the server. Returns False when the server stopped unexpectedly.
+    """
 
     for warning in dict.fromkeys(warnings):
         print(f"{style.glyphs.warning} Warning: {warning}", file=sys.stderr)
-    arrow = style.cyan(style.glyphs.arrow)
     links: list[tuple[str, str]] = []
     if history_index or not new_runs:
         if not history_index:
@@ -1339,16 +1299,105 @@ def _print_styled_ui_output(
         for run in new_runs:
             label = run.run_label if run.run_label is not None else "Report"
             links.append((label, build_run_url(run.run_id, port, auth_token)))
-    print()
-    for label, url in links:
-        print(f"  {arrow}  {style.bold(label)}  {style.underline(url)}")
-    print(
-        "     "
-        + style.dim(
-            f"opening in your browser {style.glyphs.dot} press Ctrl-C to stop the UI server"
-        )
+    target = links[-1][1]
+    compare_url = (
+        build_compare_url(new_runs[-1].run_id, compare_with[0], port, auth_token)
+        if compare_with is not None and new_runs and not history_index
+        else None
     )
-    print(flush=True)
+    arrow = style.cyan(style.glyphs.arrow)
+    clickable = supports_hyperlinks()
+    width = console.terminal_width()
+    with console.KeyReader(hide_cursor=True) as keys:
+        print()
+        for label, url in links:
+            name = style.bold(style.cyan(label))
+            if keys.enabled:
+                # o opens and c copies the full link, so show a short form
+                # that never wraps; it is also clickable where supported.
+                prefix = f"  {arrow}  {name}  "
+                room = max(12, width - visible_len(prefix))
+                short = style.underline(fit(url.split("#", 1)[0], room))
+                print(prefix + (hyperlink(url, short) if clickable else short))
+            elif clickable:
+                print(f"  {arrow}  {hyperlink(url, name)}")
+            else:
+                # No keys to copy with: the full link, on a line of its own.
+                print(f"  {arrow}  {name}")
+                print(f"     {style.underline(url)}")
+        if keys.enabled:
+            hints = [("o", "reopen"), ("c", "copy link")]
+            if compare_url is not None and compare_with is not None:
+                hints.append(("b", f"compare with {compare_with[1]}"))
+            hints.append(("q", "quit"))
+            line = "  ".join(
+                f"{style.grey(key)} {style.dim(text)}" for key, text in hints
+            )
+        else:
+            line = style.dim("press Ctrl-C to stop the UI server")
+        print("     " + line, flush=True)
+        try:
+            time.sleep(1)
+            if not child.alive():
+                print()
+                print("m3: UI server stopped unexpectedly", file=sys.stderr)
+                return False
+            if _open_url(target):
+                console.status(style, "opened in your browser")
+            else:
+                console.status(
+                    style,
+                    "could not open a browser; press c to copy the link"
+                    if keys.enabled
+                    else "could not open a browser; use the link above",
+                    ok=False,
+                )
+            while True:
+                if not child.alive():
+                    print()
+                    print("m3: UI server stopped unexpectedly", file=sys.stderr)
+                    return False
+                key = keys.read(0.1)
+                if key == "q":
+                    return True
+                if key == "o":
+                    if _open_url(target):
+                        console.status(style, "reopened in your browser")
+                    else:
+                        console.status(style, "could not open a browser", ok=False)
+                elif key == "c":
+                    if console.copy_to_clipboard(target):
+                        console.status(style, "link copied to clipboard")
+                    else:
+                        # No clipboard tool: show the full link to copy by hand.
+                        sys.stdout.write(f"\r\x1b[K     {target}\n")
+                        console.status(
+                            style,
+                            "no clipboard tool found; link printed above",
+                            ok=False,
+                        )
+                elif key == "b":
+                    if compare_url is not None and compare_with is not None:
+                        if _open_url(compare_url):
+                            console.status(
+                                style, f"opened comparison with {compare_with[1]}"
+                            )
+                        else:
+                            console.status(style, "could not open a browser", ok=False)
+                    elif history_index or not new_runs:
+                        console.status(style, "no new run to compare", ok=False)
+                    else:
+                        console.status(
+                            style, "no earlier run to compare with yet", ok=False
+                        )
+        finally:
+            # Leave the shell prompt on a fresh line (the key reader shows the
+            # cursor again on exit).
+            try:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            except (OSError, ValueError):
+                pass
 
 
 def _open_ui_in_browser(
@@ -1370,6 +1419,40 @@ def _open_ui_in_browser(
             "Warning: could not open a browser; use the printed UI link.",
             file=sys.stderr,
         )
+
+
+_TITLE_OWNER_ENV = "M3_TERMINAL_TITLE_OWNER"
+
+
+def _run_pytest_with_cursor(interactive: bool, *args: Any, **kwargs: Any) -> int:
+    """Run pytest; on a terminal, restore the cursor and window title after.
+
+    The plugin hides the cursor and shows progress in the title while its
+    live block is drawn. A crashed or killed pytest cannot clean up, so the
+    CLI saves the title before and restores both afterwards (and tells the
+    plugin, which then leaves the title stack alone).
+    """
+
+    if not interactive:
+        return _run_pytest_timed(*args, **kwargs)
+    environment = kwargs.get("environment")
+    kwargs["environment"] = {
+        **(dict(environment) if environment is not None else dict(os.environ)),
+        _TITLE_OWNER_ENV: "cli",
+    }
+    _write_terminal("\x1b[22;0t")
+    try:
+        return _run_pytest_timed(*args, **kwargs)
+    finally:
+        _write_terminal("\x1b[23;0t\x1b[?25h")
+
+
+def _write_terminal(sequence: str) -> None:
+    try:
+        sys.stdout.write(sequence)
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
 
 
 def _run_pytest_timed(*args: Any, **kwargs: Any) -> int:
@@ -1416,6 +1499,7 @@ def _run_ui_server(
     warnings: Sequence[str],
     *,
     history_index: bool = False,
+    compare_with: tuple[str, str] | None = None,
 ) -> int:
     child: _ServerChild | None = None
     auth_token = secrets.token_urlsafe(32)
@@ -1438,11 +1522,24 @@ def _run_ui_server(
         else:
             if history_index:
                 # `m3 ui` runs no tests, so the banner was not printed yet.
+                console.start_at_top()
                 print(file=sys.stdout)
-                print(render_banner(style, ("", style.dim(M3_TAGLINE))))
-            _print_styled_ui_output(
-                style, port, auth_token, new_runs, warnings, history_index=history_index
-            )
+                console.print_banner(
+                    style, ("", style.dim(M3_TAGLINE)), style.dim(M3_TAGLINE)
+                )
+            with _termination_signal_handlers():
+                if not _serve_styled(
+                    style,
+                    child,
+                    port,
+                    auth_token,
+                    new_runs,
+                    warnings,
+                    history_index=history_index,
+                    compare_with=compare_with,
+                ):
+                    return OPERATIONAL_ERROR
+                return pytest_code
         with _termination_signal_handlers():
             time.sleep(1)
             if not child.alive():
@@ -1547,6 +1644,7 @@ def run_test_with_runs(
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
+    banner_shown: bool = False,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
@@ -1587,6 +1685,19 @@ def run_test_with_runs(
     root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
     _start_timings(root, invocation_run_id)
+    # Banner first: the checks below can take seconds (they start the
+    # project Python), and the terminal should respond immediately.
+    no_header = not ci_mode and (
+        banner_shown
+        or _print_start_banner(
+            root,
+            invocation_run_id,
+            ui=ui,
+            harnesses=harnesses,
+            suite=suite,
+            num_processes=num_processes,
+        )
+    )
     database_path = _absolute_database(database, project_root=root)
     try:
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1648,15 +1759,8 @@ def run_test_with_runs(
         return TestRunResult(
             OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
         )
-    no_header = not ci_mode and _print_start_banner(
-        root,
-        invocation_run_id,
-        ui=ui,
-        harnesses=harnesses,
-        suite=suite,
-        num_processes=num_processes,
-    )
-    exit_code = _run_pytest_timed(
+    exit_code = _run_pytest_with_cursor(
+        no_header,
         selected,
         database_path,
         pytest_args,
@@ -1697,7 +1801,14 @@ def run_test_with_runs(
         return TestRunResult(
             exit_code, new_runs, warnings, invocation_run_id, database_path, root
         )
-    server_code = _run_ui_server(database_path, port, exit_code, new_runs, warnings)
+    server_code = _run_ui_server(
+        database_path,
+        port,
+        exit_code,
+        new_runs,
+        warnings,
+        compare_with=_comparison_target(baseline, before),
+    )
     return TestRunResult(
         server_code, new_runs, warnings, invocation_run_id, database_path, root
     )
@@ -1727,6 +1838,7 @@ def run_test(
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
+    banner_shown: bool = False,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1780,10 +1892,24 @@ def run_test(
             run_id=run_id,
             ci_metadata=ci_metadata,
             num_processes=num_processes,
+            banner_shown=banner_shown,
         ).exit_code
     root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
     _start_timings(root, invocation_run_id)
+    # Banner first: the checks below can take seconds (they start the
+    # project Python), and the terminal should respond immediately.
+    no_header = not ci_mode and (
+        banner_shown
+        or _print_start_banner(
+            root,
+            invocation_run_id,
+            ui=False,
+            harnesses=harnesses,
+            suite=suite,
+            num_processes=num_processes,
+        )
+    )
     prepared = _prepare_test(
         python, database, root, require_xdist=num_processes is not None
     )
@@ -1809,15 +1935,8 @@ def run_test(
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR
-    no_header = not ci_mode and _print_start_banner(
-        root,
-        invocation_run_id,
-        ui=False,
-        harnesses=harnesses,
-        suite=suite,
-        num_processes=num_processes,
-    )
-    return _run_pytest_timed(
+    return _run_pytest_with_cursor(
+        no_header,
         selected,
         database_path,
         pytest_args,

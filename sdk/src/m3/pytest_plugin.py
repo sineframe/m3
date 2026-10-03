@@ -8,6 +8,7 @@ import json as _json
 import math as _math
 import os as _os
 import re as _re
+import shutil as _shutil
 import time as _time
 from collections.abc import Iterator as _Iterator
 from collections.abc import Mapping as _Mapping
@@ -47,7 +48,11 @@ from ._default_store import (
     restore_default_store_factory as _restore_default_store_factory,
 )
 from ._terminal import Style as _Style
+from ._terminal import cells as _cells
+from ._terminal import fit as _fit
+from ._terminal import hyperlink as _hyperlink
 from ._terminal import stream_is_utf8 as _stream_is_utf8
+from ._terminal import supports_hyperlinks as _supports_hyperlinks
 from ._terminal import truncate as _truncate
 from ._terminal import visible_len as _visible_len
 from ._test_runs import (
@@ -376,6 +381,7 @@ def _configure(config: _Any) -> None:
             config._m3_progress.enabled and config._m3_progress._is_tty()
         )
     config._m3_progress.disable_native_progress()
+    config._m3_progress.restyle_separators()
     config.pluginmanager.register(config._m3_progress, "m3-progress")
     config._m3_manifest_hooks = _ManifestHooks()
     config.pluginmanager.register(config._m3_manifest_hooks, "m3-manifest-hooks")
@@ -1833,6 +1839,13 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
                 [(verdicts.count(kind), kind, label) for kind, label in categories],
                 tool_errors,
                 completed,
+                comparison=feedback.comparison,
+                tests=feedback.tests,
+                slowest=(
+                    config._m3_progress.slowest()
+                    if getattr(config, "_m3_progress", None) is not None
+                    else []
+                ),
             )
         else:
             counts = ", ".join(
@@ -1852,7 +1865,9 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             reporter.write_line(
                 "M3: no tests executed; skipped-only runs fail", red=True
             )
-        for execution_id, stage, elapsed in timeout_summaries:
+        if style is not None and timeout_summaries:
+            _write_timeouts(reporter, style, timeout_summaries)
+        for execution_id, stage, elapsed in timeout_summaries if style is None else ():
             elapsed_text = (
                 f"{elapsed:.3f}s" if isinstance(elapsed, float) else "unknown"
             )
@@ -1879,6 +1894,10 @@ def _write_run_panel(
     counts: list[tuple[int, str, str]],
     tool_errors: int,
     completed: int,
+    *,
+    comparison: _Any = None,
+    slowest: list[tuple[str, str, float]] | None = None,
+    tests: _Any = None,
 ) -> None:
     """Terminal rendering of the M3 run summary for interactive sessions."""
 
@@ -1907,16 +1926,149 @@ def _write_run_panel(
         feedback = feedback.relative_to(_Path.cwd())
     except ValueError:
         pass
-    width = getattr(getattr(reporter, "_tw", None), "fullwidth", 80)
-    rows = [
-        ("verdicts", dot.join(verdict_parts) or "no test cases recorded"),
-        ("observations", observations),
-        ("feedback", style.dim(str(feedback))),
-    ]
+    # The real terminal width (pytest reports 80 for anything under 40).
+    width = _terminal_columns(reporter) + 1
+    rows = [("verdicts", dot.join(verdict_parts) or "no test cases recorded")]
+    if comparison is not None:
+        distinct = {
+            (test.get("suite_id"), test.get("node_id"))
+            for test in tests or ()
+            if isinstance(test, _Mapping)
+        }
+        rows.append(
+            (
+                "vs baseline",
+                _baseline_delta(style, comparison, len(distinct) if tests else None),
+            )
+        )
+    rows.append(("observations", observations))
+    slowest = slowest or []
+    if slowest:
+        # The row must fit inside the closed panel. The test name matters
+        # most and gets the room left after the bar and the time; the file
+        # name is shown only when it fits whole.
+        terminal = width
+        key_width = 16  # the panel's key column ("observations" + gap)
+        available = terminal - 1 - 2 - 2 - 1 - key_width
+        fixed = 1 + 12 + 1 + 6  # " " + bar + " " + "123.4s"
+        name_width = max(
+            12, min(max(_cells(name) for name, _, _ in slowest), available - fixed)
+        )
+        longest = slowest[0][2]
+        for index, (name, file, seconds) in enumerate(slowest):
+            filled = max(1, round(12 * seconds / longest)) if longest else 1
+            show_file = file and name_width + fixed + 2 + len(file) <= available
+            rows.append(
+                (
+                    "slowest" if index == 0 else "",
+                    f"{_pad(_truncate(name, name_width, style.glyphs.ellipsis, keep='start'), name_width)} "
+                    f"{style.cyan(style.glyphs.bar_full * filled)}{' ' * (12 - filled)} "
+                    f"{style.dim(f'{seconds:>5.1f}s')}"
+                    + (f"  {style.dim(file)}" if show_file else ""),
+                )
+            )
+    path_text = style.dim(str(feedback))
+    if style.color and _supports_hyperlinks():
+        # The text is the path itself, so terminals without links lose nothing.
+        path_text = _hyperlink(_Path(output).absolute().as_uri(), path_text)
+    rows.append(("feedback", path_text))
     title = style.bold(f"M3 {run_id}")
     reporter.write_line("")
-    for line in style.box(title, rows, width if isinstance(width, int) else 80):
+    for line in style.box(title, rows, width - 1):
         reporter.write_line(line)
+
+
+def _write_timeouts(
+    reporter: _Any, style: _Style, timeouts: list[tuple[str, str, float | None]]
+) -> None:
+    """Compact timeout lines under the panel; the plain lines stay for pipes."""
+
+    width = _terminal_columns(reporter)
+    shown = timeouts[:3]
+    for execution_id, stage, elapsed in shown:
+        details = [
+            style.dim(_truncate(execution_id, 24, style.glyphs.ellipsis, keep="start"))
+        ]
+        if stage and stage != "unknown":
+            details.append(f"stage {stage}")
+        if isinstance(elapsed, float):
+            details.append(f"after {elapsed:.1f}s")
+        line = (
+            f"  {style.yellow(style.glyphs.warning + ' execution timed out')}  "
+            + "  ".join(details)
+        )
+        reporter.write_line(_fit(line, width))
+    more = len(timeouts) - len(shown)
+    tail = f"{more} more {style.glyphs.dot} " if more else ""
+    reporter.write_line(
+        _fit(f"    {style.dim(tail + 'details in feedback.json')}", width)
+    )
+
+
+def _pad(text: str, width: int) -> str:
+    """Left-align plain text to ``width`` terminal cells."""
+
+    return text + " " * max(0, width - _cells(text))
+
+
+def _baseline_delta(
+    style: _Style, comparison: _Any, current_tests: int | None = None
+) -> str:
+    """Summarise per-test changes against the baseline run.
+
+    ``current_tests`` is the number of distinct tests in this run; the
+    comparison's own coverage count includes repeated attempts.
+    """
+
+    def state(attempts: _Any) -> str:
+        # The effective verdict includes required evaluations: a test pytest
+        # passed can still have failed one. Fall back to the pytest outcome.
+        verdicts = {
+            str(attempt.get("effective_verdict") or attempt.get("outcome"))
+            for attempt in attempts or ()
+            if isinstance(attempt, _Mapping)
+        }
+        if not verdicts:
+            return "absent"
+        if verdicts - {"passed", "skipped", "xfailed", "not_run"}:
+            return "failed"
+        return "passed" if "passed" in verdicts else "skipped"
+
+    tally = {"fixed": 0, "regressed": 0, "new": 0, "removed": 0, "other": 0}
+    for change in comparison.test_changes:
+        before, after = state(change.get("baseline")), state(change.get("current"))
+        if before == "absent":
+            tally["new"] += 1
+        elif after == "absent":
+            tally["removed"] += 1
+        elif before == "failed" and after == "passed":
+            tally["fixed"] += 1
+        elif after == "failed":
+            tally["regressed"] += 1
+        else:
+            tally["other"] += 1
+    current = (
+        current_tests
+        if current_tests is not None
+        else int(comparison.coverage.get("current_tests", 0) or 0)
+    )
+    changed_now = len(comparison.test_changes) - tally["removed"]
+    unchanged = max(0, current - changed_now)
+    parts = []
+    if tally["fixed"]:
+        parts.append(style.green(f"{tally['fixed']} fixed"))
+    if tally["regressed"]:
+        parts.append(style.red(f"{tally['regressed']} regressed"))
+    if tally["new"]:
+        parts.append(f"{tally['new']} new")
+    if tally["removed"]:
+        parts.append(f"{tally['removed']} removed")
+    if tally["other"]:
+        parts.append(f"{tally['other']} changed")
+    parts.append(style.dim(f"{unchanged} unchanged"))
+    label = comparison.baseline_run_label or str(comparison.baseline_run_id)
+    dot = f" {style.dim(style.glyphs.dot)} "
+    return dot.join(parts) + style.dim(f"  vs {label}")
 
 
 class _ManifestHooks:
@@ -1966,6 +2118,23 @@ class _ManifestHooks:
             _pytest_sessionfinish(session, exitstatus)
 
 
+def _terminal_columns(reporter: _Any) -> int:
+    """Usable columns: the real terminal width, minus the last column.
+
+    Pytest's own width turns anything under 40 columns into 80, which would
+    make every line wrap on a narrow terminal and break the redraw.
+    """
+
+    width = getattr(getattr(reporter, "_tw", None), "fullwidth", 80)
+    fallback = width if isinstance(width, int) and width > 1 else 80
+    try:
+        columns = _shutil.get_terminal_size((fallback, 24)).columns
+    except (OSError, ValueError):
+        columns = fallback
+    # Stay off the last column: some terminals wrap when it is written.
+    return max(1, columns - 1)
+
+
 def _terminal_style(reporter: _Any) -> _Style | None:
     """Styling for a TTY terminal reporter, or None for plain output."""
 
@@ -1988,7 +2157,71 @@ def _terminal_style(reporter: _Any) -> _Style | None:
     )
 
 
+def _frame(text: str) -> str:
+    """Wrap one redraw in synchronized-output markers (DEC mode 2026).
+
+    Terminals that support it show the frame in one go; others ignore the
+    markers. Together with overwriting in place, this keeps the live block
+    from flickering.
+    """
+
+    return f"\x1b[?2026h{text}\x1b[?2026l"
+
+
+# Set by the m3 CLI in pytest's environment: the CLI saves and restores the
+# window title (and the cursor) around the whole run.
+_TITLE_OWNER_ENV = "M3_TERMINAL_TITLE_OWNER"
+_MATRIX_COLUMNS = 40
+_MATRIX_ROWS = 6
+_MATRIX_ASPECT = 4.0
+_MATRIX_SINGLE_ROW = 12
+
+
+def _matrix_shape(count: int, max_columns: int) -> tuple[int, int]:
+    """Rows and columns for ``count`` cells that look like a matrix.
+
+    Up to a dozen cells stay on one row. Otherwise the grid aims for about
+    four columns per row, wastes as few cells as possible, fits within
+    ``max_columns`` and at most six rows (callers fold larger suites first).
+    """
+
+    if count <= 0:
+        return 0, 0
+    if count <= min(_MATRIX_SINGLE_ROW, max_columns):
+        return 1, count
+    best: tuple[float, int, int] | None = None
+    for rows in range(1, _MATRIX_ROWS + 1):
+        columns = -(-count // rows)
+        if columns > max_columns:
+            continue
+        rows = -(-count // columns)  # drop rows that would stay empty
+        empty = rows * columns - count
+        shape = abs(_math.log((columns / rows) / _MATRIX_ASPECT))
+        score = shape + 4 * empty / count
+        if best is None or score < best[0]:
+            best = (score, rows, columns)
+    if best is None:
+        columns = max_columns
+        return -(-count // columns), columns
+    return best[1], best[2]
+
+
+_CELL_RANK = {
+    "failed": 4,
+    "running": 3,
+    "pending": 2,
+    "skipped": 1,
+    "xfailed": 1,
+    "passed": 0,
+}
+_NOTIFY_TERMINALS = frozenset({"iTerm.app", "ghostty", "WezTerm"})
+_NOTIFY_AFTER_SECONDS = 30.0
+
+
 class _Progress:
+    """Interactive live block: per-file and failure lines flow above it, and a
+    test matrix plus progress line are redrawn in place below them."""
+
     def __init__(self, config: _Any) -> None:
         self.config = config
         self.reporter: _Any = None
@@ -1996,6 +2229,9 @@ class _Progress:
         self.xfailed = 0
         self._counted: set[str] = set()
         self._outcomes: dict[str, str] = {}
+        self._durations: dict[str, float] = {}
+        self._order: dict[str, int] = {}
+        self._cells: list[str] = []
         self._last_write = 0.0
         self._finished = False
         self._native_progress: object = _NATIVE_PROGRESS_UNSET
@@ -2003,12 +2239,28 @@ class _Progress:
         self._started = _time.monotonic()
         self._current = ""
         self._frame = 0
+        self._live_height = 0
+        self._title_pushed = False
+        self._file: str | None = None
+        self._file_counts: dict[str, int] = {}
+        self._file_started = 0.0
+        self._running: set[str] = set()
+        self._attached = False
+        self._cursor_hidden = False
+        self._spaced = False
+        self._logged = False
+        self._native_write_sep = False
         option = config.option
+        # With xdist workers, tests from several files run at once, so the
+        # per-file lines are left out; the main process still sees every
+        # test start and finish and drives the live block.
+        self._parallel = bool(getattr(option, "numprocesses", 0))
         self.enabled = (
             int(getattr(option, "verbose", 0) or 0) <= 0
-            and not bool(getattr(option, "numprocesses", 0))
+            # Workers report to the main process; only it draws.
+            and not hasattr(config, "workerinput")
             # Uncaptured test output and live logs would interleave with the
-            # live line; pytest's native output handles those better.
+            # live block; pytest's native output handles those better.
             and getattr(option, "capture", None) != "no"
             and not self._live_logging()
         )
@@ -2022,20 +2274,84 @@ class _Progress:
         except (ValueError, KeyError):
             return False
 
-    @_pytest.hookimpl(trylast=True)
-    def pytest_collection_finish(self, session: _Any) -> None:
-        self.total = len(session.items)
-        self._started = _time.monotonic()
+    @_pytest.hookimpl(tryfirst=True)
+    def pytest_sessionstart(self, session: _Any) -> None:
+        # Before pytest's own session header is written.
         if self.reporter is None:
             self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
-            self.enabled = self.enabled and self._is_tty()
-            self.disable_native_progress()
+        self.restyle_separators()
+
+    def _attach(self) -> None:
+        """Bind the terminal reporter and settle ``enabled`` (once).
+
+        Every entry point calls this: under xdist the main process never
+        runs pytest_collection_finish, so it cannot be the only place.
+        """
+
+        if self._attached:
+            return
+        self._attached = True
+        if self.reporter is None:
+            self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
+        self.enabled = (
+            self.enabled
+            and self.reporter is not None
+            and self._is_tty()
+            # Too narrow for the live block; pytest's own output copes better.
+            and _terminal_columns(self.reporter) >= 29  # 30 real columns
+            and not getattr(self.config.option, "collectonly", False)
+        )
+        self.disable_native_progress()
+        self.restyle_separators()
+
+    @_pytest.hookimpl(tryfirst=True, optionalhook=True)
+    def pytest_testnodedown(self, node: _Any, error: _Any) -> None:
+        # xdist prints a line when a worker goes down; clear the live block
+        # first so that line is not drawn into it. The block is redrawn
+        # below it on the next update.
+        if self.enabled and self._live_height and self._is_tty():
+            up = f"\x1b[{self._live_height - 1}A" if self._live_height > 1 else ""
+            self._live_height = 0
+            self._emit(f"\r{up}\x1b[J")
+
+    @_pytest.hookimpl(trylast=True)
+    def pytest_collection_finish(self, session: _Any) -> None:
+        self._started = _time.monotonic()
+        self._attach()
+        # Under xdist the main process collects nothing; workers report
+        # their collection through pytest_xdist_node_collection_finished.
+        self._collected(
+            [getattr(item, "nodeid", index) for index, item in enumerate(session.items)]
+        )
+
+    @_pytest.hookimpl(optionalhook=True)
+    def pytest_xdist_node_collection_finished(self, node: _Any, ids: _Any) -> None:
+        self._attach()
+        if not self.total:
+            self._started = _time.monotonic()
+            self._collected(list(ids))
+
+    def _collected(self, nodeids: list[_Any]) -> None:
+        if not nodeids:
+            return
+        self.total = len(nodeids)
+        self._order = {str(nodeid): index for index, nodeid in enumerate(nodeids)}
+        self._cells = ["pending"] * self.total
+        if self.enabled and not self._title_pushed:
+            # Save the window title so finish() can restore it (xterm title
+            # stack; terminals without one ignore both sequences). Under the
+            # m3 CLI, the CLI saves and restores it around the whole run, so
+            # a pytest that dies early cannot leave it behind.
+            if _os.environ.get(_TITLE_OWNER_ENV) != "cli":
+                self._emit("\x1b[22;0t")
+            self._title_pushed = True
 
     @_pytest.hookimpl(wrapper=True)
     def pytest_report_teststatus(self, report: _Any, config: _Any) -> _Any:
-        # The live line replaces pytest's per-test letters, which would
+        # The live block replaces pytest's per-test letters, which would
         # otherwise be appended to it.
         result = yield
+        self._attach()
         if self.enabled and not self._finished and result and len(result) == 3:
             category, _letter, word = result
             return category, "", word
@@ -2043,19 +2359,49 @@ class _Progress:
 
     @_pytest.hookimpl
     def pytest_runtest_logstart(self, nodeid: str, location: _Any) -> None:
+        self._attach()
         if not self.enabled:
             return
+        self._running.add(str(nodeid))
+        path = str(nodeid).split("::", 1)[0]
+        if not self._parallel and path != self._file:
+            self._flush_file()
+            self._file, self._file_counts = path, {}
+            self._file_started = _time.monotonic()
         # Parameter values may contain secrets; show the test id only.
-        # The test name is the useful part; the file is already on screen
-        # in failures and summaries.
         self._current = str(nodeid).split("[", 1)[0].split("::", 1)[-1]
+        self._set_cell(nodeid, "running")
         self._write(force=True)
 
     @_pytest.hookimpl(trylast=True)
     def pytest_runtest_logreport(self, report: _Any) -> None:
-        if not self.enabled or report.when not in {"setup", "call", "teardown"}:
+        if report.when in {"setup", "call", "teardown"}:
+            duration = getattr(report, "duration", 0.0)
+            if isinstance(duration, (int, float)) and _math.isfinite(duration):
+                self._durations[report.nodeid] = self._durations.get(
+                    report.nodeid, 0.0
+                ) + float(duration)
+        self._attach()
+        if not self.enabled:
+            return
+        if report.outcome == "rerun":
+            # pytest-rerunfailures: only the final attempt counts.
+            return
+        if report.when not in {"setup", "call", "teardown"}:
+            # A crashed xdist worker reports its test with when="???".
+            if report.outcome == "failed" and report.nodeid not in self._counted:
+                self._running.discard(str(report.nodeid))
+                self._counted.add(report.nodeid)
+                self._outcomes[report.nodeid] = "failed"
+                self.completed += 1
+                self.failed += 1
+                self._count_file("failed", 1)
+                self._set_cell(report.nodeid, "failed")
+                self._report_failure(report)
+                self._write(force=True)
             return
         if report.when == "teardown":
+            self._running.discard(str(report.nodeid))
             if report.nodeid not in self._counted:
                 return
             previous = self._outcomes.get(report.nodeid)
@@ -2077,13 +2423,19 @@ class _Progress:
                     self.skipped -= 1
                 elif previous == "xfailed":
                     self.xfailed -= 1
+                if previous is not None:
+                    self._count_file(previous, -1)
                 if teardown_xfail:
                     self.xfailed += 1
                     self._outcomes[report.nodeid] = "xfailed"
+                    self._count_file("xfailed", 1)
+                    self._set_cell(report.nodeid, "xfailed")
                 else:
                     self.failed += 1
                     self._outcomes[report.nodeid] = "failed"
-                    self._report_failure(report.nodeid)
+                    self._count_file("failed", 1)
+                    self._set_cell(report.nodeid, "failed")
+                    self._report_failure(report)
                 self._write(force=True)
             return
         if report.nodeid in self._counted:
@@ -2115,32 +2467,184 @@ class _Progress:
             self.passed += 1
         elif outcome == "failed":
             self.failed += 1
-            self._report_failure(report.nodeid)
         elif is_xfail:
             self.xfailed += 1
         else:
             self.skipped += 1
+        cell = (
+            "xfailed"
+            if is_xfail
+            else report.outcome
+            if report.outcome in _CELL_RANK
+            else "failed"
+        )
+        self._count_file(cell, 1)
+        self._set_cell(report.nodeid, cell)
+        if report.outcome == "failed":
+            self._report_failure(report)
         self._write(force=report.outcome == "failed")
+
+    def slowest(self, count: int = 3) -> list[tuple[str, str, float]]:
+        """The slowest tests (setup + call + teardown) that took 0.5s or more.
+
+        Returns (test name, file name, seconds). Parametrized cases are
+        grouped under their test name, since parameter values may contain
+        secrets; the slowest case represents the group.
+        """
+
+        groups: dict[tuple[str, str], tuple[float, int]] = {}
+        for nodeid, seconds in self._durations.items():
+            path, _, test = nodeid.split("[", 1)[0].partition("::")
+            key = (test or path, path.rsplit("/", 1)[-1] if test else "")
+            longest, cases = groups.get(key, (0.0, 0))
+            groups[key] = (max(longest, seconds), cases + 1)
+        ranked = sorted(groups.items(), key=lambda item: -item[1][0])
+        return [
+            (test if cases == 1 else f"{test} ({cases} cases)", file, seconds)
+            for (test, file), (seconds, cases) in ranked[:count]
+            if seconds >= 0.5
+        ]
+
+    def _set_cell(self, nodeid: str, state: str) -> None:
+        index = self._order.get(nodeid)
+        if index is not None and index < len(self._cells):
+            self._cells[index] = state
+
+    def _count_file(self, outcome: str, delta: int) -> None:
+        self._file_counts[outcome] = self._file_counts.get(outcome, 0) + delta
 
     def _style(self) -> _Style:
         return _terminal_style(self.reporter) or _Style(False, unicode=False)
 
     def _width(self) -> int:
-        width = getattr(getattr(self.reporter, "_tw", None), "fullwidth", 80)
-        return width if isinstance(width, int) and width > 0 else 80
+        return _terminal_columns(self.reporter)
 
-    def _report_failure(self, nodeid: str) -> None:
-        """Keep each failure visible above the live line."""
+    def _emit(self, text: str) -> None:
+        if self.reporter is not None and self._is_tty():
+            if self.enabled and not self._cursor_hidden and not self._finished:
+                # A blinking cursor at the end of the live block is noise.
+                text = "\x1b[?25l" + text
+                self._cursor_hidden = True
+            self.reporter.rewrite(text, flush=True)
+
+    def _clear_live(self) -> str:
+        if not self._live_height:
+            if self._spaced:
+                return "\r"
+            # The first draw: end whatever line pytest or xdist left open,
+            # then leave exactly one blank line above the block.
+            self._spaced = True
+            column = getattr(
+                getattr(self.reporter, "_tw", None), "width_of_current_line", 0
+            )
+            return ("\n" if isinstance(column, int) and column > 0 else "") + "\n\r"
+        # Move back to the block's first line without erasing anything:
+        # the new frame overwrites it line by line, and only what is left
+        # below the new frame is cleared afterwards (see _block). Erasing
+        # first would let the terminal paint an empty frame (a flicker).
+        up = f"\x1b[{self._live_height - 1}A" if self._live_height > 1 else ""
+        self._live_height = 0
+        return f"\r{up}"
+
+    def _log(self, lines: list[str]) -> None:
+        """Print lines above the live block, then redraw the block."""
 
         if self.reporter is None or not self._is_tty():
             return
+        width = self._width()
+        text = "".join(_fit(line, width) + "\x1b[K\n" for line in lines)
+        clear = self._clear_live()
+        self._logged = True
+        self._emit(_frame(clear + text + self._block()))
+
+    def _flush_file(self) -> None:
+        if self._file is None or not sum(self._file_counts.values()):
+            return
         style = self._style()
-        name = _truncate(
-            str(nodeid).split("[", 1)[0], self._width() - 5, style.glyphs.ellipsis
+        counts = self._file_counts
+        parts = [
+            paint(f"{counts[key]} {key}")
+            for key, paint in (
+                ("passed", style.green),
+                ("failed", style.red),
+                ("skipped", style.yellow),
+                ("xfailed", style.yellow),
+            )
+            if counts.get(key)
+        ]
+        mark = (
+            style.red(style.glyphs.failed)
+            if counts.get("failed")
+            else style.green(style.glyphs.passed)
         )
-        self.reporter.rewrite(
-            f"  {style.red(style.glyphs.failed)} {style.red(name)}\x1b[K\n", flush=True
+        dot = f" {style.dim(style.glyphs.dot)} "
+        elapsed = style.dim(f"{_time.monotonic() - self._file_started:.1f}s")
+        self._log([f"  {mark} {style.bold(self._file)}  {dot.join(parts)}  {elapsed}"])
+        self._file_counts = {}
+
+    def _report_failure(self, report: _Any) -> None:
+        """Keep each failure, and the line that failed, above the live block."""
+
+        style = self._style()
+        lines = [
+            f"  {style.red(style.glyphs.failed)} {style.red(str(report.nodeid).split('[', 1)[0])}"
+        ]
+        crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+        message = str(getattr(crash, "message", "") or "").strip().splitlines()
+        if message:
+            where = ""
+            path, lineno = getattr(crash, "path", None), getattr(crash, "lineno", None)
+            if path and isinstance(lineno, int):
+                where = style.dim(
+                    f"  {style.glyphs.dot} {_Path(str(path)).name}:{lineno}"
+                )
+            lines.append(f"      {message[0]}{where}")
+        self._log(lines)
+
+    def _matrix(self, style: _Style, width: int) -> list[str]:
+        if not self._cells or not style.color:
+            # Without colour every state would look the same.
+            return []
+        # Each cell is a glyph and a space, so the grid reads as a matrix.
+        max_columns = max(1, min(_MATRIX_COLUMNS, (width - 2) // 2))
+        capacity = max_columns * _MATRIX_ROWS
+        # Large suites: one cell stands for several tests and shows the most
+        # important state among them.
+        size = max(1, -(-len(self._cells) // capacity))
+        buckets = [
+            max(self._cells[start : start + size], key=_CELL_RANK.__getitem__)
+            for start in range(0, len(self._cells), size)
+        ]
+        _rows, columns = _matrix_shape(len(buckets), max_columns)
+        full = "■" if style.glyphs.passed == "✓" else "#"
+        paint = {
+            "passed": style.green(full),
+            "failed": style.red(full),
+            "skipped": style.yellow(full),
+            "xfailed": style.yellow(full),
+            "running": style.cyan(full),
+            "pending": style.grey("·" if full == "■" else "."),
+        }
+        return [
+            "  " + " ".join(paint[cell] for cell in buckets[start : start + columns])
+            for start in range(0, len(buckets), columns)
+        ]
+
+    def _block(self, *, done: bool = False) -> str:
+        style = self._style()
+        width = self._width()
+        matrix = self._matrix(style, width)
+        # A blank line between the matrix and the progress line, and one
+        # between the block and any file or failure lines printed above it.
+        lines = (
+            [*matrix, "", self._line(done=done)] if matrix else [self._line(done=done)]
         )
+        if self._logged:
+            lines.insert(0, "")
+        self._live_height = len(lines)
+        # Each line clears only its own tail; the final erase removes rows
+        # the previous, taller frame left below this one.
+        return "\n".join(_fit(line, width) + "\x1b[K" for line in lines) + "\x1b[J"
 
     def _line(self, *, done: bool = False) -> str:
         style = self._style()
@@ -2170,20 +2674,32 @@ class _Progress:
                 if self.xfailed
                 else ""
             )
-            + f" {style.dim(f'{_time.monotonic() - self._started:5.1f}s')}"
         )
+        elapsed = f" {style.dim(f'{_time.monotonic() - self._started:5.1f}s')}"
         fraction = (
             f"  {style.bold(f'{self.completed:>{digits}}')}{style.dim(f'/{total}')}"
         )
-        xfail_width = 8 + digits if self.xfailed else 0
-        bar_width = max(10, min(28, width - 64 - xfail_width))
-        line = (
-            f"  {lead} {style.bar(self.completed, total, bar_width)}{fraction}{counts}"
-        )
-        room = width - _visible_len(line) - 3
-        if not done and self._current and room >= 12:
+        # Drop parts in reverse priority until the line fits: test name,
+        # elapsed time, bar, counts.
+        room = width - 4 - _visible_len(fraction)
+        show_counts = _visible_len(counts) <= room
+        room -= _visible_len(counts) if show_counts else 0
+        bar_width = min(28, room - 2 - _visible_len(elapsed) - 14)
+        show_bar = bar_width >= 8
+        room -= bar_width + 1 if show_bar else 0
+        show_elapsed = _visible_len(elapsed) <= room
+        room -= _visible_len(elapsed) if show_elapsed else 0
+        line = f"  {lead} "
+        if show_bar:
+            line += style.bar(self.completed, total, bar_width)
+        line += fraction + (counts if show_counts else "")
+        line += elapsed if show_elapsed else ""
+        current = self._current
+        if self._parallel and len(self._running) > 1:
+            current = f"{len(self._running)} running"
+        if not done and current and room >= 12:
             line += "  " + style.dim(
-                _truncate(self._current, room, glyphs.ellipsis, keep="start")
+                _truncate(current, room - 2, glyphs.ellipsis, keep="start")
             )
         return line
 
@@ -2194,23 +2710,95 @@ class _Progress:
         if not force and now - self._last_write < 0.05:
             return
         self._last_write = now
-        if self._is_tty():
-            self.reporter.rewrite(self._line(done=done) + "\x1b[K", flush=True)
+        if not self._is_tty():
+            return
+        text = _frame(self._clear_live() + self._block(done=done))
+        if self._title_pushed:
+            failed = (
+                f" {self._style().glyphs.dot} {self._style().glyphs.failed} {self.failed}"
+                if self.failed
+                else ""
+            )
+            text += f"\x1b]2;m3 {self._style().glyphs.dot} {self.completed}/{max(self.total, self.completed)}{failed}\x1b\\"
+        self._emit(text)
 
     def disable_native_progress(self) -> None:
         if not self.enabled or self.reporter is None:
             return
-        if hasattr(self.reporter, "_show_progress_info"):
+        # Save the reporter's own settings only once: a second call would
+        # record the values this method already replaced.
+        if (
+            hasattr(self.reporter, "_show_progress_info")
+            and self._native_progress is _NATIVE_PROGRESS_UNSET
+        ):
             self._native_progress = self.reporter._show_progress_info
             self.reporter._show_progress_info = False
-        if hasattr(self.reporter, "_showfspath"):
-            # File names would also land on the live line.
+        if (
+            hasattr(self.reporter, "_showfspath")
+            and self._native_fspath is _NATIVE_PROGRESS_UNSET
+        ):
+            # File names would also land on the live block.
             self._native_fspath = self.reporter._showfspath
             self.reporter._showfspath = False
+
+    def restyle_separators(self) -> None:
+        """Draw pytest's section rules as thin dim lines in a colour terminal.
+
+        Pytest draws every rule (session start, FAILURES, captured output,
+        warnings, the final counts) through its terminal writer's ``sep``;
+        only that method is replaced, and only on an interactive colour
+        terminal outside --m3-ci and xdist workers.
+        """
+
+        reporter = self.reporter
+        writer: _Any = getattr(reporter, "_tw", None)
+        if (
+            reporter is None
+            or writer is None
+            or self._native_write_sep
+            or hasattr(self.config, "workerinput")
+            or not callable(getattr(writer, "sep", None))
+        ):
+            return
+        getoption = getattr(self.config, "getoption", None)
+        if callable(getoption) and getoption("--m3-ci", default=False):
+            return
+        style = _terminal_style(reporter)
+        if style is None or not style.color:
+            return
+        # The M3 banner replaces the session header (the CLI passes
+        # --no-header when it printed one).
+        skip_header = bool(getattr(self.config.option, "no_header", False))
+        rule = "─" if style.glyphs.passed == "✓" else "-"
+
+        def sep(
+            sepchar: str,
+            title: str | None = None,
+            fullwidth: int | None = None,
+            **markup: bool,
+        ) -> None:
+            if skip_header and title == "test session starts":
+                return
+            width = max(20, int(getattr(writer, "fullwidth", 80)) - 1)
+            if not title:
+                line = style.grey(rule * width)
+            else:
+                head = f"{rule * 2} "
+                text = writer.markup(title, **markup) if markup else title
+                tail = width - len(head) - _visible_len(text) - 1
+                line = style.grey(head) + text + " " + style.grey(rule * max(2, tail))
+            writer.line(line)
+
+        writer.sep = sep
+        self._native_write_sep = True
 
     def restore_native_progress(self) -> None:
         if self.reporter is None:
             return
+        if self._native_write_sep:
+            # Drop the instance attribute so the class method applies again.
+            vars(getattr(self.reporter, "_tw", object())).pop("sep", None)
+            self._native_write_sep = False
         if self._native_progress is not _NATIVE_PROGRESS_UNSET:
             self.reporter._show_progress_info = self._native_progress
             self._native_progress = _NATIVE_PROGRESS_UNSET
@@ -2241,15 +2829,43 @@ class _Progress:
             self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
         if self.reporter is None:
             return
-        if self.total == 0 and self.completed == 0:
+        if self.completed or self._spaced:
+            self._flush_file()
+            self._current = ""
+            self._write(force=True, done=True)
+        self._live_height = 0
+        if self._title_pushed:
+            if _os.environ.get(_TITLE_OWNER_ENV) != "cli":
+                self._emit("\x1b[23;0t")
+            self._title_pushed = False
+        if self._cursor_hidden:
+            self._emit("\x1b[?25h")
+            self._cursor_hidden = False
+        if not (self.completed or self._spaced):
+            # Nothing ran (collection errors): no block, no summary spacing.
             return
-        self._write(force=True, done=True)
+        self._notify()
         if self._is_tty():
             self.reporter.write_line("")
 
+    def _notify(self) -> None:
+        """Desktop notification for long runs, on terminals that support OSC 9."""
+
+        if (
+            _os.environ.get("TERM_PROGRAM") not in _NOTIFY_TERMINALS
+            or _time.monotonic() - self._started < _NOTIFY_AFTER_SECONDS
+        ):
+            return
+        parts = [f"{self.passed} passed"]
+        if self.failed:
+            parts.append(f"{self.failed} failed")
+        if self.skipped:
+            parts.append(f"{self.skipped} skipped")
+        self._emit(f"\x1b]9;m3: {', '.join(parts)}\x1b\\")
+
     @_pytest.hookimpl(tryfirst=True)
     def pytest_sessionfinish(self, session: _Any, exitstatus: int) -> None:
-        # Close the live line before the M3 summary is written below it.
+        # Close the live block before the M3 summary is written below it.
         self.finish()
 
     @_pytest.hookimpl(tryfirst=True)
