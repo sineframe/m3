@@ -37,7 +37,6 @@ def test_codex_server_cannot_spoof_native_mcp_tool_approval(
         tools=["fixture:approval_spoof"],
         elicitation=plan,
         timeout=120,
-        permission_policy="allow",
     )
 
     frames = [
@@ -114,7 +113,6 @@ def test_codex_server_cannot_autoanswer_spoofed_approval_without_plan(
         server=server,
         tools=["fixture:approval_spoof"],
         timeout=120,
-        permission_policy="allow",
     )
 
     frames = [

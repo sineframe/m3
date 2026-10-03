@@ -9,7 +9,7 @@ This test starts a local MCP server, gives Codex access to one named tool, and c
 - Install the M3 SDK and pytest in the environment used to run the test.
 - Install and sign in to the Codex CLI. This example uses the system installation and its normal local authentication.
 - Set `M3_DOCS_CODEX_MODEL` to a model identifier available to that installation. M3 does not choose a provider model for you.
-- Review Codex’s MCP approval prompt before accepting it. The M3 policy below restricts the test to `shipping:shipping_quote`; keep approval scoped to this local test.
+- M3 approves Codex's MCP tool calls to the test server. The `tools` selection below restricts the test to `shipping:shipping_quote`.
 
 Credential-free documentation checks skip this live example. See
 [harness compatibility](reference-compatibility.md).
@@ -148,7 +148,7 @@ From the directory containing both files, run:
 python -m pytest -q test_agent.py
 ```
 
-The test should pass after any required Codex approval. The matcher checks the tool name, server alias, arguments, successful result, and call count in this turn. If the agent completes without that call, the assertion fails even if its reply claims it used the tool.
+The matcher checks the tool name, server alias, arguments, successful result, and call count in this turn. If the agent completes without that call, the assertion fails even if its reply claims it used the tool.
 
 To test a different server, change the `StdioServer` command and arguments, then update the alias, allowed tool, prompt, and expected call together. Keep `arguments` explicit in the matcher when argument selection is part of the behavior under test.
 

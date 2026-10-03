@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from m3 import EvaluationDecision, EvaluationStatus, expect
-from m3.types import PermissionPolicy, StdioServer
+from m3.types import StdioServer
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.m3]
 
@@ -29,7 +29,6 @@ def test_selected_agents_choose_shipping_tool(agent, shipping_server) -> None:
     result = agent.run(
         "Use shipping_quote with weight_kg 2 and zone local. Return its quote.",
         server=shipping_server,
-        permission_policy=PermissionPolicy(mode="allow"),
     )
     expect(result).to_have_tool_call(
         "shipping_quote", server=shipping_server.name, status="success", count=1

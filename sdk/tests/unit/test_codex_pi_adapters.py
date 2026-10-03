@@ -470,8 +470,8 @@ async def test_codex_native_app_server_handshake_multiturn_and_usage() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("permission_mode", ("allow", "deny"))
-async def test_codex_mcp_tool_approval_uses_session_permission_policy(
+@pytest.mark.parametrize("permission_mode", ("allow", "deny", "prompt"))
+async def test_codex_selected_server_mcp_approval_follows_tool_policy(
     permission_mode: str,
 ) -> None:
     configuration = HarnessServerConfig(
@@ -501,13 +501,14 @@ async def test_codex_mcp_tool_approval_uses_session_permission_policy(
     try:
         result = await session.send(HarnessTurnRequest.from_message("quote"))
         assert result.status == "completed"
-        # Codex reports the requested native MCP item even when the permission
-        # callback denies execution; the receipt records the actual decision.
+        # The native permission policy does not gate calls to a selected
+        # server; the tool policy enforced by M3's proxy decides those.
         assert len(result.tool_calls) == 1
         assert launch.interactions is not None
         receipts = launch.interactions.receipts()
-        assert len(receipts) == 1
-        assert receipts[0].decision == permission_mode
+        assert [(item.decision, item.reason) for item in receipts] == [
+            ("allow", "tool_policy")
+        ]
     finally:
         await session.close()
 

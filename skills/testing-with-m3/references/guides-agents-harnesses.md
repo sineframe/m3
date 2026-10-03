@@ -6,7 +6,7 @@ M3 connects to agent harnesses through native adapters or an ACP manifest. Choos
 
 ## Requirements
 
-This example uses Codex. Install the Codex CLI and M3 with pytest. Set `MY_OPENAI_KEY` to your OpenAI API key and `M3_DOCS_CODEX_MODEL` to a model available to that key. Provider access is required and the run may incur cost. Review Codex’s tool approval prompt before accepting it; this test limits M3 tool access to one named tool.
+This example uses Codex. Install the Codex CLI and M3 with pytest. Set `MY_OPENAI_KEY` to your OpenAI API key and `M3_DOCS_CODEX_MODEL` to a model available to that key. Provider access is required and the run may incur cost. The test limits M3 tool access to one named tool, and M3 approves Codex's calls to it.
 
 ## Run the same assertion through Codex
 

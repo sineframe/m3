@@ -15,7 +15,6 @@ from typing import Any
 from ..agent_session import AdapterTurn
 from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
-from ..interaction_handlers import PermissionRequest
 from ..types import (
     Codex,
     ErrorCode,
@@ -571,9 +570,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         params = {
             "model": getattr(launch.spec.harness, "model", None),
             "cwd": workspace,
-            # MCP tools require Codex's approval-capable mode even when MCP
-            # Pal has already granted the selected tool policy. ``never``
-            # makes the App Server reject otherwise valid tool calls.
+            # MCP tools require Codex's approval-capable mode; ``never`` makes
+            # the App Server reject otherwise valid tool calls. M3 answers
+            # each scoped approval from the tool policy its proxy enforces.
             "approvalPolicy": "on-request",
             "sandbox": sandbox,
             "ephemeral": True,
@@ -1186,9 +1185,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             and params.get("threadId") == self._thread_id
             and (turn_id is None or turn_id == self._turn_id)
         ):
-            permission = await launch.interactions.permission(
-                PermissionRequest("mcp_tool", server_name)
-            )
+            # Selected-server MCP access is decided by the session's tool
+            # policy, which M3's proxy enforces on the call itself. The
+            # permission policy is reserved for prompts outside that scope.
+            permission = await launch.interactions._approve_selected_mcp_tool()
             allowed = permission.allowed
         await self._write_frame(
             process,

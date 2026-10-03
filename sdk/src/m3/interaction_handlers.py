@@ -263,6 +263,17 @@ class Interactions:
                 False, await self._record(_deny("permission", "handler_error"))
             )
 
+    async def _approve_selected_mcp_tool(self) -> PermissionResult:
+        """Answer a harness prompt to call a tool on a selected MCP server.
+
+        The session's tool policy already decides which tools on selected
+        servers may run, and M3's MCP proxy enforces it on every call.
+        ``permission_policy`` governs only native prompts outside that scope.
+        """
+        return PermissionResult(
+            True, await self._record(_receipt("permission", "allow", "tool_policy"))
+        )
+
     async def sample(self, request: SamplingRequest) -> SamplingResult:
         if self.sampling_policy.mode == "deny" or self.handlers.sampling is None:
             return SamplingResult(False, None, await self._record(_deny("sampling")))

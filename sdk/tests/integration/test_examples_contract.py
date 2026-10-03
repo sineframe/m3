@@ -119,14 +119,12 @@ def test_modern_mrtr_examples_are_complete_public_action_bound_examples() -> Non
             "round_of(",
             ".session(",
             ".submit(",
-            'permission_policy="allow"',
         },
         "test_modern_mrtr_codex_action_scopes.py": {
             "CodexExample",
             "test_codex_planned_non_accept_response_omits_wire_content_and_keeps_meta",
             "test_same_codex_session_uses_fresh_scope_for_two_planned_turns",
             "test_installed_codex_fails_when_required_plan_is_unused",
-            'permission_policy="allow"',
         },
     }
     server = _EXAMPLES / "servers" / "modern_mrtr_server.py"
