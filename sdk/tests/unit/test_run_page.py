@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
@@ -62,7 +63,10 @@ def test_run_page_orders_by_utc_with_undated_runs_last(store):
     assert paged == NEWEST_FIRST
 
 
-def test_run_labels_are_unique_immutable_and_searchable_across_pages(store):
+def test_run_labels_are_derived_from_ids_unique_immutable_and_searchable(store):
+    uuid_ids = [f"run-{number:07x}{'a' * 25}" for number in range(3)]
+    for run_id in uuid_ids:
+        store.save_test_run(run_id, {"run_id": run_id})
     for number in range(12):
         run_id = f"opaque-{number}"
         store.save_test_run(run_id, {"run_id": run_id})
@@ -73,17 +77,31 @@ def test_run_labels_are_unique_immutable_and_searchable_across_pages(store):
 
     manifests = store.list_test_runs()
     labels = {item["run_id"]: item["run_label"] for item in manifests}
-    assert len(labels) == len(set(labels.values())) == 12
-    assert labels["opaque-0"] == "Run #1"
-    assert store.get_test_run("opaque-0")["run_label"] == "Run #1"
+    assert len(labels) == len(set(labels.values())) == 15
+    for run_id in uuid_ids:
+        assert labels[run_id] == f"Run {run_id[4:11]}"
+    opaque_label = "Run " + hashlib.sha256(b"opaque-0").hexdigest()[:7]
+    assert labels["opaque-0"] == opaque_label
+    assert store.get_test_run("opaque-0")["run_label"] == opaque_label
     for query, expected in (
-        ("RUN #12", "opaque-11"),
-        ("RUN #1", "opaque-0"),
+        (labels[uuid_ids[1]].upper(), uuid_ids[1]),
+        (uuid_ids[2][4:11], uuid_ids[2]),
         ("OPAQUE-11", "opaque-11"),
     ):
         page, total = store.list_test_run_page(limit=2, q=query)
         assert total == 1
         assert [item["run_id"] for item in page] == [expected]
+
+
+def test_run_label_is_extended_when_the_short_prefix_is_taken(store):
+    first = "run-abcdef0" + "1" * 25
+    second = "run-abcdef0" + "2" * 25
+    store.save_test_run(first, {"run_id": first})
+    store.save_test_run(second, {"run_id": second})
+    assert store.get_test_run(first)["run_label"] == "Run abcdef0"
+    assert store.get_test_run(second)["run_label"] == "Run abcdef02"
+    store.save_test_run(second, {"run_id": second, "status": "finished"})
+    assert store.get_test_run(second)["run_label"] == "Run abcdef02"
 
 
 def test_run_search_casefolds_unicode_ids(store):
@@ -96,46 +114,31 @@ def test_run_search_casefolds_unicode_ids(store):
         assert [item["run_id"] for item in page] == [expected]
 
 
-def test_sqlite_backfills_legacy_runs_in_history_order(tmp_path):
+def test_sqlite_backfills_null_labels_and_keeps_legacy_numbered_labels(tmp_path):
     path = Path(tmp_path) / "legacy.sqlite"
+    unlabeled = "run-" + "0123456789abcdef" * 2
     with sqlite3.connect(path) as connection:
         connection.execute(
             "CREATE TABLE v2_test_runs (run_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, "
-            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, project_id TEXT, "
+            "run_label TEXT)"
         )
-        for run_id, created_at in (
-            ("newer", "2026-09-19T00:00:00Z"),
-            ("older", "2026-09-18T00:00:00Z"),
+        for run_id, created_at, label in (
+            (unlabeled, "2026-09-19T00:00:00Z", None),
+            ("older", "2026-09-18T00:00:00Z", "Run #3"),
         ):
             connection.execute(
-                "INSERT INTO v2_test_runs VALUES (?, ?, ?, ?)",
-                (run_id, json.dumps({"run_id": run_id}), created_at, created_at),
+                "INSERT INTO v2_test_runs VALUES (?, ?, ?, ?, NULL, ?)",
+                (run_id, json.dumps({"run_id": run_id}), created_at, created_at, label),
             )
     store = SQLiteExecutionStore(path)
-    assert store.get_test_run("older")["run_label"] == "Run #1"
-    assert store.get_test_run("newer")["run_label"] == "Run #2"
+    assert store.get_test_run(unlabeled)["run_label"] == "Run 0123456"
+    assert store.get_test_run("older")["run_label"] == "Run #3"
     store.close()
     reopened = SQLiteExecutionStore(path)
-    reopened.save_test_run("third", {"run_id": "third"})
-    assert reopened.get_test_run("older")["run_label"] == "Run #1"
-    assert reopened.get_test_run("third")["run_label"] == "Run #3"
+    reopened.save_test_run("older", {"run_id": "older", "updated": True})
+    assert reopened.get_test_run("older")["run_label"] == "Run #3"
     reopened.close()
-
-
-def test_sqlite_manifest_updates_and_test_results_do_not_consume_run_numbers(tmp_path):
-    store = SQLiteExecutionStore(Path(tmp_path) / "updates.sqlite")
-    store.save_test_run("first", {"run_id": "first"})
-    for number in range(5):
-        store.save_test_run("first", {"run_id": "first", "updated": number})
-        store.save_test_result(
-            "first",
-            f"attempt-{number}",
-            {"node_id": f"test_{number}", "suite_name": "catalog"},
-        )
-    store.save_test_run("second", {"run_id": "second"})
-    assert store.get_test_run("first")["run_label"] == "Run #1"
-    assert store.get_test_run("second")["run_label"] == "Run #2"
-    store.close()
 
 
 def test_sqlite_allocates_run_labels_without_concurrent_collisions(tmp_path):
@@ -152,12 +155,13 @@ def test_sqlite_allocates_run_labels_without_concurrent_collisions(tmp_path):
     assert len(set(labels)) == len(labels) == 24
     store.close()
     with sqlite3.connect(path) as connection:
+        first = labels[0]
         target = connection.execute(
-            "SELECT run_id FROM v2_test_runs WHERE run_label != 'Run #1' LIMIT 1"
+            "SELECT run_id FROM v2_test_runs WHERE run_label != ? LIMIT 1", (first,)
         ).fetchone()[0]
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                "UPDATE v2_test_runs SET run_label='Run #1' WHERE run_id=?", (target,)
+                "UPDATE v2_test_runs SET run_label=? WHERE run_id=?", (first, target)
             )
 
 

@@ -34,6 +34,7 @@ from m3 import (
 )
 from m3._types.specs import AgentSpec, FullToolPolicy
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageError
+from m3.storage.run_labels import run_label_candidates
 from m3.types import (
     CallTool,
     DirectSpec,
@@ -46,6 +47,10 @@ from m3_app.api.app import create_app
 from m3_app.api.v2 import V2RunSummary, V2SuiteRef, _group_run_page, _visible_spec
 from m3_app.api.wire import internalize_request
 from m3_app.settings import Settings
+
+
+def _label(run_id):
+    return next(run_label_candidates(run_id))
 
 
 def _payload(run_id=None, suite_name=None, project_id=None, project_name=None):
@@ -426,12 +431,16 @@ def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
         assert response.status_code == 200
         body = response.json()
         assert body["version"] == "v2"
-        assert body["run_label"] == "Run #2"
+        assert body["run_label"] == _label("current-run")
         assert body["feedback"]["run_id"] == "current-run"
-        assert body["feedback"]["run_label"] == "Run #2"
+        assert body["feedback"]["run_label"] == _label("current-run")
         assert body["feedback"]["comparison"]["baseline_run_id"] == "baseline-run"
-        assert body["feedback"]["comparison"]["baseline_run_label"] == "Run #1"
-        assert body["feedback"]["comparison"]["current_run_label"] == "Run #2"
+        assert body["feedback"]["comparison"]["baseline_run_label"] == _label(
+            "baseline-run"
+        )
+        assert body["feedback"]["comparison"]["current_run_label"] == _label(
+            "current-run"
+        )
         missing = client.get(
             "/api/v2/feedback/current-run", params={"baseline_run_id": "missing"}
         )
@@ -452,7 +461,7 @@ def test_v2_runs_searches_label_and_technical_id_before_paging(tmp_path):
     application = create_app(Settings(database_path=str(database)), v2_store=store)
     with TestClient(application) as client:
         for query, expected in (
-            ("run #1", "technical-0"),
+            (_label("technical-0").lower(), "technical-0"),
             ("TECHNICAL-0", "technical-0"),
         ):
             response = client.get("/api/v2/runs", params={"q": query, "limit": 1})
@@ -460,7 +469,8 @@ def test_v2_runs_searches_label_and_technical_id_before_paging(tmp_path):
             assert response.json()["total"] == 1
             assert [run["run_id"] for run in response.json()["runs"]] == [expected]
         grouped = client.get(
-            "/api/v2/runs", params={"q": "Run #1", "group": "date", "limit": 1}
+            "/api/v2/runs",
+            params={"q": _label("technical-0"), "group": "date", "limit": 1},
         )
         assert grouped.status_code == 200
         assert grouped.json()["total"] == 1
@@ -500,7 +510,7 @@ def test_v2_runs_and_feedback_accept_older_injected_store(tmp_path):
             "older-extra",
         }
         for query, expected in (
-            ("Run #1", "older-run"),
+            (_label("older-run"), "older-run"),
             ("OLDER-EXTRA", "older-extra"),
             ("CAFÉ", "Café"),
         ):
@@ -568,7 +578,7 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
         "runs": [
             {
                 "run_id": "empty-run",
-                "run_label": "Run #2",
+                "run_label": _label("empty-run"),
                 "created_at": "2026-09-19T10:00:00Z",
                 "finished_at": None,
                 "status": "finished",
@@ -581,7 +591,7 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
             },
             {
                 "run_id": "old-run",
-                "run_label": "Run #1",
+                "run_label": _label("old-run"),
                 "created_at": "2026-09-18T10:00:00+00:00",
                 "finished_at": None,
                 "status": "finished",

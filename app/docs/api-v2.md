@@ -37,10 +37,11 @@ Manifest paths, selection arguments, capture settings, and other raw manifest
 fields are not exposed. Runs are listed even when they have no executions or
 saved evaluations.
 `run_id` is the technical identity used in URLs, baseline arguments, and copy
-actions. `run_label` is its immutable, database-wide unique display label
-(`Run #1`, `Run #2`, ...). Existing runs receive labels in creation order when
-the database is opened; updating a manifest never changes its label. Labels
-are scoped to one database, not globally unique across independent databases.
+actions. `run_label` is its immutable, database-wide unique display label,
+derived from the run ID like a short git hash (`Run 1b74a51`): the first seven
+hex characters of a `run-<hex>` ID, extended only if another run already holds
+that label. Runs stored before this change keep their old `Run #1` style
+labels; updating a manifest never changes its label.
 The feedback envelope also exposes `run_label` alongside `feedback`. The
 `feedback` object and exported `feedback.json` contain that same run label
 next to their `run_id`; when comparing runs, `comparison` carries
@@ -49,9 +50,8 @@ Labels are `null` when a run has no saved manifest with a label.
 
 The list is unpaginated by default. Optional `limit` (1-100) and `offset` page
 it, and optional `suite_id`, `project_id`, and `q` filter it; `q` searches both
-`run_id` and `run_label` case-insensitively before pagination. A complete
-label such as `Run #1` matches that label exactly (not `Run #10`); other
-queries use substring matching. A `suite_id` filter
+`run_id` and `run_label` case-insensitively before pagination, using substring
+matching. A `suite_id` filter
 keeps every run with at least one test in that suite. The envelope reports
 `total` (runs matching the filters), `limit` (`null` when unpaginated), and
 `offset`. `GET /api/v2/suites` lists the registered
@@ -78,7 +78,7 @@ in all their suite groups, as they do in the plain run-list summaries.
       "run_count": 1,
       "runs": [
         {
-          "run_id": "run-42", "run_label": "Run #1",
+          "run_id": "run-42", "run_label": "Run 3f1a9c2",
           "created_at": "2026-09-19T10:00:00Z",
           "finished_at": null, "status": "finished",
           "project_id": "11111111-1111-4111-8111-111111111111",

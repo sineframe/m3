@@ -119,6 +119,7 @@ from .evidence import (
     verify_reference as _verify_evidence_reference,
 )
 from .managed_input import SQLiteManagedInputStore
+from .run_labels import run_label_candidates
 from .serialization import serialize_durable
 
 
@@ -472,9 +473,6 @@ CREATE TABLE IF NOT EXISTS v2_test_runs (
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   project_id TEXT REFERENCES v2_projects(id), run_label TEXT
 );
-CREATE TABLE IF NOT EXISTS v2_run_label_sequence (
-  number INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL UNIQUE
-);
 CREATE TABLE IF NOT EXISTS v2_test_results (
   run_id TEXT NOT NULL REFERENCES v2_test_runs(run_id) ON DELETE CASCADE,
   attempt_id TEXT NOT NULL, record_json TEXT NOT NULL, suite_id INTEGER NOT NULL REFERENCES v2_suites(id),
@@ -695,25 +693,25 @@ class _SqliteBase:
 
     @staticmethod
     def _assign_run_label(connection: _CompatConnection, run_id: str) -> str:
-        """Reserve one durable, database-wide run number for an opaque run ID."""
+        """Give a run its immutable label derived from its ID, extended on collision."""
         row = connection.execute(
-            "SELECT number FROM v2_run_label_sequence WHERE run_id=?", (run_id,)
+            "SELECT run_label FROM v2_test_runs WHERE run_id=?", (run_id,)
         ).fetchone()
-        if row is None:
-            # INSERT OR IGNORE still advances SQLite's AUTOINCREMENT counter on
-            # conflict. Only insert for a genuinely new run, under the writer lock.
-            connection.execute(
-                "INSERT INTO v2_run_label_sequence(run_id) VALUES(?)", (run_id,)
-            )
-            row = connection.execute(
-                "SELECT number FROM v2_run_label_sequence WHERE run_id=?", (run_id,)
+        if row is not None and row[0] is not None:
+            return str(row[0])
+        for label in run_label_candidates(run_id):
+            taken = connection.execute(
+                "SELECT 1 FROM v2_test_runs WHERE run_label=? AND run_id<>?",
+                (label, run_id),
             ).fetchone()
-        label = f"Run #{int(row[0])}"
-        connection.execute(
-            "UPDATE v2_test_runs SET run_label=? WHERE run_id=? AND run_label IS NULL",
-            (label, run_id),
-        )
-        return label
+            if taken is None:
+                connection.execute(
+                    "UPDATE v2_test_runs SET run_label=? WHERE run_id=? "
+                    "AND run_label IS NULL",
+                    (label, run_id),
+                )
+                return label
+        raise StorageError("run label could not be assigned")
 
     @staticmethod
     def _migrate_suite_uniqueness(connection: _CompatConnection) -> None:
@@ -1962,13 +1960,10 @@ class SQLiteExecutionStore(_SqliteBase):
             params.append(str(project_id))
         if q and q.strip():
             term = q.strip().casefold()
-            exact_label = term.startswith("run #") and term[5:].isdigit()
-            label_match = (
-                "m3_casefold(run_label) = ?"
-                if exact_label
-                else "instr(m3_casefold(run_label), ?) > 0"
+            clauses.append(
+                "(instr(m3_casefold(run_id), ?) > 0"
+                " OR instr(m3_casefold(run_label), ?) > 0)"
             )
-            clauses.append(f"(instr(m3_casefold(run_id), ?) > 0 OR {label_match})")
             params.extend((term, term))
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:

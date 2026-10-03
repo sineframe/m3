@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from .errors import CLIError
 FIELDS = frozenset(
     {
         "provider",
+        "branch",
         "repository",
         "commit",
         "ref",
@@ -46,11 +48,32 @@ def resolve_ci_metadata(
                 if environment.get(source)
             }
         )
+        ref_type = environment.get("GITHUB_REF_TYPE")
+        on_branch = (
+            ref_type == "branch"
+            if ref_type
+            else environment.get("GITHUB_REF", "").startswith("refs/heads/")
+        )
+        if branch := environment.get("GITHUB_HEAD_REF") or (
+            environment.get("GITHUB_REF_NAME") if on_branch else None
+        ):
+            values["branch"] = branch
+        pull = re.fullmatch(
+            r"refs/pull/(\d+)/(?:merge|head)", environment.get("GITHUB_REF", "")
+        )
+        if pull:
+            values["pr_number"] = pull.group(1)
         if repository := environment.get("GITHUB_REPOSITORY"):
             if run_id := environment.get("GITHUB_RUN_ID"):
-                values["job_url"] = (
-                    f"https://github.com/{repository}/actions/runs/{run_id}"
-                )
+                server = (
+                    environment.get("GITHUB_SERVER_URL") or "https://github.com"
+                ).rstrip("/")
+                job_url = f"{server}/{repository}/actions/runs/{run_id}"
+                if attempt := environment.get("GITHUB_RUN_ATTEMPT"):
+                    job_url += f"/attempts/{attempt}"
+                values["job_url"] = job_url
+    elif environment.get("CI", "").strip().lower() not in {"", "0", "false"}:
+        values["provider"] = "ci"
     if path is not None:
         try:
             overrides = json.loads(path.read_text(encoding="utf-8"))

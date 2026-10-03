@@ -928,7 +928,7 @@ const token = process.env.MCP_PAL_LIVE_AUTH_TOKEN;
     if (!response.ok()) throw new Error(`feedback returned ${response.status()}`);
     const feedback = await response.json();
     const label = feedback.run_label;
-    if (typeof label !== 'string' || !/^Run #\d+$/.test(label)) {
+    if (typeof label !== 'string' || !/^Run [0-9a-f]{7,}$/.test(label)) {
       throw new Error('saved run label is unavailable');
     }
     await page.getByRole('heading', { level: 1, name: label }).waitFor({ state: 'visible', timeout: 15000 });

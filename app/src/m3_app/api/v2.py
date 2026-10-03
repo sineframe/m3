@@ -242,7 +242,7 @@ class V2RunSummary(BaseModel):
 
     run_id: str = Field(description="Persisted pytest run identity.")
     run_label: str | None = Field(
-        default=None, description="Unique display label for this run."
+        default=None, description="Short display label derived from the run ID."
     )
     created_at: str | None = Field(
         default=None, description="Run creation timestamp, if persisted."

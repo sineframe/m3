@@ -97,6 +97,7 @@ from .evidence import (
 from .evidence import (
     verify_reference as _verify_evidence_reference,
 )
+from .run_labels import run_label_candidates
 
 
 class StorageError(Exception):
@@ -452,7 +453,6 @@ class InMemoryExecutionStore:
         self._projects: dict[str, str] = {}
         self._turns: dict[str, list[tuple[TurnState, TurnResult | None]]] = {}
         self._test_runs: dict[str, dict[str, Any]] = {}
-        self._next_run_label = 1
         self._test_results: dict[str, dict[str, dict[str, Any]]] = {}
 
     # ACP probe persistence intentionally lives beside execution persistence,
@@ -649,8 +649,13 @@ class InMemoryExecutionStore:
         with self._lock:
             existing = self._test_runs.get(key)
             if existing is None:
-                label = f"Run #{self._next_run_label}"
-                self._next_run_label += 1
+                used = {str(item.get("run_label")) for item in self._test_runs.values()}
+                label = next(
+                    (item for item in run_label_candidates(key) if item not in used),
+                    None,
+                )
+                if label is None:
+                    raise StorageError("run label could not be assigned")
             else:
                 label = str(existing["run_label"])
             self._test_runs[key] = {
@@ -704,7 +709,6 @@ class InMemoryExecutionStore:
                     )
                 ]
         term = (q or "").strip().casefold()
-        exact_label = term.startswith("run #") and term[5:].isdigit()
         values = [
             {**value, "suites": suites_by_run.get(run_id, [])}
             for run_id, value in runs
@@ -712,11 +716,7 @@ class InMemoryExecutionStore:
             and (
                 not term
                 or term in run_id.casefold()
-                or (
-                    term == str(value.get("run_label", "")).casefold()
-                    if exact_label
-                    else term in str(value.get("run_label", "")).casefold()
-                )
+                or term in str(value.get("run_label", "")).casefold()
             )
             and (
                 suite_id is None
