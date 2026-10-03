@@ -48,6 +48,33 @@ def test_canary_version_rejects_non_release_versions(current: str) -> None:
         canary_version.canary_version(current, 7)
 
 
+def test_latest_release_picks_the_highest_release_tag() -> None:
+    tags = ["v0.2.9", "v0.2.30", "v0.2.31", "v0.3.0a1", "canary-main", "v0.2.x"]
+    assert canary_version.latest_release(tags) == "0.3.0a1"
+    assert canary_version.latest_release(["v0.2.9", "v0.2.31", "v0.2.30"]) == "0.2.31"
+    assert canary_version.latest_release(["canary-pr-1"]) is None
+
+
+def test_canary_version_follows_the_latest_release_tag(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(canary_version, "_release_tags", lambda: ["v0.2.30", "v0.2.31"])
+    assert canary_version.main(["--build-number", "4"]) == 0
+    assert canary_version.main(["--build-number", "4", "--print-base"]) == 0
+    assert capsys.readouterr().out.split() == ["0.2.32.dev4", "0.2.31"]
+
+
+def test_canary_version_rejects_shallow_checkouts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def run(command: list[str], **_kwargs: object) -> object:
+        return type("Result", (), {"stdout": "true\n"})()
+
+    monkeypatch.setattr(canary_version.subprocess, "run", run)
+    assert canary_version.main(["--build-number", "4"]) == 2
+    assert "shallow" in capsys.readouterr().err
+
+
 def test_canary_metadata_validates_tag_and_commit() -> None:
     assert build_cli_release.canary_metadata("canary-main", _COMMIT) == {
         "release_tag": "canary-main",
