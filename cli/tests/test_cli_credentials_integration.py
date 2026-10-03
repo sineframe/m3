@@ -158,7 +158,7 @@ def test_env_file_passes_unknown_prefixed_variable_through_fixture_setup(
 import os
 def test_child(m3_kit):
     assert os.environ["M3_CLAUDE_MODEL"] == "claude-sonnet-5"
-    assert m3_kit.config.telemetry_enabled is False
+    assert m3_kit.config.artifact_policy == "failed"
 """
     result, database = _cli_case(
         tmp_path,

@@ -14,17 +14,16 @@ See the [credential reference](reference-credentials.md) for credential destinat
 
 ## SDK settings
 
-The SDK resolves three settings. Each can come from an explicit argument, an `M3_*` environment variable, or a `[tool.m3]` table in `pyproject.toml`.
+The SDK resolves two settings. Each can come from an explicit argument, an `M3_*` environment variable, or a `[tool.m3]` table in `pyproject.toml`.
 
 | Setting | Environment variable | `[tool.m3]` key | Values | Default | Effect |
 | --- | --- | --- | --- | --- | --- |
 | `artifact_policy` | `M3_ARTIFACT_POLICY` | `artifact_policy` | `failed`, `always`, `never` (lowercase only) | `failed` | Recorded in the resolved configuration only. No SDK runtime path reads it; agent artifact retention is set per agent with `AgentSpec(artifact_policy=...)`, which takes the same values. |
 | `protocol_revision` | `M3_PROTOCOL_REVISION` | `protocol_revision` | `auto`, or a revision identifier made of letters, digits, `.`, `_`, and `-` that starts with a letter or digit | `auto` | Default MCP protocol revision for `kit.direct(...)` when the call passes no `protocol=` argument. `auto` and the revision of the bundled MCP client are accepted; any other revision makes `direct(...)` raise `UnsupportedFeature`. |
-| `telemetry_enabled` | `M3_TELEMETRY_ENABLED` | `telemetry_enabled` | Environment: `true` or `false`, in any letter case. `pyproject.toml`: a TOML boolean; the string `"true"` is rejected. | `false` | Recorded in the resolved configuration only. No SDK runtime path reads it. |
 
 For each setting the highest-precedence source that provides a value wins:
 
-1. An explicit argument: `load_config(artifact_policy="always")`, `load_config({"telemetry_enabled": True})`, or a mapping passed as `MCPTestKit(config={...})`.
+1. An explicit argument: `load_config(artifact_policy="always")`, `load_config({"protocol_revision": "auto"})`, or a mapping passed as `MCPTestKit(config={...})`.
 2. The process environment. `MCPTestKit(env={...})` replaces it, so `MCPTestKit(env={})` ignores ambient `M3_*` variables.
 3. The `[tool.m3]` table of the nearest `pyproject.toml`, searching from the working directory (or `MCPTestKit(cwd=...)`) up through its parents. Only the first `pyproject.toml` found is read, even if it has no `[tool.m3]` table.
 4. The default.
@@ -35,7 +34,6 @@ Passing a ready-made `Config` object to `MCPTestKit` uses it as is, without read
 # pyproject.toml
 [tool.m3]
 protocol_revision = "auto"
-telemetry_enabled = false
 ```
 
 ### Check the resolved settings
@@ -52,16 +50,14 @@ The report's `configuration.settings` object has this shape; `origin` for a `pyp
 {
   "artifact_policy": "never",
   "protocol_revision": "auto",
-  "telemetry_enabled": false,
   "sources": {
     "artifact_policy": {"source": "environment", "origin": "env:M3_ARTIFACT_POLICY"},
-    "protocol_revision": {"source": "default", "origin": "default"},
-    "telemetry_enabled": {"source": "default", "origin": "default"}
+    "protocol_revision": {"source": "default", "origin": "default"}
   }
 }
 ```
 
-The doctor also reads `M3_*` values from the dotenv file described in [Environment files](#environment-files); ambient variables still win. `--require config:FIELD` accepts `artifact_policy`, `protocol_revision`, or `telemetry_enabled`, but it does not narrow the check: all three settings are resolved and validated, so an invalid `telemetry_enabled` fails `config:artifact_policy` too. Any other field name exits 2 with `invalid requirement`. Running `m3 doctor` with no `--require` checks `config` and `storage:memory`.
+The doctor also reads `M3_*` values from the dotenv file described in [Environment files](#environment-files); ambient variables still win. `--require config:FIELD` accepts `artifact_policy` or `protocol_revision`, but it does not narrow the check: both settings are resolved and validated, so an invalid `protocol_revision` fails `config:artifact_policy` too. Any other field name exits 2 with `invalid requirement`. Running `m3 doctor` with no `--require` checks `config` and `storage:memory`.
 
 An invalid setting exits 2 and names the code, field, origin, and reason without echoing the value. With `--json` the error is printed to standard output as `{"ready": false, "error": {...}}`; otherwise the message goes to standard error:
 

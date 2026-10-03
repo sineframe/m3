@@ -105,11 +105,11 @@ def test_doctor_rejects_unknown_option_without_echoing_input(capsys) -> None:
     ("variable", "value", "field", "origin", "reason"),
     (
         (
-            "M3_TELEMETRY_ENABLED",
-            "secret-not-bool",
-            "telemetry_enabled",
-            "env:M3_TELEMETRY_ENABLED",
-            "must be true or false",
+            "M3_PROTOCOL_REVISION",
+            "secret revision with spaces",
+            "protocol_revision",
+            "env:M3_PROTOCOL_REVISION",
+            "must be auto or a non-empty protocol revision identifier",
         ),
         (
             "M3_ARTIFACT_POLICY",
@@ -154,14 +154,53 @@ def test_doctor_ignores_unknown_prefixed_environment_variables(
 def test_doctor_configuration_error_human_output_has_structured_diagnostic(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setenv("M3_TELEMETRY_ENABLED", "not-a-secret-bool")
+    monkeypatch.setenv("M3_ARTIFACT_POLICY", "not-a-secret-policy")
     assert main(["doctor", "--require", "config"]) == 2
     captured = capsys.readouterr()
     assert "code=invalid_configuration" in captured.err
-    assert "field=telemetry_enabled" in captured.err
-    assert "origin=env:M3_TELEMETRY_ENABLED" in captured.err
-    assert "reason=must be true or false" in captured.err
-    assert "not-a-secret-bool" not in captured.err
+    assert "field=artifact_policy" in captured.err
+    assert "origin=env:M3_ARTIFACT_POLICY" in captured.err
+    assert "reason=must be one of failed, always, or never" in captured.err
+    assert "not-a-secret-policy" not in captured.err
+
+
+def test_doctor_ignores_removed_telemetry_environment_variable(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("M3_TELEMETRY_ENABLED", "true")
+    assert main(["doctor", "--require", "config", "--json"]) == 0
+    settings = json.loads(capsys.readouterr().out)["configuration"]["settings"]
+    assert "telemetry_enabled" not in settings
+    assert "telemetry_enabled" not in settings["sources"]
+
+
+def test_doctor_rejects_removed_telemetry_project_setting(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.delenv("M3_TELEMETRY_ENABLED", raising=False)
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3]\ntelemetry_enabled = true\n", encoding="utf-8"
+    )
+    assert (
+        main(
+            [
+                "doctor",
+                "--require",
+                "config",
+                "--project-root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 2
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "unknown_setting"
+    assert payload["error"]["field"] == "telemetry_enabled"
+
+
+def test_doctor_rejects_removed_telemetry_config_requirement(capsys) -> None:
+    assert main(["doctor", "--require", "config:telemetry_enabled"]) == 2
 
 
 def test_doctor_env_file_without_config_fails_before_reading_file(

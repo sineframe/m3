@@ -24,7 +24,7 @@ def test_sync_kit_resolves_config_and_baseline_without_harness_probes(
 ) -> None:
     kit = MCPTestKit(
         {"artifact_policy": "always"},
-        env={"M3_TELEMETRY_ENABLED": "true"},
+        env={"M3_PROTOCOL_REVISION": "2025-06-18"},
         cwd=tmp_path,
     )
 
@@ -32,7 +32,7 @@ def test_sync_kit_resolves_config_and_baseline_without_harness_probes(
 
     assert isinstance(kit.config, Config)
     assert kit.config.artifact_policy == "always"
-    assert kit.config.telemetry_enabled is True
+    assert kit.config.protocol_revision == "2025-06-18"
     assert [result.capability.name for result in report.results] == [
         "configuration",
         "memory",
