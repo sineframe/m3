@@ -581,3 +581,24 @@ def test_piped_output_keeps_pytest_rules() -> None:
     _, writer = _rules_progress(no_header=True, isatty=False)
     writer.sep("=", "test session starts")
     assert writer.native == [("=", "test session starts")]
+
+
+def test_redraws_overwrite_in_place_without_an_empty_frame() -> None:
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("t.py::a", "t.py::b", "u.py::c"))
+    _run(progress, "t.py::a", "passed")
+    _run(progress, "t.py::b", "failed")  # logs a failure line above the block
+    _run(progress, "u.py::c", "passed")  # logs the file line, then redraws
+    progress.finish()
+    frames = [chunk for chunk in reporter.written if "\x1b[?2026h" in chunk]
+    assert len(frames) >= 5
+    for chunk in frames:
+        start = chunk.index("\x1b[?2026h") + len("\x1b[?2026h")
+        frame = chunk[start : chunk.index("\x1b[?2026l")]
+        # The only erase-below comes last, after the new content is drawn.
+        assert frame.count("\x1b[J") == 1
+        assert frame.endswith("\x1b[J")
+    # And the final screen is still right.
+    screen = _screen(reporter.written)
+    assert screen[-1].startswith("  ✗ ") and "3/3" in screen[-1]

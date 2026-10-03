@@ -2083,6 +2083,17 @@ def _terminal_style(reporter: _Any) -> _Style | None:
     )
 
 
+def _frame(text: str) -> str:
+    """Wrap one redraw in synchronized-output markers (DEC mode 2026).
+
+    Terminals that support it show the frame in one go; others ignore the
+    markers. Together with overwriting in place, this keeps the live block
+    from flickering.
+    """
+
+    return f"\x1b[?2026h{text}\x1b[?2026l"
+
+
 _MATRIX_COLUMNS = 40
 _MATRIX_ROWS = 6
 _MATRIX_ASPECT = 4.0
@@ -2367,9 +2378,13 @@ class _Progress:
                 getattr(self.reporter, "_tw", None), "width_of_current_line", 0
             )
             return ("\n" if isinstance(column, int) and column > 0 else "") + "\n\r"
+        # Move back to the block's first line without erasing anything:
+        # the new frame overwrites it line by line, and only what is left
+        # below the new frame is cleared afterwards (see _block). Erasing
+        # first would let the terminal paint an empty frame (a flicker).
         up = f"\x1b[{self._live_height - 1}A" if self._live_height > 1 else ""
         self._live_height = 0
-        return f"\r{up}\x1b[J"
+        return f"\r{up}"
 
     def _log(self, lines: list[str]) -> None:
         """Print lines above the live block, then redraw the block."""
@@ -2377,10 +2392,10 @@ class _Progress:
         if self.reporter is None or not self._is_tty():
             return
         width = self._width()
-        text = "".join(_fit(line, width) + "\n" for line in lines)
+        text = "".join(_fit(line, width) + "\x1b[K\n" for line in lines)
         clear = self._clear_live()
         self._logged = True
-        self._emit(clear + text + self._block())
+        self._emit(_frame(clear + text + self._block()))
 
     def _flush_file(self) -> None:
         if self._file is None or not sum(self._file_counts.values()):
@@ -2465,7 +2480,9 @@ class _Progress:
         if self._logged:
             lines.insert(0, "")
         self._live_height = len(lines)
-        return "\n".join(_fit(line, width) + "\x1b[K" for line in lines)
+        # Each line clears only its own tail; the final erase removes rows
+        # the previous, taller frame left below this one.
+        return "\n".join(_fit(line, width) + "\x1b[K" for line in lines) + "\x1b[J"
 
     def _line(self, *, done: bool = False) -> str:
         style = self._style()
@@ -2528,7 +2545,7 @@ class _Progress:
         self._last_write = now
         if not self._is_tty():
             return
-        text = self._clear_live() + self._block(done=done)
+        text = _frame(self._clear_live() + self._block(done=done))
         if self._title_pushed:
             failed = (
                 f" {self._style().glyphs.dot} {self._style().glyphs.failed} {self.failed}"
