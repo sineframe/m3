@@ -376,6 +376,7 @@ def _configure(config: _Any) -> None:
             config._m3_progress.enabled and config._m3_progress._is_tty()
         )
     config._m3_progress.disable_native_progress()
+    config._m3_progress.restyle_separators()
     config.pluginmanager.register(config._m3_progress, "m3-progress")
     config._m3_manifest_hooks = _ManifestHooks()
     config.pluginmanager.register(config._m3_manifest_hooks, "m3-manifest-hooks")
@@ -2082,8 +2083,41 @@ def _terminal_style(reporter: _Any) -> _Style | None:
     )
 
 
-_MATRIX_COLUMNS = 48
-_MATRIX_ROWS = 3
+_MATRIX_COLUMNS = 40
+_MATRIX_ROWS = 6
+_MATRIX_ASPECT = 4.0
+_MATRIX_SINGLE_ROW = 12
+
+
+def _matrix_shape(count: int, max_columns: int) -> tuple[int, int]:
+    """Rows and columns for ``count`` cells that look like a matrix.
+
+    Up to a dozen cells stay on one row. Otherwise the grid aims for about
+    four columns per row, wastes as few cells as possible, fits within
+    ``max_columns`` and at most six rows (callers fold larger suites first).
+    """
+
+    if count <= 0:
+        return 0, 0
+    if count <= min(_MATRIX_SINGLE_ROW, max_columns):
+        return 1, count
+    best: tuple[float, int, int] | None = None
+    for rows in range(1, _MATRIX_ROWS + 1):
+        columns = -(-count // rows)
+        if columns > max_columns:
+            continue
+        rows = -(-count // columns)  # drop rows that would stay empty
+        empty = rows * columns - count
+        shape = abs(_math.log((columns / rows) / _MATRIX_ASPECT))
+        score = shape + 4 * empty / count
+        if best is None or score < best[0]:
+            best = (score, rows, columns)
+    if best is None:
+        columns = max_columns
+        return -(-count // columns), columns
+    return best[1], best[2]
+
+
 _CELL_RANK = {"failed": 4, "running": 3, "pending": 2, "skipped": 1, "passed": 0}
 _NOTIFY_TERMINALS = frozenset({"iTerm.app", "ghostty", "WezTerm"})
 _NOTIFY_AFTER_SECONDS = 30.0
@@ -2117,6 +2151,9 @@ class _Progress:
         self._running: set[str] = set()
         self._attached = False
         self._cursor_hidden = False
+        self._spaced = False
+        self._logged = False
+        self._native_write_sep = False
         option = config.option
         # With xdist workers, tests from several files run at once, so the
         # per-file lines are left out; the main process still sees every
@@ -2141,6 +2178,13 @@ class _Progress:
         except (ValueError, KeyError):
             return False
 
+    @_pytest.hookimpl(tryfirst=True)
+    def pytest_sessionstart(self, session: _Any) -> None:
+        # Before pytest's own session header is written.
+        if self.reporter is None:
+            self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
+        self.restyle_separators()
+
     def _attach(self) -> None:
         """Bind the terminal reporter and settle ``enabled`` (once).
 
@@ -2155,6 +2199,7 @@ class _Progress:
             self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
         self.enabled = self.enabled and self.reporter is not None and self._is_tty()
         self.disable_native_progress()
+        self.restyle_separators()
 
     @_pytest.hookimpl(trylast=True)
     def pytest_collection_finish(self, session: _Any) -> None:
@@ -2313,7 +2358,15 @@ class _Progress:
 
     def _clear_live(self) -> str:
         if not self._live_height:
-            return "\r"
+            if self._spaced:
+                return "\r"
+            # The first draw: end whatever line pytest or xdist left open,
+            # then leave exactly one blank line above the block.
+            self._spaced = True
+            column = getattr(
+                getattr(self.reporter, "_tw", None), "width_of_current_line", 0
+            )
+            return ("\n" if isinstance(column, int) and column > 0 else "") + "\n\r"
         up = f"\x1b[{self._live_height - 1}A" if self._live_height > 1 else ""
         self._live_height = 0
         return f"\r{up}\x1b[J"
@@ -2325,7 +2378,9 @@ class _Progress:
             return
         width = self._width()
         text = "".join(_fit(line, width) + "\n" for line in lines)
-        self._emit(self._clear_live() + text + self._block())
+        clear = self._clear_live()
+        self._logged = True
+        self._emit(clear + text + self._block())
 
     def _flush_file(self) -> None:
         if self._file is None or not sum(self._file_counts.values()):
@@ -2374,9 +2429,8 @@ class _Progress:
         if not self._cells or not style.color:
             # Without colour every state would look the same.
             return []
-        # A balanced block: at most 48 columns and 3 rows, with rows of
-        # (nearly) equal length so it never looks like a wrapped line.
-        max_columns = max(1, min(_MATRIX_COLUMNS, width - 4))
+        # Each cell is a glyph and a space, so the grid reads as a matrix.
+        max_columns = max(1, min(_MATRIX_COLUMNS, (width - 2) // 2))
         capacity = max_columns * _MATRIX_ROWS
         # Large suites: one cell stands for several tests and shows the most
         # important state among them.
@@ -2385,8 +2439,7 @@ class _Progress:
             max(self._cells[start : start + size], key=_CELL_RANK.__getitem__)
             for start in range(0, len(self._cells), size)
         ]
-        rows = -(-len(buckets) // max_columns)
-        per_row = -(-len(buckets) // rows)
+        _rows, columns = _matrix_shape(len(buckets), max_columns)
         full = "■" if style.glyphs.passed == "✓" else "#"
         paint = {
             "passed": style.green(full),
@@ -2396,14 +2449,21 @@ class _Progress:
             "pending": style.grey("·" if full == "■" else "."),
         }
         return [
-            "  " + "".join(paint[cell] for cell in buckets[start : start + per_row])
-            for start in range(0, len(buckets), per_row)
+            "  " + " ".join(paint[cell] for cell in buckets[start : start + columns])
+            for start in range(0, len(buckets), columns)
         ]
 
     def _block(self, *, done: bool = False) -> str:
         style = self._style()
         width = self._width()
-        lines = [*self._matrix(style, width), self._line(done=done)]
+        matrix = self._matrix(style, width)
+        # A blank line between the matrix and the progress line, and one
+        # between the block and any file or failure lines printed above it.
+        lines = (
+            [*matrix, "", self._line(done=done)] if matrix else [self._line(done=done)]
+        )
+        if self._logged:
+            lines.insert(0, "")
         self._live_height = len(lines)
         return "\n".join(_fit(line, width) + "\x1b[K" for line in lines)
 
@@ -2497,9 +2557,64 @@ class _Progress:
             self._native_fspath = self.reporter._showfspath
             self.reporter._showfspath = False
 
+    def restyle_separators(self) -> None:
+        """Draw pytest's section rules as thin dim lines in a colour terminal.
+
+        Pytest draws every rule (session start, FAILURES, captured output,
+        warnings, the final counts) through its terminal writer's ``sep``;
+        only that method is replaced, and only on an interactive colour
+        terminal outside --m3-ci and xdist workers.
+        """
+
+        reporter = self.reporter
+        writer: _Any = getattr(reporter, "_tw", None)
+        if (
+            reporter is None
+            or writer is None
+            or self._native_write_sep
+            or hasattr(self.config, "workerinput")
+            or not callable(getattr(writer, "sep", None))
+        ):
+            return
+        getoption = getattr(self.config, "getoption", None)
+        if callable(getoption) and getoption("--m3-ci", default=False):
+            return
+        style = _terminal_style(reporter)
+        if style is None or not style.color:
+            return
+        # The M3 banner replaces the session header (the CLI passes
+        # --no-header when it printed one).
+        skip_header = bool(getattr(self.config.option, "no_header", False))
+        rule = "─" if style.glyphs.passed == "✓" else "-"
+
+        def sep(
+            sepchar: str,
+            title: str | None = None,
+            fullwidth: int | None = None,
+            **markup: bool,
+        ) -> None:
+            if skip_header and title == "test session starts":
+                return
+            width = max(20, int(getattr(writer, "fullwidth", 80)) - 1)
+            if not title:
+                line = style.grey(rule * width)
+            else:
+                head = f"{rule * 2} "
+                text = writer.markup(title, **markup) if markup else title
+                tail = width - len(head) - _visible_len(text) - 1
+                line = style.grey(head) + text + " " + style.grey(rule * max(2, tail))
+            writer.line(line)
+
+        writer.sep = sep
+        self._native_write_sep = True
+
     def restore_native_progress(self) -> None:
         if self.reporter is None:
             return
+        if self._native_write_sep:
+            # Drop the instance attribute so the class method applies again.
+            vars(getattr(self.reporter, "_tw", object())).pop("sep", None)
+            self._native_write_sep = False
         if self._native_progress is not _NATIVE_PROGRESS_UNSET:
             self.reporter._show_progress_info = self._native_progress
             self._native_progress = _NATIVE_PROGRESS_UNSET

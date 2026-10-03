@@ -127,15 +127,17 @@ def test_live_block_flows_file_lines_and_failures_above_it() -> None:
 
     screen = _screen(reporter.written)
     assert "hunter2" not in "".join(reporter.written)
-    assert screen[:4] == [
+    assert screen[:5] == [
+        "",  # one blank line above everything the live block prints
         "  x tests/test_api.py::test_login",
         "      assert 'open' == 'escalated'  - test_api.py:88",
         "  x tests/test_api.py  1 passed - 1 failed  0.0s",
         "  + tests/test_b.py  1 skipped  0.0s",
     ]
     # Without colour the matrix is left out: its cells would all look alike.
-    assert screen[4].startswith("  x ") and "3/3" in screen[4]
-    assert len(screen) == 5
+    assert screen[5] == ""
+    assert screen[6].startswith("  x ") and "3/3" in screen[6]
+    assert len(screen) == 7
     assert reporter.lines == [""]
 
 
@@ -149,8 +151,8 @@ def test_live_block_stays_within_the_terminal_width() -> None:
     )
     screen = _screen(reporter.written)
     assert all(len(line) < 60 for line in screen)
-    # Without colour there is no matrix: just the progress line.
-    assert len(screen) == 1
+    # Without colour there is no matrix: a blank line and the progress line.
+    assert len(screen) == 2 and screen[0] == ""
 
 
 def test_matrix_shows_each_test_state_in_colour() -> None:
@@ -165,7 +167,7 @@ def test_matrix_shows_each_test_state_in_colour() -> None:
     _run(progress, "c", "skipped")
     progress.pytest_runtest_logstart("d", ("", 1, ""))
     screen = _screen(reporter.written)
-    assert screen[-2] == "  ■■■■·"
+    assert screen[-3:-1] == ["  ■ ■ ■ ■ ·", ""]
     assert "\x1b[38;" in "".join(reporter.written)  # states are coloured
 
 
@@ -451,23 +453,37 @@ def _colour_reporter(width: int) -> _Reporter:
 
 
 @pytest.mark.parametrize(
-    ("tests", "width", "rows"),
+    ("count", "max_columns", "shape"),
     [
-        (95, 90, [48, 47]),  # the reported case: balanced, not 86 + 9
-        (95, 200, [48, 47]),  # wide terminals still cap at 48 columns
-        (20, 90, [20]),
-        (500, 90, [42, 42, 41]),  # folded: 3 tests per cell
-        (95, 40, [32, 32, 31]),  # narrow: still 3 equal rows
+        (3, 40, (1, 3)),
+        (12, 40, (1, 12)),  # up to a dozen tests: a single row
+        (13, 40, (2, 7)),
+        (30, 40, (3, 10)),
+        (95, 40, (5, 19)),  # the reported suite: a 5 x 19 grid, none empty
+        (240, 40, (6, 40)),
+        (70, 12, (6, 12)),  # narrow terminal: fewer columns, more rows
     ],
 )
-def test_matrix_is_a_balanced_block(tests: int, width: int, rows: list[int]) -> None:
+def test_matrix_shape_looks_like_a_matrix(
+    count: int, max_columns: int, shape: tuple[int, int]
+) -> None:
+    from m3.pytest_plugin import _matrix_shape
+
+    assert _matrix_shape(count, max_columns) == shape
+
+
+@pytest.mark.parametrize(("tests", "width"), [(95, 90), (95, 30), (5000, 90)])
+def test_matrix_rows_are_a_spaced_grid_within_the_width(tests: int, width: int) -> None:
     reporter = _colour_reporter(width)
     progress = _progress(reporter)
     progress.pytest_collection_finish(_items(*(f"t.py::t{i}" for i in range(tests))))
     progress.pytest_runtest_logstart("t.py::t0", ("", 1, ""))
     screen = _screen(reporter.written)
-    matrix = screen[:-1]
-    assert [len(line) - 2 for line in matrix] == rows
+    matrix = screen[1:-2]  # blank line, grid, blank line, progress line
+    assert screen[0] == "" and screen[-2] == ""
+    assert 1 <= len(matrix) <= 6
+    assert all(line[2::2].strip("■·") == "" for line in matrix)  # cells
+    assert all(set(line[3::2]) <= {" "} for line in matrix)  # spacing
     assert all(len(line) < width for line in screen)
 
 
@@ -501,3 +517,67 @@ def test_timeouts_are_compact_lines_under_the_panel() -> None:
         "    1 more · details in feedback.json",
     ]
     assert all(visible_len(line) < 80 for line in reporter.lines)
+
+
+class _Writer:
+    fullwidth = 41
+    hasmarkup = True
+
+    def __init__(self) -> None:
+        self._file = SimpleNamespace(encoding="utf-8")
+        self.lines: list[str] = []
+        self.native: list[tuple[str, str | None]] = []
+
+    def sep(self, sepchar: str, title: str | None = None, **_markup: bool) -> None:
+        self.native.append((sepchar, title))
+
+    def markup(self, text: str, **_markup: bool) -> str:
+        return f"<{text}>"
+
+    def line(self, text: str) -> None:
+        self.lines.append(text)
+
+
+def _rules_progress(*, no_header: bool, isatty: bool = True) -> tuple[Any, _Writer]:
+    from m3.pytest_plugin import _Progress
+
+    reporter = _Reporter(isatty=isatty)
+    reporter._tw = _Writer()
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0, no_header=no_header),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+        getoption=lambda _name, default=None: False,
+    )
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.restyle_separators()
+    return progress, reporter._tw
+
+
+def test_section_rules_are_thin_and_keep_their_title_markup() -> None:
+    _, writer = _rules_progress(no_header=False)
+    writer.sep("=", "FAILURES", red=True)
+    writer.sep("_", "test_breaks")
+    writer.sep("-")
+    plain = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in writer.lines]
+    assert plain == [
+        "── <FAILURES> " + "─" * 26,  # every rule fills the 40 columns
+        "── test_breaks " + "─" * 25,
+        "─" * 40,
+    ]
+    assert writer.native == []
+
+
+def test_session_header_is_dropped_after_the_banner_and_rules_restored() -> None:
+    progress, writer = _rules_progress(no_header=True)
+    writer.sep("=", "test session starts", bold=True)
+    assert writer.lines == []
+    progress.restore_native_progress()
+    writer.sep("=", "after")
+    assert writer.native == [("=", "after")]
+
+
+def test_piped_output_keeps_pytest_rules() -> None:
+    _, writer = _rules_progress(no_header=True, isatty=False)
+    writer.sep("=", "test session starts")
+    assert writer.native == [("=", "test session starts")]
