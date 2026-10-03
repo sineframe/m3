@@ -264,3 +264,53 @@ async def test_refused_request_status_is_not_published_as_a_live_message(
         await manager.close()
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", ["401 Unauthorized", "403 Forbidden", "500 Internal Server Error"]
+)
+async def test_http_refused_tool_call_counts_as_a_failed_call(
+    tmp_path: Path, status: str
+) -> None:
+    def respond(_request: dict[str, Any]) -> tuple[str, dict[str, str], bytes]:
+        return status, {}, b""
+
+    server, port = await _upstream(respond)
+    manager = McpCaptureManager(tmp_path, trusted_private_keys={"guarded"})
+    config = HarnessServerConfig(
+        key="guarded",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="guarded",
+        endpoint=f"http://127.0.0.1:{port}/mcp",
+    )
+    call = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {"name": "echo", "arguments": {}},
+    }
+    try:
+        instrumented = (await manager.instrument((config,)))[0]
+        assert instrumented.endpoint is not None
+        async with httpx.AsyncClient() as client:
+            await client.post(instrumented.endpoint, json=call)
+        session = SimpleNamespace(
+            _server_manager=SimpleNamespace(
+                capture=manager, snapshot=lambda: SimpleNamespace(records=())
+            ),
+            _capture_seen={},
+            _captured_tool_outcomes=[],
+            _emit_event=lambda *_args, **_kwargs: None,
+        )
+
+        AsyncAgentSession._emit_captured_wire_events(session, None)  # type: ignore[arg-type]
+
+        assert session._captured_tool_outcomes == [False]
+        assert AsyncAgentSession._captured_activity_outcomes(session) == [False]  # type: ignore[arg-type]
+    finally:
+        await manager.close()
+        server.close()
+        await server.wait_closed()

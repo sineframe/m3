@@ -1153,9 +1153,16 @@ class AsyncAgentSession:
                 if isinstance(http, Mapping):
                     payload["http"] = dict(http)
                 if method == "tools/call" and event_kind in {"error", "response"}:
-                    failed = error is not None or (
-                        isinstance(result, Mapping)
-                        and bool(result.get("is_error", result.get("isError", False)))
+                    # An HTTP refusal is an error event with no JSON-RPC error.
+                    failed = (
+                        event_kind == "error"
+                        or error is not None
+                        or (
+                            isinstance(result, Mapping)
+                            and bool(
+                                result.get("is_error", result.get("isError", False))
+                            )
+                        )
                     )
                     self._captured_tool_outcomes.append(not failed)
                 phase = (
@@ -2211,10 +2218,14 @@ class AsyncAgentSession:
                     elif sequence in pending and kind in {"error", "response"}:
                         result = getattr(event, "result", None)
                         error = getattr(event, "error", None)
-                        failed = error is not None or (
-                            isinstance(result, Mapping)
-                            and bool(
-                                result.get("is_error", result.get("isError", False))
+                        failed = (
+                            kind == "error"
+                            or error is not None
+                            or (
+                                isinstance(result, Mapping)
+                                and bool(
+                                    result.get("is_error", result.get("isError", False))
+                                )
                             )
                         )
                         outcomes.append(not failed)
