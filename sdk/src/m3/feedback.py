@@ -208,16 +208,27 @@ def _entries(store: ExecutionStore, run_id: str) -> tuple[_Entry, ...]:
 
 
 def _entries_by_id(
-    store: ExecutionStore, execution_ids: Collection[str]
+    store: ExecutionStore, run_id: str, execution_ids: Collection[str]
 ) -> tuple[_Entry, ...]:
-    """Load only the named executions, ordered as :func:`_entries` orders them."""
-    loaded = (_load_entry(store, execution_id) for execution_id in execution_ids)
+    """Load the named executions of ``run_id``, ordered as :func:`_entries` does.
+
+    Storage doesn't check that an attempt's ``execution_ids`` belong to its run,
+    so executions from other runs are skipped, as :func:`_entries` skips them.
+    """
+    loaded = (
+        _load_entry(store, execution_id, run_id=run_id)
+        for execution_id in execution_ids
+    )
     return _sorted_entries([entry for entry in loaded if entry is not None])
 
 
-def _load_entry(store: ExecutionStore, execution_id: Any) -> _Entry | None:
+def _load_entry(
+    store: ExecutionStore, execution_id: Any, *, run_id: str | None = None
+) -> _Entry | None:
     report = store.get_report(execution_id)
     if report is None:
+        return None
+    if run_id is not None and _run_key(report.snapshot.run_id) != run_id:
         return None
     get_spec = getattr(store, "get_execution_spec", None)
     get_trace = getattr(store, "get_trace_view", None)
@@ -1746,7 +1757,7 @@ def project_test_attempts(
         entries = _retry_missing_traces(store, entries)
     elif execution_id is not None:
         linked = {value for result in results for value in _execution_ids(result)}
-        entries = _entries_by_id(store, sorted(linked))
+        entries = _entries_by_id(store, normalized_run_id, sorted(linked))
     else:
         entries = _entries(store, normalized_run_id)
     execution_kinds = {
