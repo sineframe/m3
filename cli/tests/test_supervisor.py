@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import signal
 import socket
 import sqlite3
@@ -588,7 +589,9 @@ def test_ui_launches_for_ordinary_pytest_failure_and_keeps_status(
     )
     monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(
-        supervisor, "_run_ui_server", lambda _db, _port, code, _runs, _warnings: code
+        supervisor,
+        "_run_ui_server",
+        lambda _db, _port, code, _runs, _warnings, **_kwargs: code,
     )
     result = supervisor.run_test_with_runs(
         ui=True, port=8123, ui_dir=tmp_path, project_root=tmp_path
@@ -1954,6 +1957,8 @@ def test_start_banner_prints_run_context_on_a_terminal(
         'schema_version = 1\nproject_name = "ops-demo"\n', encoding="utf-8"
     )
     stream = _TTYStream()
+    monkeypatch.setenv("COLUMNS", "100")
+    monkeypatch.setenv("LINES", "40")
     monkeypatch.setattr(sys, "stdout", stream)
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.delenv("TERM", raising=False)
@@ -1967,9 +1972,11 @@ def test_start_banner_prints_run_context_on_a_terminal(
     )
     output = stream.getvalue()
     assert shown is True
-    assert "\x1b[" not in output
-    lines = output.splitlines()
-    assert lines[1].startswith(f"  {M3_ASCII_ART.splitlines()[0]}")
+    assert re.search(r"\x1b\[[0-9;]*m", output) is None  # no colour
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", output)
+    # The screen is scrolled into scrollback first, then the banner drawn.
+    assert output.startswith("\n" * 10)
+    assert f"  {M3_ASCII_ART.splitlines()[0]}   " in plain
     assert "project  ops-demo" in output
     assert "run      abcdef1" in output
     assert "suite smoke · codex=gpt-5 · 2 workers" in output
@@ -2067,3 +2074,167 @@ def test_ui_server_on_a_terminal_prints_styled_report_links(
     assert M3_ASCII_ART.splitlines()[0] not in output
     assert f"  ➜  Report  {opened[0]}" in output
     assert "press Ctrl-C to stop the UI server" in output
+
+
+class _ScriptedKeys:
+    """Stands in for console.KeyReader: returns the scripted keys in order."""
+
+    script: ClassVar[list[str | None]] = []
+
+    def __init__(self) -> None:
+        self.enabled = True
+        self._keys = list(self.script)
+
+    def __enter__(self) -> _ScriptedKeys:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        pass
+
+    def read(self, _timeout: float) -> str | None:
+        if not self._keys:
+            raise KeyboardInterrupt
+        return self._keys.pop(0)
+
+
+def _serve_with_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    keys: list[str | None],
+    *,
+    compare_with: tuple[str, str] | None,
+    browser_works: bool = True,
+    clipboard_works: bool = True,
+) -> tuple[int, str, list[str], list[str]]:
+    class Child:
+        process = SimpleNamespace(poll=lambda: None)
+
+        def alive(self) -> bool:
+            return True
+
+    stream = _TTYStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+    for name in (
+        "TERM_PROGRAM",
+        "WT_SESSION",
+        "KITTY_WINDOW_ID",
+        "VTE_VERSION",
+        "TERM",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
+    monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
+    monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
+    opened: list[str] = []
+    copied: list[str] = []
+    monkeypatch.setattr(
+        supervisor.webbrowser,
+        "open",
+        lambda url: opened.append(url) or browser_works,
+    )
+    monkeypatch.setattr(
+        supervisor.console,
+        "copy_to_clipboard",
+        lambda text: copied.append(text) or clipboard_works,
+    )
+    _ScriptedKeys.script = keys
+    monkeypatch.setattr(supervisor.console, "KeyReader", _ScriptedKeys)
+    code = supervisor._run_ui_server(
+        Path("results.sqlite"),
+        8123,
+        7,
+        (_run("run-new", 2),),
+        (),
+        compare_with=compare_with,
+    )
+    return code, stream.getvalue(), opened, copied
+
+
+def test_ui_keys_reopen_copy_compare_and_quit(monkeypatch: pytest.MonkeyPatch) -> None:
+    code, output, opened, copied = _serve_with_keys(
+        monkeypatch,
+        [None, "o", "c", "b", "x", "q"],
+        compare_with=("run-base", "Run base123"),
+    )
+    report = opened[0]
+    assert report.startswith("http://127.0.0.1:8123/reports/runs/run-new#m3_token=")
+    token = report.split("#m3_token=", 1)[1]
+    assert opened == [
+        report,  # opened automatically
+        report,  # o
+        "http://127.0.0.1:8123/reports/runs/run-new"
+        f"?baseline_run_id=run-base#m3_token={token}",  # b
+    ]
+    assert copied == [report]
+    assert code == 7  # q keeps the pytest status, like Ctrl-C
+    assert "o reopen  c copy link  b compare with Run base123  q quit" in output
+    assert "opened in your browser" in output
+    assert "reopened in your browser" in output
+    assert "link copied to clipboard" in output
+    assert "opened comparison with Run base123" in output
+    assert output.endswith("\n")
+
+
+def test_ui_compare_key_explains_when_there_is_no_earlier_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _code, output, opened, _copied = _serve_with_keys(
+        monkeypatch, ["b", "q"], compare_with=None
+    )
+    assert "b compare" not in output
+    assert "no earlier run to compare with yet" in output
+    assert len(opened) == 1  # only the automatic open
+
+
+def test_ui_copy_key_prints_the_link_without_a_clipboard_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _code, output, opened, _copied = _serve_with_keys(
+        monkeypatch, ["c", "q"], compare_with=None, clipboard_works=False
+    )
+    assert f"     {opened[0]}\n" in output
+    assert "no clipboard tool found; link printed above" in output
+
+
+def test_ui_reports_when_the_browser_cannot_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _code, output, _opened, _copied = _serve_with_keys(
+        monkeypatch, ["q"], compare_with=None, browser_works=False
+    )
+    assert "could not open a browser; press c to copy the link" in output
+
+
+def test_comparison_target_prefers_baseline_then_latest_earlier_run() -> None:
+    earlier = supervisor.StoredRuns(
+        (
+            supervisor.StoredRun(
+                "run-old", datetime.fromtimestamp(1, tz=timezone.utc), "Run old0000"
+            ),
+            supervisor.StoredRun(
+                "run-abcdef123", datetime.fromtimestamp(5, tz=timezone.utc)
+            ),
+        )
+    )
+    assert supervisor._comparison_target(None, earlier) == (
+        "run-abcdef123",
+        "Run abcdef1",
+    )
+    assert supervisor._comparison_target("run-old", earlier) == (
+        "run-old",
+        "Run old0000",
+    )
+    assert supervisor._comparison_target("run-x", supervisor.StoredRuns()) == (
+        "run-x",
+        "Run x",
+    )
+    # A first run has nothing to compare with.
+    assert supervisor._comparison_target(None, supervisor.StoredRuns()) is None
+
+
+def test_compare_url_encodes_both_run_ids() -> None:
+    assert (
+        supervisor.build_compare_url("run a", "run/b", 8000, "tok")
+        == "http://127.0.0.1:8000/reports/runs/run%20a?baseline_run_id=run%2Fb#m3_token=tok"
+    )

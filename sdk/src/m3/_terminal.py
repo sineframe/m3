@@ -13,7 +13,8 @@ import re
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# SGR/cursor sequences and OSC 8 hyperlink markers, which take no cells.
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;[^\x1b]*\x1b\\")
 
 # Banner gradient, top to bottom: teal to violet. Status colours follow the
 # Tailwind 400 shades, which stay readable on both dark and light terminals.
@@ -61,6 +62,65 @@ def truncate(text: str, width: int, ellipsis: str = "…", *, keep: str = "end")
         return text[:width] if keep == "start" else text[-width:]
     room = width - len(ellipsis)
     return text[:room] + ellipsis if keep == "start" else ellipsis + text[-room:]
+
+
+def fit(text: str, width: int, ellipsis: str = "…") -> str:
+    """Cut styled text to ``width`` cells without splitting an escape code."""
+
+    if visible_len(text) <= width:
+        return text
+    if width <= 0:
+        return ""
+    pieces: list[str] = []
+    shown = index = 0
+    limit = max(0, width - len(ellipsis))
+    while index < len(text) and shown < limit:
+        match = _ANSI.match(text, index)
+        if match:
+            pieces.append(match.group())
+            index = match.end()
+            continue
+        pieces.append(text[index])
+        shown += 1
+        index += 1
+    reset = "\x1b[0m" if "\x1b[" in text else ""
+    # Close a hyperlink that was cut, or it would swallow the rest of the line.
+    if "\x1b]8;;" in "".join(pieces):
+        reset += "\x1b]8;;\x1b\\"
+    return "".join(pieces) + reset + ellipsis[: width - shown]
+
+
+def supports_hyperlinks() -> bool:
+    """Whether the terminal is known to render OSC 8 links.
+
+    Terminals that do not support them print the link text only, which would
+    hide a URL, so callers show the plain URL when this is False.
+    """
+
+    env = os.environ
+    if env.get("TMUX") or env.get("STY") or env.get("TERM") == "dumb":
+        return False
+    if env.get("TERM_PROGRAM") in {
+        "iTerm.app",
+        "WezTerm",
+        "ghostty",
+        "vscode",
+        "Hyper",
+        "Tabby",
+    }:
+        return True
+    if (
+        env.get("WT_SESSION")
+        or env.get("KITTY_WINDOW_ID")
+        or env.get("KONSOLE_VERSION")
+    ):
+        return True
+    vte = env.get("VTE_VERSION", "")
+    return vte.isdigit() and int(vte) >= 5000
+
+
+def hyperlink(url: str, text: str) -> str:
+    return f"\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\"
 
 
 def stream_is_utf8(stream: Any) -> bool:
@@ -144,14 +204,17 @@ class Style:
         closed = inner + 4 <= width
         head = f"{horizontal} {title} "
         lines = [
-            "  "
-            + self.grey(tl)
-            + self.grey(horizontal)
-            + f" {title} "
-            + (
-                self.grey(horizontal * (inner - visible_len(head)) + tr)
-                if closed
-                else ""
+            fit(
+                "  "
+                + self.grey(tl)
+                + self.grey(horizontal)
+                + f" {title} "
+                + (
+                    self.grey(horizontal * (inner - visible_len(head)) + tr)
+                    if closed
+                    else ""
+                ),
+                width,
             )
         ]
         for cell in cells:
@@ -160,7 +223,9 @@ class Style:
                 if closed
                 else ""
             )
-            lines.append("  " + self.grey(vertical) + cell + pad)
+            # An open box must still not wrap: cut its rows to the width.
+            row = "  " + self.grey(vertical) + cell + pad
+            lines.append(row if closed else fit(row, width))
         lines.append(
             "  "
             + self.grey(

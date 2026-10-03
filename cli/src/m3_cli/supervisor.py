@@ -30,9 +30,10 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from m3 import _timing, _timing_report
-from m3._terminal import Style, stream_is_utf8
+from m3._terminal import Style, hyperlink, stream_is_utf8, supports_hyperlinks
 
-from .branding import M3_ASCII_ART, M3_TAGLINE, render_banner
+from . import console
+from .branding import M3_ASCII_ART, M3_TAGLINE
 from .ci_credentials import ACCESS_TOKEN_ENV, parse_credential_mapping
 
 if typing.TYPE_CHECKING:
@@ -655,6 +656,24 @@ def baseline_exists(
                 pass
 
 
+def _comparison_target(
+    baseline: str | None, before: StoredRuns
+) -> tuple[str, str] | None:
+    """The run to compare with: ``--baseline``, else the latest earlier run.
+
+    Returns (run ID, label), or None when there is no earlier run.
+    """
+
+    labels = {run.run_id: run.run_label for run in before.runs}
+    if baseline is not None:
+        run_id = baseline
+    elif before.runs:
+        run_id = max(before.runs, key=lambda run: (run.created_at, run.run_id)).run_id
+    else:
+        return None
+    return run_id, labels.get(run_id) or f"Run {run_id.removeprefix('run-')[:7]}"
+
+
 def find_new_runs(before: StoredRuns, after: StoredRuns) -> tuple[StoredRun, ...]:
     """Return after-runs whose IDs were absent before pytest started."""
 
@@ -673,6 +692,15 @@ def build_run_url(run_id: str, port: int, auth_token: str | None = None) -> str:
     encoded_run_id = quote(str(run_id), safe="")
     url = f"{origin}/reports/runs/{encoded_run_id}"
     return f"{url}#m3_token={auth_token}" if auth_token is not None else url
+
+
+def build_compare_url(
+    run_id: str, baseline_run_id: str, port: int, auth_token: str
+) -> str:
+    """Build the report URL for ``run_id`` compared with ``baseline_run_id``."""
+
+    query = f"?baseline_run_id={quote(str(baseline_run_id), safe='')}"
+    return f"{build_run_url(run_id, port)}{query}#m3_token={auth_token}"
 
 
 def build_ui_url(port: int, auth_token: str) -> str:
@@ -1287,8 +1315,20 @@ def _print_start_banner(
         info.append(row("with", dot.join(details)))
     if ui:
         info.append(row("report", "opens in your browser when the run ends"))
+    project = _project_name(root) or root.name
+    summary = dot.join(
+        filter(
+            None,
+            (
+                f"{style.bold('m3')} {style.dim(version)}".rstrip(),
+                project,
+                run_id.removeprefix("run-")[:7],
+            ),
+        )
+    )
+    console.start_at_top()
     print(file=sys.stdout)
-    print(render_banner(style, info), flush=True)
+    console.print_banner(style, info, summary)
     print(flush=True)
     return True
 
@@ -1316,20 +1356,33 @@ def _print_ui_output(
         print(f"Run: {build_run_url(run.run_id, port, auth_token)}", flush=True)
 
 
-def _print_styled_ui_output(
+def _open_url(url: str) -> bool:
+    try:
+        return bool(webbrowser.open(url))
+    except (OSError, webbrowser.Error):
+        return False
+
+
+def _serve_styled(
     style: Style,
+    child: _ServerChild,
     port: int,
     auth_token: str,
     new_runs: Sequence[StoredRun],
     warnings: Sequence[str],
     *,
-    history_index: bool = False,
-) -> None:
-    """Interactive counterpart of ``_print_ui_output``."""
+    history_index: bool,
+    compare_with: tuple[str, str] | None,
+) -> bool:
+    """Interactive counterpart of the plain UI output and wait loop.
+
+    The report opens automatically; ``o``, ``c``, ``b`` and ``q`` reopen it,
+    copy its link, open the comparison with ``compare_with`` (run ID, label),
+    or stop the server. Returns False when the server stopped unexpectedly.
+    """
 
     for warning in dict.fromkeys(warnings):
         print(f"{style.glyphs.warning} Warning: {warning}", file=sys.stderr)
-    arrow = style.cyan(style.glyphs.arrow)
     links: list[tuple[str, str]] = []
     if history_index or not new_runs:
         if not history_index:
@@ -1339,16 +1392,91 @@ def _print_styled_ui_output(
         for run in new_runs:
             label = run.run_label if run.run_label is not None else "Report"
             links.append((label, build_run_url(run.run_id, port, auth_token)))
+    target = links[-1][1]
+    compare_url = (
+        build_compare_url(new_runs[-1].run_id, compare_with[0], port, auth_token)
+        if compare_with is not None and new_runs and not history_index
+        else None
+    )
+    arrow = style.cyan(style.glyphs.arrow)
+    clickable = supports_hyperlinks()
     print()
     for label, url in links:
-        print(f"  {arrow}  {style.bold(label)}  {style.underline(url)}")
-    print(
-        "     "
-        + style.dim(
-            f"opening in your browser {style.glyphs.dot} press Ctrl-C to stop the UI server"
-        )
-    )
-    print(flush=True)
+        name = style.bold(style.cyan(label))
+        if clickable:
+            print(f"  {arrow}  {hyperlink(url, name)}")
+        else:
+            print(f"  {arrow}  {name}  {style.underline(url)}")
+    with console.KeyReader() as keys:
+        if keys.enabled:
+            hints = [("o", "reopen"), ("c", "copy link")]
+            if compare_url is not None and compare_with is not None:
+                hints.append(("b", f"compare with {compare_with[1]}"))
+            hints.append(("q", "quit"))
+            line = "  ".join(
+                f"{style.grey(key)} {style.dim(text)}" for key, text in hints
+            )
+        else:
+            line = style.dim("press Ctrl-C to stop the UI server")
+        print("     " + line, flush=True)
+        try:
+            time.sleep(1)
+            if not child.alive():
+                print()
+                print("m3: UI server stopped unexpectedly", file=sys.stderr)
+                return False
+            if _open_url(target):
+                console.status(style, "opened in your browser")
+            else:
+                console.status(
+                    style,
+                    "could not open a browser; press c to copy the link"
+                    if keys.enabled
+                    else "could not open a browser; use the link above",
+                    ok=False,
+                )
+            while True:
+                if not child.alive():
+                    print()
+                    print("m3: UI server stopped unexpectedly", file=sys.stderr)
+                    return False
+                key = keys.read(0.1)
+                if key == "q":
+                    return True
+                if key == "o":
+                    if _open_url(target):
+                        console.status(style, "reopened in your browser")
+                    else:
+                        console.status(style, "could not open a browser", ok=False)
+                elif key == "c":
+                    if console.copy_to_clipboard(target):
+                        console.status(style, "link copied to clipboard")
+                    else:
+                        # No clipboard tool: show the full link to copy by hand.
+                        sys.stdout.write(f"\r\x1b[K     {target}\n")
+                        console.status(
+                            style,
+                            "no clipboard tool found; link printed above",
+                            ok=False,
+                        )
+                elif key == "b":
+                    if compare_url is not None and compare_with is not None:
+                        if _open_url(compare_url):
+                            console.status(
+                                style, f"opened comparison with {compare_with[1]}"
+                            )
+                        else:
+                            console.status(style, "could not open a browser", ok=False)
+                    elif history_index or not new_runs:
+                        console.status(style, "no new run to compare", ok=False)
+                    else:
+                        console.status(
+                            style, "no earlier run to compare with yet", ok=False
+                        )
+        finally:
+            # Leave the shell prompt on a fresh line.
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
 
 def _open_ui_in_browser(
@@ -1416,6 +1544,7 @@ def _run_ui_server(
     warnings: Sequence[str],
     *,
     history_index: bool = False,
+    compare_with: tuple[str, str] | None = None,
 ) -> int:
     child: _ServerChild | None = None
     auth_token = secrets.token_urlsafe(32)
@@ -1438,11 +1567,24 @@ def _run_ui_server(
         else:
             if history_index:
                 # `m3 ui` runs no tests, so the banner was not printed yet.
+                console.start_at_top()
                 print(file=sys.stdout)
-                print(render_banner(style, ("", style.dim(M3_TAGLINE))))
-            _print_styled_ui_output(
-                style, port, auth_token, new_runs, warnings, history_index=history_index
-            )
+                console.print_banner(
+                    style, ("", style.dim(M3_TAGLINE)), style.dim(M3_TAGLINE)
+                )
+            with _termination_signal_handlers():
+                if not _serve_styled(
+                    style,
+                    child,
+                    port,
+                    auth_token,
+                    new_runs,
+                    warnings,
+                    history_index=history_index,
+                    compare_with=compare_with,
+                ):
+                    return OPERATIONAL_ERROR
+                return pytest_code
         with _termination_signal_handlers():
             time.sleep(1)
             if not child.alive():
@@ -1697,7 +1839,14 @@ def run_test_with_runs(
         return TestRunResult(
             exit_code, new_runs, warnings, invocation_run_id, database_path, root
         )
-    server_code = _run_ui_server(database_path, port, exit_code, new_runs, warnings)
+    server_code = _run_ui_server(
+        database_path,
+        port,
+        exit_code,
+        new_runs,
+        warnings,
+        compare_with=_comparison_target(baseline, before),
+    )
     return TestRunResult(
         server_code, new_runs, warnings, invocation_run_id, database_path, root
     )

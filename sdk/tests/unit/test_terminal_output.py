@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -40,10 +41,6 @@ def _progress(reporter: _Reporter, **option: Any) -> Any:
     return progress
 
 
-def _report(nodeid: str, when: str, outcome: str) -> SimpleNamespace:
-    return SimpleNamespace(nodeid=nodeid, when=when, outcome=outcome)
-
-
 def test_live_line_hides_pytest_letters_and_paths_then_restores_them() -> None:
     reporter = _Reporter()
     progress = _progress(reporter)
@@ -61,44 +58,172 @@ def test_live_line_hides_pytest_letters_and_paths_then_restores_them() -> None:
     assert reporter._showfspath is None
 
 
-def test_live_line_keeps_failures_above_it_without_parameter_values() -> None:
+_CONTROL = re.compile(
+    r"\x1b\[(\d*)([A-Za-z])|\x1b\][^\x1b]*\x1b\\|\x1b\[[0-9;?]*[A-Za-z]"
+)
+
+
+def _screen(chunks: list[str]) -> list[str]:
+    """Replay what the plugin wrote: \\r, \\n, cursor up, erase line/below."""
+
+    lines, row, col = [""], 0, 0
+    text = "".join(chunks)
+    index = 0
+    while index < len(text):
+        match = _CONTROL.match(text, index)
+        if match:
+            index = match.end()
+            amount, command = match.group(1), match.group(2)
+            if command == "A":
+                row = max(0, row - int(amount or 1))
+            elif command == "J":
+                lines[row] = lines[row][:col]
+                del lines[row + 1 :]
+            elif command == "K":
+                lines[row] = lines[row][:col]
+            continue
+        char = text[index]
+        index += 1
+        if char == "\r":
+            col = 0
+        elif char == "\n":
+            row, col = row + 1, 0
+            if row == len(lines):
+                lines.append("")
+        else:
+            line = lines[row].ljust(col)
+            lines[row] = line[:col] + char + line[col + 1 :]
+            col += 1
+    return lines
+
+
+def _items(*nodeids: str) -> SimpleNamespace:
+    return SimpleNamespace(items=[SimpleNamespace(nodeid=nodeid) for nodeid in nodeids])
+
+
+def _run(progress: Any, nodeid: str, outcome: str, **extra: Any) -> None:
+    progress.pytest_runtest_logstart(nodeid, ("", 1, ""))
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid=nodeid, when="call", outcome=outcome, **extra)
+    )
+
+
+def test_live_block_flows_file_lines_and_failures_above_it() -> None:
     reporter = _Reporter()
     progress = _progress(reporter)
-    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2]))
-    nodeid = "tests/test_api.py::test_login[token=hunter2]"
-    progress.pytest_runtest_logstart(nodeid, ("tests/test_api.py", 1, "test_login"))
-    progress.pytest_runtest_logreport(_report(nodeid, "call", "failed"))
-    progress.pytest_runtest_logreport(
-        _report("tests/test_api.py::ok", "call", "passed")
+    secret = "tests/test_api.py::test_login[token=hunter2]"
+    progress.pytest_collection_finish(
+        _items("tests/test_api.py::test_ok", secret, "tests/test_b.py::test_skip")
     )
+    _run(progress, "tests/test_api.py::test_ok", "passed")
+    crash = SimpleNamespace(
+        message="assert 'open' == 'escalated'\nmore detail",
+        path="/repo/tests/test_api.py",
+        lineno=88,
+    )
+    _run(progress, secret, "failed", longrepr=SimpleNamespace(reprcrash=crash))
+    _run(progress, "tests/test_b.py::test_skip", "skipped")
     progress.finish()
 
-    output = "".join(reporter.written)
-    assert "hunter2" not in output
-    failure = next(text for text in reporter.written if text.endswith("\n"))
-    assert "tests/test_api.py::test_login" in failure
-    assert "2/2" in reporter.written[-1]
+    screen = _screen(reporter.written)
+    assert "hunter2" not in "".join(reporter.written)
+    assert screen[:5] == [
+        "  x tests/test_api.py::test_login",
+        "      assert 'open' == 'escalated'  - test_api.py:88",
+        "  x tests/test_api.py  1 passed - 1 failed  0.0s",
+        "  + tests/test_b.py  1 skipped  0.0s",
+        "",
+    ]
+    # Without colour the matrix is left out: its cells would all look alike.
+    assert screen[5].startswith("  x ") and "3/3" in screen[5]
+    assert len(screen) == 6
     assert reporter.lines == [""]
 
 
-def test_live_line_stays_within_the_terminal_width() -> None:
+def test_live_block_stays_within_the_terminal_width() -> None:
     reporter = _Reporter()
     reporter._tw = SimpleNamespace(fullwidth=60, hasmarkup=False, _file=None)
     progress = _progress(reporter)
-    progress.pytest_collection_finish(SimpleNamespace(items=list(range(120))))
+    progress.pytest_collection_finish(_items(*(f"t.py::t{i}" for i in range(500))))
     progress.pytest_runtest_logstart(
         "tests/test_x.py::test_" + "very_long_name_" * 10, ("", 1, "")
     )
-    assert all(visible_len(text) <= 60 for text in reporter.written)
+    screen = _screen(reporter.written)
+    assert all(len(line) < 60 for line in screen)
+    # 500 tests fold into at most three matrix rows.
+    assert len(screen) <= 1 + 3 + 1
+
+
+def test_matrix_shows_each_test_state_in_colour() -> None:
+    reporter = _Reporter()
+    reporter._tw = SimpleNamespace(
+        fullwidth=80, hasmarkup=True, _file=SimpleNamespace(encoding="utf-8")
+    )
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("a", "b", "c", "d", "e"))
+    _run(progress, "a", "passed")
+    _run(progress, "b", "failed")
+    _run(progress, "c", "skipped")
+    progress.pytest_runtest_logstart("d", ("", 1, ""))
+    screen = _screen(reporter.written)
+    assert screen[-2] == "  ■■■■·"
+    assert "\x1b[38;" in "".join(reporter.written)  # states are coloured
 
 
 def test_finished_line_marks_interrupted_runs() -> None:
     reporter = _Reporter()
     progress = _progress(reporter)
-    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2]))
-    progress.pytest_runtest_logreport(_report("a", "call", "passed"))
+    progress.pytest_collection_finish(_items("a", "b"))
+    _run(progress, "a", "passed")
     progress.finish()
-    assert reporter.written[-1].lstrip().startswith("!")
+    assert _screen(reporter.written)[-1].startswith("  ! ")
+
+
+def test_window_title_is_saved_shown_and_restored() -> None:
+    reporter = _Reporter()
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("a"))
+    _run(progress, "a", "failed")
+    progress.finish()
+    output = "".join(reporter.written)
+    assert output.startswith("\x1b[22;0t")
+    assert "\x1b]2;m3 - 1/1 - x 1\x1b\\" in output
+    assert output.endswith("\x1b[23;0t")
+
+
+def test_slowest_tests_group_cases_and_skip_fast_tests() -> None:
+    progress = _progress(_Reporter(isatty=False))
+    for nodeid, when, seconds in (
+        ("tests/a.py::slow[secret]", "setup", 0.5),
+        ("tests/a.py::slow[secret]", "call", 1.0),
+        ("tests/a.py::slow[other]", "call", 0.7),
+        ("tests/a.py::fast", "call", 0.01),
+        ("tests/b.py::medium", "call", 0.6),
+        ("tests/b.py::quick", "call", 0.4),
+    ):
+        progress.pytest_runtest_logreport(
+            SimpleNamespace(
+                nodeid=nodeid, when=when, outcome="passed", duration=seconds
+            )
+        )
+    assert progress.slowest() == [("a.py::slow (2 cases)", 1.5), ("b.py::medium", 0.6)]
+
+
+@pytest.mark.parametrize(
+    ("terminal", "seconds", "expected"),
+    [("iTerm.app", 31, True), ("iTerm.app", 5, False), ("Apple_Terminal", 31, False)],
+)
+def test_long_runs_notify_only_on_supporting_terminals(
+    monkeypatch: pytest.MonkeyPatch, terminal: str, seconds: float, expected: bool
+) -> None:
+    monkeypatch.setenv("TERM_PROGRAM", terminal)
+    reporter = _Reporter()
+    progress = _progress(reporter)
+    progress.pytest_collection_finish(_items("a"))
+    _run(progress, "a", "passed")
+    progress._started -= seconds
+    progress.finish()
+    assert ("\x1b]9;m3: 1 passed\x1b\\" in "".join(reporter.written)) is expected
 
 
 def test_live_line_yields_to_uncaptured_output_and_non_terminals() -> None:
@@ -109,7 +234,7 @@ def test_live_line_yields_to_uncaptured_output_and_non_terminals() -> None:
 def test_finish_prints_nothing_when_no_tests_were_collected() -> None:
     reporter = _Reporter()
     progress = _progress(reporter)
-    progress.pytest_collection_finish(SimpleNamespace(items=[]))
+    progress.pytest_collection_finish(_items())
     progress.finish()
     assert reporter.lines == []
 
@@ -155,3 +280,91 @@ def test_truncate_keeps_the_requested_end() -> None:
     assert truncate("abcdefgh", 5) == "…efgh"
     assert truncate("abcdefgh", 5, keep="start") == "abcd…"
     assert truncate("abc", 5) == "abc"
+
+
+def test_run_panel_adds_baseline_and_slowest_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.feedback import Comparison
+    from m3.pytest_plugin import _write_run_panel
+
+    monkeypatch.chdir(tmp_path)
+    reporter = _Reporter()
+    reporter._tw = SimpleNamespace(fullwidth=120)
+
+    def attempt(outcome: str) -> list[dict[str, str]]:
+        return [{"outcome": outcome}]
+
+    comparison = Comparison(
+        baseline_run_id="run-base",
+        current_run_id="run-1",
+        baseline_run_label="Run 7f3e1a0",
+        test_changes=(
+            {
+                "node_id": "fixed",
+                "baseline": attempt("failed"),
+                "current": attempt("passed"),
+            },
+            {
+                "node_id": "broke",
+                "baseline": attempt("passed"),
+                "current": attempt("failed"),
+            },
+            {"node_id": "added", "baseline": [], "current": attempt("passed")},
+            {"node_id": "gone", "baseline": attempt("passed"), "current": []},
+        ),
+        coverage={"current_tests": 10},
+    )
+    _write_run_panel(
+        reporter,
+        Style(False),
+        "run-1",
+        tmp_path / "feedback.json",
+        [(10, "passed", "passed")],
+        0,
+        0,
+        comparison=comparison,
+        slowest=[("a.py::slow", 2.0), ("b.py::fast", 0.5)],
+    )
+    text = "\n".join(reporter.lines)
+    assert (
+        "vs baseline   1 fixed · 1 regressed · 1 new · 1 removed · 7 unchanged  vs Run 7f3e1a0"
+        in text
+    )
+    assert "slowest       a.py::slow ━━━━━━━━━━━━ 2.0s" in text
+    assert "              b.py::fast ━━━          0.5s" in text
+    assert len({visible_len(line) for line in reporter.lines[1:]}) == 1
+
+
+def test_run_panel_without_baseline_or_timings_keeps_its_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.pytest_plugin import _write_run_panel
+
+    monkeypatch.chdir(tmp_path)
+    reporter = _Reporter()
+    _write_run_panel(
+        reporter,
+        Style(False),
+        "run-1",
+        tmp_path / "f.json",
+        [(1, "passed", "passed")],
+        0,
+        0,
+    )
+    keys = [line.split()[1] for line in reporter.lines[2:-1]]
+    assert keys == ["verdicts", "observations", "feedback"]
+
+
+def test_open_box_rows_are_cut_instead_of_wrapping() -> None:
+    lines = Style(False).box("Title", [("feedback", "x" * 80)], width=40)
+    assert all(visible_len(line) <= 40 for line in lines)
+    assert lines[1].endswith("…")
+
+
+def test_fit_closes_a_hyperlink_it_cuts() -> None:
+    from m3._terminal import fit, hyperlink
+
+    cut = fit("see " + hyperlink("file:///a", "a" * 30), 10)
+    assert visible_len(cut) == 10
+    assert cut.endswith("\x1b]8;;\x1b\\…")
