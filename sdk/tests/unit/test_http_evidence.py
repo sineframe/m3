@@ -15,49 +15,55 @@ from m3.transport.http_evidence import (
     [
         (
             'Bearer realm="m3", error="invalid_token", nonce="secret"',
-            'Bearer realm="m3", error="invalid_token"',
+            'Bearer error="invalid_token"',
         ),
         (
             "Bearer error=invalid_token, scope=read",
-            'Bearer error="invalid_token", scope="read"',
+            'Bearer error="invalid_token"',
         ),
         ("Negotiate c2VjcmV0LXRpY2tldA==", "Negotiate"),
         ("Negotiate c2VjcmV0", "Negotiate"),
         (
             'Basic realm="a", Bearer realm="b", resource_metadata="https://x/.well-known"',
-            'Basic realm="a", Bearer realm="b", resource_metadata="https://x/.well-known"',
+            "Basic, Bearer",
         ),
-        ('Bearer realm="say \\"hi\\""', 'Bearer realm="say \\"hi\\""'),
-        ('Bearer realm="m3", ;garbage token="leak"', 'Bearer realm="m3"'),
+        ('Bearer realm="say \\"hi\\""', "Bearer"),
+        ('Bearer realm="m3", ;garbage token="leak"', "Bearer"),
         ("Bearer", "Bearer"),
         ("Negotiate, NTLM", "Negotiate, NTLM"),
-        ('Basic, Bearer, Digest realm="x"', 'Basic, Bearer, Digest realm="x"'),
+        ('Basic, Bearer, Digest realm="x"', "Basic, Bearer, Digest"),
         ("Basic , Bearer", "Basic, Bearer"),
         ("Negotiate c2VjcmV0, NTLM", "Negotiate, NTLM"),
         ("", None),
         (
             'Bearer realm="api", eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln',
-            'Bearer realm="api"',
+            "Bearer",
         ),
         ('Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln realm="api"', "Bearer"),
-        ('Basic realm="x", dXNlcjpwYXNz', 'Basic realm="x"'),
+        ('Basic realm="x", dXNlcjpwYXNz', "Basic"),
         ("Bearer abc!def", "Bearer"),
         ('Bearer realm="x" Basic', "Bearer"),
-        ('Bearer realm="x", X-Vendor-Token realm="y"', 'Bearer realm="x"'),
-        ("bearer REALM=x", 'Bearer realm="x"'),
+        ('Bearer realm="x", X-Vendor-Token realm="y"', "Bearer"),
+        ("bearer REALM=x", "Bearer"),
         ('realm="orphan"', None),
+        ('Bearer resource_metadata="https://u:PW@h/x?access_token=S"', "Bearer"),
+        ('Bearer error="custom_secret_value"', "Bearer"),
+        ('Bearer ERROR=invalid_token, realm="x"', 'Bearer error="invalid_token"'),
+        (
+            'Bearer error="insufficient_scope", scope="a b"',
+            'Bearer error="insufficient_scope"',
+        ),
     ],
 )
-def test_safe_challenge_keeps_only_schemes_and_explanatory_parameters(
+def test_safe_challenge_keeps_only_schemes_and_the_error_code(
     challenge: str, expected: str | None
 ) -> None:
     assert safe_challenge(challenge) == expected
 
 
-def test_safe_challenge_bounds_parameter_values() -> None:
+def test_safe_challenge_does_not_copy_parameter_values() -> None:
     rendered = safe_challenge(f'Bearer error_description="{"x" * 5000}"')
-    assert rendered is not None
-    assert len(rendered) < 600
+    assert rendered == "Bearer"
 
 
 def test_http_exchange_payload_drops_unlisted_headers() -> None:
@@ -74,7 +80,7 @@ def test_http_exchange_payload_drops_unlisted_headers() -> None:
         "status_code": 401,
         "headers": [
             {"name": "content-type", "value": "application/json"},
-            {"name": "www-authenticate", "value": 'Bearer realm="a"'},
+            {"name": "www-authenticate", "value": "Bearer"},
             {"name": "www-authenticate", "value": "Negotiate"},
         ],
     }

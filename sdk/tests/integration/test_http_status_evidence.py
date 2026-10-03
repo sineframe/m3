@@ -132,14 +132,9 @@ async def test_refused_initialize_records_http_401_and_a_safe_challenge(
         if header.name == "www-authenticate"
     ]
     assert len(challenges) == 1
-    assert challenges[0].startswith("Bearer ")
-    for kept in (
-        'realm="m3"',
-        'error="invalid_token"',
-        'error_description="token expired"',
-        "resource_metadata=",
-    ):
-        assert kept in challenges[0]
+    assert challenges == ['Bearer error="invalid_token"']
+    for dropped in ("oauth-protected-resource", "token expired"):
+        assert dropped not in dumped
     assert "challenge-only-secret" not in dumped
     assert "rejected-fixture-token" not in dumped
 

@@ -4,7 +4,8 @@ The official MCP client folds a non-2xx response into a generic JSON-RPC
 error, so the HTTP status and any authentication challenge must be observed
 on the HTTP client itself.  Only the status, the request method and an
 allowlisted subset of response headers are kept; ``WWW-Authenticate`` keeps
-its schemes and the RFC 6750 / RFC 9728 parameters that explain a refusal.
+only its registered schemes and an RFC 6750 ``error`` code, never a free-form
+parameter value.
 """
 
 from __future__ import annotations
@@ -21,18 +22,11 @@ _SAFE_HEADERS: Final[tuple[str, ...]] = (
     "request-id",
     "x-request-id",
 )
-_CHALLENGE_PARAMS: Final[frozenset[str]] = frozenset(
-    {
-        "realm",
-        "error",
-        "error_description",
-        "error_uri",
-        "scope",
-        "resource_metadata",
-    }
+# RFC 6750 section 3.1 error codes; no other parameter value is recorded.
+_ERROR_CODES: Final[frozenset[str]] = frozenset(
+    {"invalid_request", "invalid_token", "insufficient_scope"}
 )
 _MAX_HEADER_VALUE: Final[int] = 2048
-_MAX_PARAM_VALUE: Final[int] = 512
 # IANA HTTP Authentication Scheme Registry.  A bare token in scheme position
 # is indistinguishable from a leaked credential, so only registered schemes
 # are recorded.
@@ -65,17 +59,10 @@ _SCHEME: Final[re.Pattern[str]] = re.compile(rf"({_TOKEN})(?=[ \t]|,|$)")
 _TOKEN68: Final[re.Pattern[str]] = re.compile(rf"[A-Za-z0-9\-._~+/]+=*{_END}")
 
 
-def _quoted(value: str) -> str:
-    if value.startswith('"') and value.endswith('"') and len(value) >= 2:
-        value = re.sub(r"\\(.)", r"\1", value[1:-1])
-    value = value[:_MAX_PARAM_VALUE]
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
 def safe_challenge(value: str) -> str | None:
-    """Return the challenge with only its schemes and explanatory parameters.
+    """Return the registered schemes, each with at most an RFC 6750 error code.
 
-    Token68 credentials and unknown parameters are dropped, and only
+    Token68 credentials and every other parameter are dropped, and only
     registered schemes are kept.  Parsing stops at the first element that is
     not a registered scheme, a parameter or a scheme's token68, so nothing
     after it can leak through.
@@ -99,9 +86,15 @@ def safe_challenge(value: str) -> str | None:
             break
         param = _PARAM.match(value, position)
         if param is not None and challenges:
-            name = param.group(1).lower()
-            if name in _CHALLENGE_PARAMS:
-                challenges[-1][1].append(f"{name}={_quoted(param.group(2))}")
+            code = param.group(2)
+            if code.startswith('"'):
+                code = code[1:-1]
+            if (
+                param.group(1).lower() == "error"
+                and code in _ERROR_CODES
+                and not challenges[-1][1]
+            ):
+                challenges[-1][1].append(f'error="{code}"')
             position = param.end()
             boundary = False
             continue
