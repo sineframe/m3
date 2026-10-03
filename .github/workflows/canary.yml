@@ -21,6 +21,44 @@ env:
   SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  status:
+    name: Mark canary building
+    # Same gate as build, for pull requests only.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'canary') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'canary')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Runs no repository code.
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Mark the comment as building
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          body=$(printf '<!-- m3-canary -->\n⏳ **Building canary** for %s. Install commands appear here once it passes its install checks ([run](%s)).' "${SOURCE_SHA:0:7}" "$run_url")
+          # Only the run for the pull request's current head owns the comment, so
+          # a superseded run never overwrites a newer state.
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha)
+          if [[ "$head" != "$SOURCE_SHA" ]]; then
+            echo "Skipping comment: ${SOURCE_SHA:0:7} is no longer the head (${head:0:7})"
+            exit 0
+          fi
+          comment_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- m3-canary -->"))) | .id' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+          fi
+
   build:
     name: Build canary
     if: >-
@@ -195,18 +233,6 @@ jobs:
           gh release create "$TAG" "$RUNNER_TEMP"/m3-canary/* --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" --prerelease --latest=false \
             --title "Canary ${VERSION} (${TAG})" --notes-file "$RUNNER_TEMP/notes.md"
-      - name: Comment install instructions on the pull request
-        if: github.event_name == 'pull_request'
-        run: |
-          set -euo pipefail
-          body=$(printf '<!-- m3-canary -->\n%s' "$(cat "$RUNNER_TEMP/notes.md")")
-          comment_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- m3-canary -->"))) | .id' | head -n 1)
-          if [[ -n "$comment_id" ]]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null
-          else
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
-          fi
 
   verify:
     name: Install canary (uv ${{ matrix.uv }})
@@ -256,6 +282,52 @@ jobs:
           "${runner[@]}" "$m3" setup --project-root "$project" | tee "$RUNNER_TEMP/setup.log"
           grep -F "Installing matching SDK from $TAG" "$RUNNER_TEMP/setup.log"
           "${runner[@]}" "$m3" doctor --project-root "$project"
+
+  comment:
+    name: Report canary on the pull request
+    needs: [status, build, publish, verify]
+    # Runs after the install checks, whether they passed or failed. A cancelled
+    # run was superseded; the newer run reports instead.
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.build.result != 'skipped' &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Runs no repository code.
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PASSED: ${{ needs.build.result == 'success' && needs.publish.result == 'success' && needs.verify.result == 'success' }}
+    steps:
+      - name: Write the ready or failed state
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [[ "$PASSED" == true ]]; then
+            notes=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+            body=$(printf '<!-- m3-canary -->\n✅ %s' "${notes#📦 }")
+          else
+            body=$(printf '<!-- m3-canary -->\n❌ **Canary failed** for %s. Do not install `%s` until a new build passes; see [the run](%s).' "${SOURCE_SHA:0:7}" "$TAG" "$run_url")
+          fi
+          # Only the run for the pull request's current head owns the comment, so
+          # a superseded run never overwrites a newer state.
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha)
+          if [[ "$head" != "$SOURCE_SHA" ]]; then
+            echo "Skipping comment: ${SOURCE_SHA:0:7} is no longer the head (${head:0:7})"
+            exit 0
+          fi
+          comment_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- m3-canary -->"))) | .id' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+          fi
 
   cleanup:
     name: Remove canary
