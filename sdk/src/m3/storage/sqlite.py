@@ -221,6 +221,27 @@ class _CompatConnection:
 _QUEUE_LEASE_SECONDS = 30.0
 
 
+# Persisted tool-call counts are only valid for the trace projection that
+# produced them; a row stamped with another TraceView version is recomputed.
+_TRACE_VIEW_SCHEMA_VERSION = TraceView.model_fields["schema_version"].default
+
+
+def _cached_tool_call_counts(raw: str | None) -> tuple[int, int] | None:
+    """Decode stored counts, or ``None`` if absent, malformed, or stale."""
+    try:
+        cached = _loads(raw)
+    except ValueError:
+        return None
+    if (
+        isinstance(cached, Mapping)
+        and cached.get("schema_version") == _TRACE_VIEW_SCHEMA_VERSION
+        and type(cached.get("total")) is int
+        and type(cached.get("successful")) is int
+    ):
+        return cached["total"], cached["successful"]
+    return None
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -397,7 +418,7 @@ CREATE TABLE IF NOT EXISTS v2_executions (
   id TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL, specification_json TEXT,
   provenance_json TEXT, parent_execution_id TEXT REFERENCES v2_executions(id),
   created_at TEXT NOT NULL, deleted_at TEXT, run_id TEXT, suite_id INTEGER REFERENCES v2_suites(id),
-  project_id TEXT REFERENCES v2_projects(id)
+  project_id TEXT REFERENCES v2_projects(id), tool_call_counts_json TEXT
 );
 CREATE TABLE IF NOT EXISTS v2_execution_server_bindings (
   execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
@@ -612,6 +633,7 @@ class _SqliteBase:
                     ("v2_test_results", "suite_id", "INTEGER"),
                     ("v2_suites", "project_id", "TEXT"),
                     ("v2_executions", "project_id", "TEXT"),
+                    ("v2_executions", "tool_call_counts_json", "TEXT"),
                     ("v2_test_runs", "project_id", "TEXT"),
                     ("v2_test_runs", "run_label", "TEXT"),
                     ("v2_commands", "queue_key", "TEXT"),
@@ -2315,7 +2337,84 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None:
         trace = self.get_trace(execution_id)
-        return trace.view() if trace is not None else None
+        if trace is None:
+            return None
+        view = trace.view()
+        self._remember_tool_call_counts(_execution_key(execution_id), view)
+        return view
+
+    def _remember_tool_call_counts(self, key: str, view: TraceView) -> None:
+        """Best-effort persist: reads first and never waits on the write lock."""
+        total = view.summary.tool_call_count
+        successful = view.summary.successful_tool_call_count
+        counts = _json(
+            {
+                "schema_version": view.schema_version,
+                "total": total,
+                "successful": successful,
+            }
+        )
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT tool_call_counts_json FROM v2_executions WHERE id=?",
+                    (key,),
+                ).fetchone()
+                if row is None or _cached_tool_call_counts(row[0]) == (
+                    total,
+                    successful,
+                ):
+                    return
+                connection.execute("PRAGMA busy_timeout=0")
+                connection.execute(
+                    "UPDATE v2_executions SET tool_call_counts_json=? WHERE id=? "
+                    "AND (tool_call_counts_json IS NULL OR tool_call_counts_json!=?)",
+                    (counts, key, counts),
+                )
+        except StorageError:
+            pass
+        except Exception as exc:
+            if not _is_database_error(exc):
+                raise
+
+    def tool_call_counts(
+        self, execution_ids: Sequence[ExecutionId | str]
+    ) -> dict[str, tuple[int, int]]:
+        """Return ``{execution_id: (total, successful)}`` tool-call counts.
+
+        Counts match ``get_trace_view(id).summary``. Executions that are missing,
+        deleted, unfinished, or whose trace is unavailable are omitted.
+        """
+        keys = list(dict.fromkeys(_execution_key(value) for value in execution_ids))
+        stored: dict[str, str | None] = {}
+        with self._connect() as connection:
+            for start in range(0, len(keys), 500):
+                chunk = keys[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = connection.execute(
+                    "SELECT id, tool_call_counts_json FROM v2_executions "
+                    f"WHERE deleted_at IS NULL AND id IN ({placeholders})",
+                    chunk,
+                ).fetchall()
+                stored.update((str(row[0]), row[1]) for row in rows)
+        counts: dict[str, tuple[int, int]] = {}
+        for key in keys:
+            if key not in stored:
+                continue
+            cached = _cached_tool_call_counts(stored[key])
+            if cached is not None:
+                counts[key] = cached
+                continue
+            try:
+                view = self.get_trace_view(key)
+            except (TraceNotFinalized, TraceUnavailable):
+                continue
+            if view is not None:
+                counts[key] = (
+                    view.summary.tool_call_count,
+                    view.summary.successful_tool_call_count,
+                )
+        return counts
 
     @_timing.counted("store.save_snapshot")
     def save_snapshot(self, snapshot: ExecutionState) -> None:

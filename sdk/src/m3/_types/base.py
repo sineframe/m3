@@ -15,6 +15,9 @@ from datetime import timezone as _timezone
 from enum import Enum as _Enum
 from types import MappingProxyType as _MappingProxyType
 from typing import (
+    TYPE_CHECKING as _TYPE_CHECKING,
+)
+from typing import (
     Any as _Any,
 )
 from typing import (
@@ -42,6 +45,9 @@ from pydantic import (
 from pydantic import (
     model_validator as _model_validator,
 )
+
+if _TYPE_CHECKING:
+    from typing_extensions import Self as _Self
 
 
 def _utc_now() -> _datetime:
@@ -104,6 +110,9 @@ def _json_safe(value: _Any) -> bool:
         return True
     if isinstance(value, _Enum):
         return _json_safe(value.value)
+    if isinstance(value, FrozenModel):
+        # Validated and frozen at construction (and in ``model_copy``).
+        return True
     if isinstance(value, _BaseModel):
         for field_name, field_info in type(value).model_fields.items():
             if field_info.exclude:
@@ -145,6 +154,15 @@ def _deep_freeze(value: _Any) -> _Any:
     return value
 
 
+def _checked_freeze(model_type: type[_BaseModel], field_name: str, value: _Any) -> _Any:
+    """Validate a field value as JSON-safe (unless excluded) and deep-freeze it."""
+
+    field_info = model_type.model_fields.get(field_name)
+    if (field_info is None or not field_info.exclude) and not _json_safe(value):
+        raise ValueError(f"{field_name} contains a non-JSON-serializable value")
+    return _deep_freeze(value)
+
+
 class FrozenModel(_BaseModel):
     """Base configuration shared by public value objects."""
 
@@ -158,14 +176,23 @@ class FrozenModel(_BaseModel):
     @_model_validator(mode="after")
     def _freeze_nested_values(self) -> FrozenModel:
         for field_name, value in self.__dict__.items():
-            field_info = type(self).model_fields.get(field_name)
-            if field_info is None or not field_info.exclude:
-                if not _json_safe(value):
-                    raise ValueError(
-                        f"{field_name} contains a non-JSON-serializable value"
-                    )
-            object.__setattr__(self, field_name, _deep_freeze(value))
+            object.__setattr__(
+                self, field_name, _checked_freeze(type(self), field_name, value)
+            )
         return self
+
+    def model_copy(
+        self, *, update: _Mapping[str, _Any] | None = None, deep: bool = False
+    ) -> _Self:
+        """Copy like Pydantic, applying construction-time checks to ``update``."""
+
+        copy = super().model_copy(update=update, deep=deep)
+        if update:
+            for field_name, value in update.items():
+                object.__setattr__(
+                    copy, field_name, _checked_freeze(type(self), field_name, value)
+                )
+        return copy
 
     @_field_serializer("*", check_fields=False)
     def _serialize_nested_values(self, value: _Any) -> _Any:

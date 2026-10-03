@@ -48,7 +48,8 @@ def _count(view: TraceView, marker: str) -> int:
 
 
 def _with_marker(event: Event, old: str, new: str) -> Event:
-    payload = json.loads(json.dumps(event.payload).replace(old, new))
+    dumped = json.dumps(event.model_dump(mode="json")["payload"])
+    payload = json.loads(dumped.replace(old, new))
     return event.model_copy(update={"payload": payload})
 
 

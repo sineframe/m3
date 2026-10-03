@@ -605,10 +605,10 @@ def test_mrtr_elicitation_distinguishes_observed_empty_responses() -> None:
 def test_form_elicitation_with_omitted_mode_is_projected() -> None:
     trace = _mrtr_trace()
     required = trace.events[8]
-    result = required.payload["result"].copy()
-    requests = result["inputRequests"].copy()
-    request = requests["shipping_address"].copy()
-    params = request["params"].copy()
+    result = dict(required.payload["result"])
+    requests = dict(result["inputRequests"])
+    request = dict(requests["shipping_address"])
+    params = dict(request["params"])
     params.pop("mode")
     requests["shipping_address"] = {**request, "params": params}
     result["inputRequests"] = requests
@@ -657,13 +657,13 @@ def _mrtr_operation_calls(view, operation: str, method: str | None):
 
 def _without_mrtr_request_state(trace):
     required = trace.events[8]
-    result = required.payload["result"].copy()
+    result = dict(required.payload["result"])
     result.pop("requestState", None)
     required = required.model_copy(
         update={"payload": {**required.payload, "result": result}}
     )
     retry = trace.events[9]
-    params = retry.payload["params"].copy()
+    params = dict(retry.payload["params"])
     params.pop("requestState", None)
     retry = retry.model_copy(update={"payload": {**retry.payload, "params": params}})
     return trace.model_copy(
@@ -787,7 +787,7 @@ def _three_mrtr_rounds_reusing_state(trace):
             }
         }
     )
-    retry_params = retry.payload["params"].copy()
+    retry_params = dict(retry.payload["params"])
     retry_params["inputResponses"] = {"next_input": {"action": "accept"}}
     third_retry = retry.model_copy(
         update={
