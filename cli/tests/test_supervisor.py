@@ -641,11 +641,15 @@ def test_ui_server_environment_excludes_project_settings_and_credentials() -> No
         "M3_RUN_LIVE_OPENCODE": "1",
         "M3_LIVE_OPENCODE_MODEL": "opencode/model",
         "OPENCODE_API_KEY": "provider-secret",
+        "M3_LOG_LEVEL": "DEBUG",
+        "M3_LOG_FILE": "/tmp/api.log",
     }
 
     assert supervisor._server_environment(source) == {
         "PATH": "/bin",
         "HOME": "/tmp/home",
+        "M3_LOG_LEVEL": "DEBUG",
+        "M3_LOG_FILE": "/tmp/api.log",
     }
 
 

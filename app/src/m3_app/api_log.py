@@ -12,15 +12,17 @@ user data.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import functools
 import inspect
 import logging
+import logging.handlers
 import os
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -29,6 +31,11 @@ from typing import Any
 import fastapi.routing
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 LEVEL_ENV = "M3_LOG_LEVEL"
 FILE_ENV = "M3_LOG_FILE"
@@ -88,7 +95,9 @@ def _configure() -> None:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             _roll_over(path)
-            handler = logging.FileHandler(path, mode="a", encoding="utf-8")
+            # Reopens the file when another process has rolled it over, so
+            # running processes don't keep appending to ``api.log.1``.
+            handler = logging.handlers.WatchedFileHandler(path, encoding="utf-8")
         except OSError as exc:
             print(
                 f"m3: API request log disabled: cannot open {path} ({type(exc).__name__})",
@@ -109,13 +118,38 @@ def _configure() -> None:
 
 
 def _roll_over(path: Path) -> None:
-    """Keep one backup once the log passes ``MAX_BYTES``; checked at start only."""
+    """Keep one backup once the log passes ``MAX_BYTES``; checked at start only.
+
+    The size check and rename run under a lock shared by every process, so two
+    processes starting together can't both rotate and replace the backup with
+    the other's fresh file.
+    """
     try:
-        if path.stat().st_size <= MAX_BYTES:
-            return
-        os.replace(path, path.with_name(path.name + ".1"))
-    except OSError:  # missing file, or another process rolled it first
+        with _file_lock(path.with_name(path.name + ".lock")):
+            if path.stat().st_size <= MAX_BYTES:
+                return
+            os.replace(path, path.with_name(path.name + ".1"))
+    except OSError:  # no log yet, lock unavailable, or file in use (Windows)
         return
+
+
+@contextlib.contextmanager
+def _file_lock(path: Path) -> Iterator[None]:
+    with open(path, "a+b") as handle:
+        if sys.platform == "win32":
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _app_version() -> str:
@@ -295,7 +329,11 @@ def _test_id() -> str:
     current = os.environ.get("PYTEST_CURRENT_TEST")
     if not current:
         return ""
-    return f" test={current.rsplit(' (', 1)[0]}"
+    nodeid = current.rsplit(" (", 1)[0]
+    # Parameter values can hold secrets; keep only that the test is parametrized.
+    if "[" in nodeid:
+        nodeid = nodeid.split("[", 1)[0] + "[param]"
+    return f" test={nodeid}"
 
 
 def _fmt(ns: int) -> str:

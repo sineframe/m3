@@ -300,7 +300,7 @@ Levels:
 
 | Level | Written when |
 | --- | --- |
-| `DEBUG` | After each request line, a breakdown per store method, slowest first, and the pytest node ID when the request came from a test: `GET /api/v2/executions store: list_executions=0.9ms/1 test=tests/integration/test_api_v2.py::test_list`. |
+| `DEBUG` | After each request line, a breakdown per store method, slowest first, and the pytest node ID when the request came from a test: `GET /api/v2/executions store: list_executions=0.9ms/1 test=tests/integration/test_api_v2.py::test_list`. Parametrized node IDs end in `[param]` instead of their parameter values, which may contain secrets. |
 | `INFO` | Every request, plus one `session start` line per process. |
 | `WARNING` | Instead of the `INFO` line when `total` is 1 second or more, prefixed with `slow`. |
 | `ERROR` | Instead of the `INFO` line when the endpoint raises. Only the exception class is logged, as `error=KeyError`, never its message. |
@@ -314,7 +314,8 @@ M3_LOG_LEVEL=DEBUG m3 ui
 
 Each process appends to the file; a new session never clears it. When a
 process starts and the file is over 10 MB, it is renamed to `api.log.1`,
-replacing any earlier `api.log.1`. If the file cannot be opened, the app prints
+replacing any earlier `api.log.1`. Only one process rotates at a time, and
+processes that are already running switch to the new `api.log`. If the file cannot be opened, the app prints
 one warning and keeps serving requests without logging.
 
 To list the slowest requests:

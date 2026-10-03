@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -144,3 +146,57 @@ def test_oversized_log_rolls_over_at_start(
     assert (log_file.parent / "api.log.1").read_text() == "previous session\n"
     assert "previous session" not in log_file.read_text()
     assert logging.getLogger("m3_app.api").propagate is False
+
+
+def test_debug_test_id_drops_parameter_values(
+    tmp_path: Path, log_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(api_log.LEVEL_ENV, "DEBUG")
+    app = create_app(Settings(database_path=str(tmp_path / "api.sqlite")))
+    with TestClient(app) as client:
+        monkeypatch.setenv(
+            "PYTEST_CURRENT_TEST",
+            "tests/test_auth.py::test_login[sk-live-secret] (call)",
+        )
+        client.get("/api/v2/executions")
+
+    (debug,) = _lines(log_file, "DEBUG")
+    assert debug.endswith("test=tests/test_auth.py::test_login[param]")
+    assert "sk-live-secret" not in log_file.read_text()
+
+
+def test_running_process_follows_rollover_by_another_process(
+    tmp_path: Path, log_file: Path
+) -> None:
+    with _client(tmp_path) as client:
+        client.get("/api/v2/executions")
+        # Another process starting up rolls the file over.
+        os.replace(log_file, log_file.parent / "api.log.1")
+        client.get("/api/v2/profiles")
+
+    assert "GET /api/v2/profiles" not in (log_file.parent / "api.log.1").read_text()
+    assert "GET /api/v2/profiles 200" in log_file.read_text()
+
+
+def test_rollover_waits_for_the_shared_lock(
+    log_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(api_log, "MAX_BYTES", 10)
+    log_file.parent.mkdir(parents=True)
+    log_file.write_text("previous session\n")
+    backup = log_file.parent / "api.log.1"
+
+    with api_log._file_lock(log_file.parent / "api.log.lock"):
+        worker = threading.Thread(target=api_log._roll_over, args=(log_file,))
+        worker.start()
+        worker.join(timeout=0.2)
+        assert worker.is_alive()
+        assert not backup.exists()
+    worker.join(timeout=5)
+
+    assert backup.read_text() == "previous session\n"
+    # A second process checking after the rotation sees the fresh file and
+    # leaves the backup alone.
+    log_file.write_text("new\n")
+    api_log._roll_over(log_file)
+    assert backup.read_text() == "previous session\n"
