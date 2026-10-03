@@ -456,6 +456,7 @@ class RuntimeManager:
                 )
                 return await asyncio.to_thread(self._lease, cached)
         from_manifest = False
+        resolved_manifest_url: str | None = None
         url = spec.get("url") or spec.get("asset_url") or spec.get("download_url")
         manifest_url = spec.get("manifest_url")
         if not url and not manifest_url and version == "latest":
@@ -472,6 +473,7 @@ class RuntimeManager:
                 resolved_version=None if version == "latest" else version,
             )
             manifest_url = _url(manifest_url)
+            resolved_manifest_url = _url_no_query(manifest_url)
             manifest = await self._resolve_manifest(kind, manifest_url, version, target)
             item = self._select_manifest_asset(kind, manifest, target, version)
             resolved_manifest_version = (
@@ -657,6 +659,7 @@ class RuntimeManager:
                         "url": _url_no_query(url),
                         "sha256": digest,
                         "source": source,
+                        "manifest_url": resolved_manifest_url,
                         "executable": executable_name,
                         "asset_name": spec.get("asset_name"),
                         "verification_method": spec.get(
@@ -809,22 +812,31 @@ class RuntimeManager:
         parent = self.cache_root / kind / version / target
         if _cache_path_has_symlink(parent, self.cache_root) or not parent.is_dir():
             return None
+        canonical = {
+            _url_no_query(candidate)
+            for candidate in (
+                default_manifest_url(kind, version),
+                default_manifest_url(kind, "latest"),
+            )
+            if candidate
+        }
         candidates = [
             path
             for path in parent.glob("sha256-*")
             if not _cache_path_has_symlink(path, self.cache_root)
             and self._receipt_valid(path)
-            and self._receipt_source(path) != "selector"
+            and self._receipt_manifest_url(path) in canonical
         ]
         return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
-    def _receipt_source(root: Path) -> Any:
+    def _receipt_manifest_url(root: Path) -> str | None:
         try:
             receipt = json.loads((root / "receipt.json").read_text(encoding="utf-8"))
-            return receipt["provenance"].get("source")
+            value = receipt["provenance"].get("manifest_url")
         except (OSError, ValueError, KeyError, AttributeError, TypeError):
-            return "selector"
+            return None
+        return value if isinstance(value, str) else None
 
     def _lease(
         self, destination: Path, executable_name: str | None = None

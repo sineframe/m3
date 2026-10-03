@@ -38,9 +38,10 @@ selection. A custom ACP agent owns its launch executable and cache.
 by workers in that `m3 test` invocation, including xdist workers. A later CLI
 invocation resolves it again. A plain concrete version can use a valid matching
 cache entry without a metadata request only when that entry was resolved from
-release or manifest metadata (provenance `source` other than `selector`).
-Entries installed from an explicit download URL are reused only by selectors
-that name the same digest. Cache hits are keyed by harness,
+the harness's built-in release metadata URL, for that version or for `latest`
+(provenance `manifest_url`). Entries installed from an explicit download URL or
+a custom `manifest_url` are reused only by selectors that name the same digest.
+Cache hits are keyed by harness,
 resolved version, target, and archive digest.
 
 ## Release metadata and target rules
@@ -156,8 +157,10 @@ The receipt stores a top-level `format` number (currently `2`), the
 `provenance` object, the SHA-256 of every installed file in `files`, and
 `executables`, the sorted relative paths of files with the owner execute bit
 (an empty list on Windows). The `provenance` object stores `kind`, `version`,
-`target`, query-stripped `url`, `sha256`, `source`, `executable`, `companions`,
-`asset_name`, `verification_method`, and `immutable_release`. `source` records
+`target`, query-stripped `url`, `sha256`, `source`, `manifest_url`, `executable`,
+`companions`, `asset_name`, `verification_method`, and `immutable_release`.
+`manifest_url` is the query-stripped metadata URL used for resolution, or `null`
+for an explicit download URL. `source` records
 where the asset metadata came from: `github-release`, `claude-manifest`,
 `manifest` (any other manifest URL), or `selector` (an explicit download URL in
 the selector). M3 sets it; neither selector keys nor manifest contents can

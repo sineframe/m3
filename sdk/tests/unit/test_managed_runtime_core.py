@@ -124,8 +124,15 @@ def archive_server():
 
 @pytest.mark.asyncio
 async def test_acquire_receipt_cache_hit_progress_and_prune(
-    tmp_path: Path, archive_server: str
+    tmp_path: Path, archive_server: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import m3.runtime.core as core
+
+    monkeypatch.setattr(
+        core,
+        "default_manifest_url",
+        lambda *_args: archive_server.replace("/asset.zip", "/manifest.json"),
+    )
     project = tmp_path / "project"
     project.mkdir()
     cache = tmp_path / "cache"
@@ -133,13 +140,7 @@ async def test_acquire_receipt_cache_hit_progress_and_prune(
     digest = hashlib.sha256(_Server.body).hexdigest()
     manager = RuntimeManager(cache, project, tmp_path / "invoke", events)
     try:
-        first = await manager.acquire(
-            "claude",
-            {
-                "version": "1.2.3",
-                "manifest_url": archive_server.replace("/asset.zip", "/manifest.json"),
-            },
-        )
+        first = await manager.acquire("claude", "1.2.3")
         entries = list_cache(cache)
         assert len(entries) == 1
         assert entries[0]["status"] == "ready"
@@ -1307,7 +1308,7 @@ async def test_cache_hit_revalidates_current_companions_and_package_metadata(
 
 
 @pytest.mark.asyncio
-async def test_plain_pin_never_reuses_selector_sourced_entry(
+async def test_plain_pin_never_reuses_explicit_url_entry(
     tmp_path: Path, archive_server: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import m3.runtime.core as core
@@ -1327,6 +1328,7 @@ async def test_plain_pin_never_reuses_selector_sourced_entry(
     )
     await explicit.release()
     assert _Server.requests == 1
+    assert list_cache(cache)[0]["provenance"]["manifest_url"] is None
     assert manager._cached_version("claude", "1.2.3", target) is None
 
     plain = await manager.acquire("claude", "1.2.3")
@@ -1334,6 +1336,61 @@ async def test_plain_pin_never_reuses_selector_sourced_entry(
     # The plain pin resolved through the manifest instead of the offline path.
     assert _Server.requests == 2
     assert manager._cached_version("claude", "1.2.3", target) is None
+
+
+@pytest.mark.asyncio
+async def test_custom_manifest_entry_never_satisfies_plain_pin(
+    tmp_path: Path, archive_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import m3.runtime.core as core
+
+    custom = archive_server.replace("/asset.zip", "/manifest-custom.json")
+    official = archive_server.replace("/asset.zip", "/manifest-official.json")
+    monkeypatch.setattr(core, "default_manifest_url", lambda *_args: official)
+    log = tmp_path / "lookups.log"
+    monkeypatch.setattr(_Server, "manifest_log", str(log))
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    target = detect_target("claude")
+
+    custom_lease = await manager.acquire(
+        "claude", {"version": "1.2.3", "manifest_url": custom}
+    )
+    await custom_lease.release()
+    assert log.read_text().count("lookup") == 1
+
+    plain = await manager.acquire("claude", "1.2.3")
+    await plain.release()
+    # The plain pin consulted the official metadata instead of reusing the entry.
+    assert log.read_text().count("lookup") == 2
+    assert manager._cached_version("claude", "1.2.3", target) is None
+    assert list_cache(cache)[0]["provenance"]["manifest_url"] == custom
+
+
+@pytest.mark.asyncio
+async def test_canonical_default_manifest_entry_gives_offline_hit(
+    tmp_path: Path, archive_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import m3.runtime.core as core
+
+    manifest = archive_server.replace("/asset.zip", "/manifest.json")
+    monkeypatch.setattr(
+        core, "default_manifest_url", lambda *_args: manifest + "?channel=stable"
+    )
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    target = detect_target("claude")
+    assert manager._cached_version("claude", "1.2.3", target) is None
+
+    first = await manager.acquire("claude", "1.2.3")
+    await first.release()
+    assert list_cache(cache)[0]["provenance"]["manifest_url"] == manifest
+    requests = _Server.requests
+
+    second = await manager.acquire("claude", "1.2.3")
+    await second.release()
+    assert second.executable == first.executable
+    assert _Server.requests == requests
 
 
 @pytest.mark.asyncio
@@ -1400,11 +1457,11 @@ async def test_generic_manifest_cannot_set_provenance_source(
     monkeypatch.setattr(_Server, "manifest_extra", {"source": claimed})
     cache = tmp_path / "cache"
     manager = RuntimeManager(cache, tmp_path / "project")
-    lease = await manager.acquire(
-        "claude", {"version": "1.2.3", "manifest_url": manifest}
-    )
+    lease = await manager.acquire("claude", "1.2.3")
     await lease.release()
-    assert list_cache(cache)[0]["provenance"]["source"] == "manifest"
+    provenance = list_cache(cache)[0]["provenance"]
+    assert provenance["source"] == "manifest"
+    assert provenance["manifest_url"] == manifest
 
     requests = _Server.requests
     plain = await manager.acquire("claude", "1.2.3")
