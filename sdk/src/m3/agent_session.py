@@ -1721,15 +1721,25 @@ class AsyncAgentSession:
             for tool in getattr(record, "tools", ())
             if isinstance(tool, str)
         )
-        evaluator_tools = advertised
-        if not evaluator_tools:
-            evaluator_tools = tuple(
-                descriptor
-                for call in calls
-                if isinstance(call, Mapping)
-                for descriptor, identity_error in (self._reported_tool_identity(call),)
-                if descriptor is not None and identity_error is None
-            )
+        candidates = advertised or tuple(
+            descriptor
+            for call in calls
+            if isinstance(call, Mapping)
+            for descriptor, identity_error in (self._reported_tool_identity(call),)
+            if descriptor is not None and identity_error is None
+        )
+        # A turn may call the same tool more than once; the evaluator needs each
+        # qualified identity once. Decisions read the per-call descriptor, so
+        # keeping the first entry loses nothing.
+        unique_tools: dict[tuple[str, str], ToolDescriptor] = {}
+        for tool in candidates:
+            unique_tools.setdefault((tool.server, tool.name), tool)
+        evaluator_tools = tuple(unique_tools.values())
+        shared_evaluator: ToolPolicyEvaluator | None = None
+        supports = (
+            evidence.enforced in {"portable", "native"}
+            or not self._requires_policy_preflight()
+        )
         violations: list[dict[str, object]] = []
         # Preserve the positional association for adapters that emit
         # entirely anonymous updates, but never use it to repair malformed or
@@ -1842,11 +1852,14 @@ class AsyncAgentSession:
                     )
                     continue
             try:
-                evaluator = ToolPolicyEvaluator(evaluator_tools or (descriptor,))
-                supports = (
-                    evidence.enforced in {"portable", "native"}
-                    or not self._requires_policy_preflight()
-                )
+                if advertised or (descriptor.server, descriptor.name) in unique_tools:
+                    if shared_evaluator is None:
+                        shared_evaluator = ToolPolicyEvaluator(evaluator_tools)
+                    evaluator = shared_evaluator
+                else:
+                    # Identity came from captured traffic, not the reported
+                    # calls; evaluate it alongside them.
+                    evaluator = ToolPolicyEvaluator((*evaluator_tools, descriptor))
                 decision: ToolPolicyDecision = evaluator.decide(
                     policy,
                     descriptor,
