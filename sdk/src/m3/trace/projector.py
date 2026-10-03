@@ -26,6 +26,7 @@ from ..observability import (
     ElicitationEntry,
     EvaluationEntry,
     EvidenceCapture,
+    HttpExchange,
     InitializationEntry,
     InitializationValue,
     InteractionEntry,
@@ -904,6 +905,21 @@ def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
         error_observation = _unavailable(ObservationReason.MALFORMED_SOURCE)
     else:
         error_observation = _not_emitted()
+    raw_http = last.payload.get("http")
+    if "http" in last.payload:
+        try:
+            status_code = (
+                raw_http.get("status_code") if isinstance(raw_http, Mapping) else None
+            )
+            if not isinstance(status_code, int) or isinstance(status_code, bool):
+                raise ValueError("http status code is malformed")
+            http_observation: Observation[HttpExchange] = _observed(
+                HttpExchange.model_validate(raw_http)
+            )
+        except (ValueError, ValidationError):
+            http_observation = _unavailable(ObservationReason.MALFORMED_SOURCE)
+    else:
+        http_observation = _not_emitted()
     status = (
         TraceStatus.PROTOCOL_ERROR
         if last.kind is EventKind.MCP_ERROR or isinstance(error_value, Mapping)
@@ -975,6 +991,7 @@ def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
             present=("result" in last.payload or "response" in last.payload),
         ),
         error=error_observation,
+        http=http_observation,
         operation_kind=operation_kind,
         operation_name=_string_observation(
             operation_name, present=operation_name is not None
