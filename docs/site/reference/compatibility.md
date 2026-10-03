@@ -27,10 +27,10 @@ Codex owns tool selection, dispatch, retries, and cancellation. M3 answers
 Codex's tool approval for calls to bound servers from the test's tool
 selection, and observes and answers supported native requests when their
 association is unambiguous. Overlapping same-server approval or elicitation
-cannot currently be associated reliably and is rejected. Codex `0.156.1` fails
-the action when a server asks for a tenth elicitation round, so an action can use
-at most 9 rounds even when `elicitation_round_limit` is higher. M3's default limit
-is 10. Prompt/resource elicitation and sampling/roots callbacks
+cannot currently be associated reliably and is rejected. The tested Codex version
+fails the action when a server asks for a tenth elicitation round, so an action can
+use at most 9 rounds even when `elicitation_round_limit` is higher. M3's default
+limit is 10. Prompt/resource elicitation and sampling/roots callbacks
 inside a native Codex tool round are not verified supported paths.
 
 The capture barrier cannot flush an event that has not reached the M3 process.
