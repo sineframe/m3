@@ -104,9 +104,16 @@ def _answer(events: tuple[McpWireEvent, ...]) -> McpWireEvent:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body", [b"", b'{"error":"invalid_token"}', b"unauthorized"])
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        (b"", None),
+        (b'{"error":"invalid_token"}', "invalid_token"),
+        (b"unauthorized", None),
+    ],
+)
 async def test_proxy_records_the_http_status_of_a_refused_request(
-    tmp_path: Path, body: bytes
+    tmp_path: Path, body: bytes, error: object
 ) -> None:
     def respond(_request: dict[str, Any]) -> tuple[str, dict[str, str], bytes]:
         return (
@@ -122,7 +129,10 @@ async def test_proxy_records_the_http_status_of_a_refused_request(
     assert answer.kind == "error"
     assert answer.method == "initialize"
     assert answer.response_to_sequence is not None
-    assert answer.error is None
+    assert answer.error == error
+    assert [
+        event for event in events if event.jsonrpc_id is None and event.kind == "error"
+    ] == []
     assert answer.http is not None
     assert answer.http["method"] == "POST"
     assert answer.http["status_code"] == 401
@@ -314,3 +324,31 @@ async def test_http_refused_tool_call_counts_as_a_failed_call(
         await manager.close()
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("id_field", [b'"id":null,', b""])
+async def test_proxy_pairs_a_null_id_error_with_the_refused_request(
+    tmp_path: Path, id_field: bytes
+) -> None:
+    body = (
+        b'{"jsonrpc":"2.0",'
+        + id_field
+        + b'"error":{"code":-32600,"message":"Session not found"}}'
+    )
+
+    def respond(_request: dict[str, Any]) -> tuple[str, dict[str, str], bytes]:
+        return "404 Not Found", {"Content-Type": "application/json"}, body
+
+    _response, events, capture = await _proxied_initialize(tmp_path, respond)
+
+    answer = _answer(events)
+    assert answer.kind == "error"
+    assert answer.method == "initialize"
+    assert answer.error == {"code": -32600, "message": "Session not found"}
+    assert answer.http is not None
+    assert answer.http["status_code"] == 404
+    assert [
+        event for event in events if event.jsonrpc_id is None and event.kind == "error"
+    ] == []
+    assert '"http_status"' not in capture

@@ -525,11 +525,26 @@ class McpHttpProxy:
             )
         data = await response.aread()
         await response.aclose()
+        refused = not 200 <= response.status_code < 300
+        request_ids = jsonrpc_request_ids(body) if refused else ()
         answered: set[tuple[type[Any], Any]] = set()
         if data:
             response_payload = parse_json_payload(data)
             if self._tool_policy is not None:
                 self._tool_policy.observe(response_payload)
+            # A server may refuse a lone request with an error that has a
+            # null or missing id.  The payload is kept as sent; the metadata
+            # names the request it answers so the two stay one exchange.
+            correlated = (
+                request_ids[0]
+                if len(request_ids) == 1
+                and isinstance(response_payload, dict)
+                and "error" in response_payload
+                and response_payload.get("id") is None
+                else None
+            )
+            if correlated is not None:
+                answered.add((type(correlated), correlated))
             self.writer.write(
                 transport=self.transport,
                 direction="server_to_client",
@@ -538,6 +553,7 @@ class McpHttpProxy:
                     "status_code": response.status_code,
                     "content_type": content_type,
                     "http": exchange,
+                    **({"correlated_id": correlated} if correlated is not None else {}),
                 },
             )
             for item in (
@@ -551,10 +567,10 @@ class McpHttpProxy:
                     and isinstance(item.get("id"), (int, str))
                 ):
                     answered.add((type(item["id"]), item["id"]))
-        if not 200 <= response.status_code < 300:
+        if refused:
             # A refused request has no JSON-RPC answer; record the HTTP
             # status against each request so the refusal stays correlated.
-            for request_id in jsonrpc_request_ids(body):
+            for request_id in request_ids:
                 if (type(request_id), request_id) in answered:
                     continue
                 self.writer.write(

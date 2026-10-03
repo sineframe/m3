@@ -435,7 +435,12 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
         )
         ident = _json_id(payload)
         metadata = record.get("metadata")
-        http = metadata.get("http") if isinstance(metadata, Mapping) else None
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        if ident is None:
+            # The proxy names the request a null-id refusal answers.
+            ident = _json_id({"id": metadata.get("correlated_id")})
+        http = metadata.get("http")
         method = (
             payload.get("method") if isinstance(payload.get("method"), str) else None
         )
