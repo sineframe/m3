@@ -46,6 +46,9 @@ _RUNTIME_VERSION = re.compile(
     r"^(?:latest|(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9a-z]+(?:\.[0-9a-z]+)*)?)$"
 )
 _PROGRESS_LINE_LIMIT = 2048
+# ASCII digits with a length bound: str.isdigit() accepts Unicode digits such as
+# "²" that int() rejects, and very long values exceed int()'s digit limit.
+_NUM_PROCESSES = re.compile(r"[1-9][0-9]{0,3}")
 _PROGRESS_TOTAL_LIMIT = 16 * 1024 * 1024
 
 
@@ -118,7 +121,7 @@ def _validate_selection_options(
     if not (
         num_processes is None
         or num_processes == "auto"
-        or (num_processes.isdigit() and int(num_processes) > 0)
+        or _NUM_PROCESSES.fullmatch(num_processes)
     ):
         return "--num-processes must be a positive integer or auto"
     if runtime not in {"system", "managed"}:

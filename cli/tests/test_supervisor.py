@@ -1252,7 +1252,7 @@ def test_command_emits_num_processes_before_passthrough(tmp_path: Path) -> None:
     assert command[-4:] == ["-n", "4", "-q", "tests"]
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "x", ""])
+@pytest.mark.parametrize("value", ["0", "-1", "x", "", "²", "٣", "03", "1" * 5000])
 def test_num_processes_rejects_invalid_values(value: str) -> None:
     assert (
         supervisor._validate_selection_options((), None, (), num_processes=value)

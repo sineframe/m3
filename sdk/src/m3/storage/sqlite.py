@@ -213,6 +213,12 @@ class _CompatConnection:
         self.close()
 
 
+# A private execution queue is owned by one live store instance, which renews a
+# v2_queue_leases row. Queued commands on a queue whose row is missing or
+# expired were abandoned by a dead process and are interrupted by the sweep.
+_QUEUE_LEASE_SECONDS = 30.0
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -446,6 +452,9 @@ CREATE TABLE IF NOT EXISTS v2_leases (
   execution_id TEXT PRIMARY KEY REFERENCES v2_executions(id) ON DELETE CASCADE,
   owner_id TEXT NOT NULL, lease_token TEXT NOT NULL UNIQUE, acquired_at TEXT NOT NULL,
   heartbeat_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS v2_queue_leases (
+  queue_key TEXT PRIMARY KEY, expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS v2_cancellation (
   execution_id TEXT PRIMARY KEY REFERENCES v2_executions(id) ON DELETE CASCADE,
@@ -1530,6 +1539,7 @@ class SQLiteExecutionStore(_SqliteBase):
         # Commands enqueued and claimed through this store instance use this
         # queue; None is the shared queue.
         self.execution_queue = execution_queue
+        self._queue_lease_renewed_at: datetime | None = None
         # Store initialization performs legacy migration before returning, so
         # migration must see the same explicit redaction policy used by all
         # later profile and execution writes.
@@ -1592,6 +1602,16 @@ class SQLiteExecutionStore(_SqliteBase):
                     "LIMIT 1",
                     (_iso(stale_before),),
                 ).fetchone()
+                if row is None:
+                    row = connection.execute(
+                        "SELECT 1 FROM v2_commands c LEFT JOIN v2_queue_leases q "
+                        "ON q.queue_key=c.queue_key WHERE c.status='queued' "
+                        "AND c.queue_key IS NOT NULL "
+                        "AND (q.queue_key IS NULL OR q.expires_at<=?) "
+                        "AND json_extract(c.payload_json,'$.human_input')='managed' "
+                        "LIMIT 1",
+                        (_iso(stale_before),),
+                    ).fetchone()
         return row is not None
 
     def ensure_project(self, project_id: str, project_name: str) -> tuple[str, str]:
@@ -4245,6 +4265,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     )
                 self._rollback(connection)
                 return self.get_command(command)  # type: ignore[return-value]
+            now = _utcnow()
             connection.execute(
                 "INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at,queue_key) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
@@ -4255,10 +4276,22 @@ class SQLiteExecutionStore(_SqliteBase):
                     payload_json,
                     session_key,
                     turn_key,
-                    _iso(_utcnow()),
+                    _iso(now),
                     self.execution_queue,
                 ),
             )
+            if self.execution_queue is not None:
+                # Same transaction as the INSERT: a committed private-queue
+                # command always has a live queue lease.
+                connection.execute(
+                    "INSERT INTO v2_queue_leases(queue_key,expires_at) VALUES(?,?) "
+                    "ON CONFLICT(queue_key) DO UPDATE SET expires_at=MAX(expires_at,excluded.expires_at)",
+                    (
+                        self.execution_queue,
+                        _iso(now + timedelta(seconds=_QUEUE_LEASE_SECONDS)),
+                    ),
+                )
+                self._queue_lease_renewed_at = now
             self._commit(connection)
         except Exception as exc:
             self._rollback(connection)
@@ -4291,9 +4324,26 @@ class SQLiteExecutionStore(_SqliteBase):
             str(row["queue_key"]) if row["queue_key"] is not None else None,
         )
 
+    def _renew_queue_lease(self) -> None:
+        """Extend this private queue's lease, writing at most every TTL/3."""
+        queue = self.execution_queue
+        if queue is None:
+            return
+        now = _utcnow()
+        last = self._queue_lease_renewed_at
+        if last is not None and (now - last).total_seconds() < _QUEUE_LEASE_SECONDS / 3:
+            return
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE v2_queue_leases SET expires_at=? WHERE queue_key=?",
+                (_iso(now + timedelta(seconds=_QUEUE_LEASE_SECONDS)), queue),
+            )
+        self._queue_lease_renewed_at = now
+
     def claim_next(
         self, owner_id: str, *, lease_seconds: float = 30.0
     ) -> tuple[Command, Lease] | None:
+        self._renew_queue_lease()
         if self._has_managed_command():
             self._ensure_managed_input_schema()
         connection = self._connect()
@@ -4436,7 +4486,10 @@ class SQLiteExecutionStore(_SqliteBase):
                 "UPDATE v2_leases SET heartbeat_at=?,expires_at=? WHERE lease_token=? AND owner_id=? AND expires_at>?",
                 (_iso(now), _iso(expires), token, owner, _iso(now)),
             )
-            return cursor.rowcount == 1
+            renewed = cursor.rowcount == 1
+        if renewed:
+            self._renew_queue_lease()
+        return renewed
 
     renew_lease = heartbeat
 
@@ -4897,12 +4950,28 @@ class SQLiteExecutionStore(_SqliteBase):
             # Select and transition stale owners under one write transaction.
             # A heartbeat cannot race between the stale check and interruption.
             self._begin(connection, immediate=True)
-            rows = connection.execute(
-                "SELECT execution_id FROM v2_leases WHERE expires_at<=?",
+            rows = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT execution_id FROM v2_leases WHERE expires_at<=?",
+                    (_iso(moment),),
+                ).fetchall()
+            ]
+            # Queued private-queue commands whose queue owner stopped renewing
+            # its lease can never be claimed by any other store; interrupt them
+            # through the same path as an expired execution lease.
+            seen = set(rows)
+            for row in connection.execute(
+                "SELECT DISTINCT c.execution_id FROM v2_commands c "
+                "LEFT JOIN v2_queue_leases q ON q.queue_key=c.queue_key "
+                "WHERE c.status='queued' AND c.queue_key IS NOT NULL "
+                "AND (q.queue_key IS NULL OR q.expires_at<=?)",
                 (_iso(moment),),
-            ).fetchall()
-            for row in rows:
-                key = str(row[0])
+            ).fetchall():
+                if str(row[0]) not in seen:
+                    seen.add(str(row[0]))
+                    rows.append(str(row[0]))
+            for key in rows:
                 execution = connection.execute(
                     "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
                     (key,),
