@@ -17,7 +17,17 @@ from fastapi import APIRouter, Body, Depends, Query, Request, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    GetJsonSchemaHandler,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from m3 import (
     ACPProbeDimension,
@@ -237,6 +247,40 @@ class V2SuiteRef(BaseModel):
     )
 
 
+class V2RunSuiteRef(V2SuiteRef):
+    """A suite as seen from one run, with counts over that run's tests only.
+
+    The count fields are omitted from JSON, not null, when unknown (e.g. runs
+    persisted before per-suite counts were recorded); an empty map is a known zero.
+    """
+
+    test_count: int | None = Field(
+        default=None, description="This run's tests in this suite, if known."
+    )
+    test_outcome_counts: dict[str, int] | None = Field(
+        default=None, description="Raw pytest outcome counts for this suite."
+    )
+    effective_verdict_counts: dict[str, int] | None = Field(
+        default=None, description="Verdict counts after required-evaluation policy."
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_unknown_counts(self, handler: SerializerFunctionWrapHandler) -> Any:
+        data = handler(self)
+        for key in ("test_count", "test_outcome_counts", "effective_verdict_counts"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        # The wrap serializer only drops keys, so document the plain fields
+        # instead of the opaque schema pydantic derives from the serializer.
+        return handler({k: v for k, v in core_schema.items() if k != "serialization"})
+
+
 class V2RunSummary(BaseModel):
     """Safe, compact summary of a persisted pytest run manifest."""
 
@@ -262,7 +306,7 @@ class V2RunSummary(BaseModel):
         default_factory=dict,
         description="Safe counts after required-evaluation policy.",
     )
-    suites: tuple[V2SuiteRef, ...] = Field(
+    suites: tuple[V2RunSuiteRef, ...] = Field(
         default=(),
         description="Suites of this run's saved tests; a run can span several suites.",
     )
@@ -1334,6 +1378,30 @@ def install_v2(
                 if isinstance(count, int) and not isinstance(count, bool) and count >= 0
             }
 
+        def suite_with_counts(item: object, persisted: object) -> V2RunSuiteRef:
+            suite = V2RunSuiteRef.model_validate(item)
+            entry = (
+                persisted.get(str(suite.suite_id))
+                if isinstance(persisted, Mapping)
+                else None
+            )
+            if not isinstance(entry, Mapping):
+                return suite
+            count = entry.get("test_count")
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                return suite
+            return suite.model_copy(
+                update={
+                    "test_count": count,
+                    "test_outcome_counts": safe_counts(
+                        entry.get("test_outcome_counts")
+                    ),
+                    "effective_verdict_counts": safe_counts(
+                        entry.get("effective_verdict_counts")
+                    ),
+                }
+            )
+
         page_limit = limit if limit is not None else (50 if group else None)
         manifests, total = service.list_run_page(
             limit=page_limit,
@@ -1375,7 +1443,7 @@ def install_v2(
                         manifest.get("effective_verdict_counts")
                     ),
                     suites=tuple(
-                        V2SuiteRef.model_validate(item)
+                        suite_with_counts(item, manifest.get("suite_counts"))
                         for item in cast(list[object], manifest.get("suites") or [])
                     ),
                 )

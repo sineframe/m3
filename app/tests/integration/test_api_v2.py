@@ -43,7 +43,7 @@ from m3.types import (
     StdioServer,
 )
 from m3_app.api.app import create_app
-from m3_app.api.v2 import V2RunSummary, V2SuiteRef, _group_run_page, _visible_spec
+from m3_app.api.v2 import V2RunSuiteRef, V2RunSummary, _group_run_page, _visible_spec
 from m3_app.api.wire import internalize_request
 from m3_app.settings import Settings
 
@@ -785,7 +785,7 @@ def test_v2_runs_groups_selected_page_without_inventing_suite_coverage(
 
 
 def test_v2_suite_group_deduplicates_equal_memberships_within_a_run():
-    suite = V2SuiteRef(suite_id=7, suite_name="catalog")
+    suite = V2RunSuiteRef(suite_id=7, suite_name="catalog")
     run = V2RunSummary(run_id="r", suites=(suite, suite))
     for group in ("suite_name", "suite_id"):
         groups = _group_run_page((run,), group)
@@ -2283,3 +2283,111 @@ def test_v2_tool_call_replay_is_rejected_by_read_only_viewer(tmp_path):
         assert "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay" not in (
             paths
         )
+
+
+def test_v2_runs_carry_per_suite_counts_only_when_known(tmp_path):
+    database = Path(tmp_path).resolve() / "suite-counts.sqlite"
+    store = SQLiteExecutionStore(database)
+    store.save_test_run(
+        "counted",
+        {
+            "run_id": "counted",
+            "created_at": "2026-09-20T10:00:00+00:00",
+            "collected_node_ids": [f"t{i}" for i in range(8)],
+            "test_outcome_counts": {"passed": 2, "skipped": 6},
+            "effective_verdict_counts": {"passed": 2, "skipped": 6},
+        },
+    )
+    store.save_test_run(
+        "legacy",
+        {"run_id": "legacy", "created_at": "2026-09-19T10:00:00+00:00"},
+    )
+    for run_id in ("counted", "legacy"):
+        for suite_name in ("core", "known-gaps"):
+            store.save_test_result(
+                run_id,
+                f"{run_id}-{suite_name}",
+                {"node_id": "t", "suite_name": suite_name},
+            )
+    ids = {item["suite_name"]: item["suite_id"] for item in store_suites(store)}
+    manifest = dict(store.get_test_run("counted") or {})
+    manifest["suite_counts"] = {
+        str(ids["core"]): {
+            "test_count": 2,
+            "test_outcome_counts": {"passed": 2},
+            "effective_verdict_counts": {"passed": 2},
+        },
+        str(ids["known-gaps"]): {
+            "test_count": 6,
+            "test_outcome_counts": {"skipped": 6},
+            "effective_verdict_counts": {"skipped": 6},
+        },
+    }
+    store.save_test_run("counted", manifest)
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        runs = {r["run_id"]: r for r in client.get("/api/v2/runs").json()["runs"]}
+        grouped = client.get("/api/v2/runs", params={"group": "date"}).json()
+        suite_list = client.get("/api/v2/suites").json()["suites"]
+    by_name = {s["suite_name"]: s for s in runs["counted"]["suites"]}
+    assert by_name["known-gaps"]["test_count"] == 6
+    assert by_name["known-gaps"]["test_outcome_counts"] == {"skipped": 6}
+    assert by_name["known-gaps"]["effective_verdict_counts"] == {"skipped": 6}
+    assert (
+        sum(s["test_count"] for s in by_name.values()) == runs["counted"]["test_count"]
+    )
+    # Unknown stays absent from the JSON rather than 0 or null.
+    for suite in runs["legacy"]["suites"]:
+        assert not {
+            "test_count",
+            "test_outcome_counts",
+            "effective_verdict_counts",
+        } & set(suite)
+    grouped_suites = [
+        s for g in grouped["groups"] for r in g["runs"] for s in r["suites"]
+    ]
+    assert any("test_count" in s for s in grouped_suites)
+    assert all(
+        "test_count" not in s and "test_outcome_counts" not in s for s in suite_list
+    )
+    store.close()
+
+
+def test_v2_run_suite_known_zero_is_not_omitted(tmp_path):
+    database = Path(tmp_path).resolve() / "suite-zero.sqlite"
+    store = SQLiteExecutionStore(database)
+    store.save_test_run(
+        "zero", {"run_id": "zero", "created_at": "2026-09-20T10:00:00Z"}
+    )
+    store.save_test_result("zero", "a", {"node_id": "t", "suite_name": "empty"})
+    suite_id = store_suites(store)[0]["suite_id"]
+    store.save_test_run(
+        "zero",
+        {
+            "run_id": "zero",
+            "created_at": "2026-09-20T10:00:00Z",
+            "suite_counts": {
+                str(suite_id): {
+                    "test_count": 0,
+                    "test_outcome_counts": {},
+                    "effective_verdict_counts": {},
+                }
+            },
+        },
+    )
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        schema = client.get("/openapi.json").json()
+        suite = client.get("/api/v2/runs").json()["runs"][0]["suites"][0]
+    assert suite["test_count"] == 0
+    assert suite["test_outcome_counts"] == {}
+    assert suite["effective_verdict_counts"] == {}
+    props = schema["components"]["schemas"]["V2RunSuiteRef"]["properties"]
+    assert {"test_count", "test_outcome_counts", "effective_verdict_counts"} <= set(
+        props
+    )
+    store.close()
+
+
+def store_suites(store):
+    return [{"suite_name": s.name, "suite_id": s.id.root} for s in store.list_suites()]
