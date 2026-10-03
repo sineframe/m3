@@ -58,3 +58,11 @@ a credential from the test environment. Fix the cause, then rerun the tests with
 `--upload`. The
 [`m3 upload` reference](../../reference/cli/index.md#m3-upload-run-id) lists
 every condition a run must meet.
+
+## Exit code when publishing fails
+
+This applies to `m3 test --upload` and `m3 ci test --upload`. If the tests fail
+and publishing fails, the exit code stays 1. If the tests pass and publishing
+fails, or M3 cannot inspect the run before publishing, the exit code is 2. M3
+does not publish when pytest exits with any other code, and returns pytest's
+code. See [exit codes](../../reference/cli/index.md#exit-codes).
