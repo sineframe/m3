@@ -31,9 +31,6 @@ from pydantic import (
     Field as _Field,
 )
 from pydantic import (
-    StrictBool as _StrictBool,
-)
-from pydantic import (
     StrictStr as _StrictStr,
 )
 from pydantic import (
@@ -77,11 +74,10 @@ class ConfigOrigin(_FrozenModel):
     origin: str = _Field(min_length=1, max_length=4096)
 
 
-_FIELDS = ("artifact_policy", "protocol_revision", "telemetry_enabled")
+_FIELDS = ("artifact_policy", "protocol_revision")
 _ENV_FIELDS = {
     "M3_ARTIFACT_POLICY": "artifact_policy",
     "M3_PROTOCOL_REVISION": "protocol_revision",
-    "M3_TELEMETRY_ENABLED": "telemetry_enabled",
 }
 _ARTIFACT_POLICIES = frozenset({"failed", "always", "never"})
 _REVISION_PATTERN = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -99,7 +95,6 @@ class Config(_FrozenModel):
 
     artifact_policy: _Literal["failed", "always", "never"] = "failed"
     protocol_revision: _StrictStr = "auto"
-    telemetry_enabled: _StrictBool = False
     sources: _Mapping[str, ConfigOrigin] = _Field(default_factory=_default_origins)
 
     @_field_validator("protocol_revision")
@@ -136,7 +131,6 @@ class Config(_FrozenModel):
             defaults = {
                 "artifact_policy": "failed",
                 "protocol_revision": "auto",
-                "telemetry_enabled": False,
             }
             for field in _FIELDS:
                 source = self.sources[field]
@@ -175,9 +169,7 @@ def _error(
     return ConfigError(field=field, origin=origin, reason=reason, code=code)
 
 
-def _validate(
-    field: str, value: _Any, origin: str, *, environment: bool = False
-) -> _Any:
+def _validate(field: str, value: _Any, origin: str) -> _Any:
     if field == "artifact_policy":
         if not isinstance(value, str) or value not in _ARTIFACT_POLICIES:
             raise _error(field, origin, "must be one of failed, always, or never")
@@ -194,23 +186,10 @@ def _validate(
                 "must be auto or a non-empty protocol revision identifier",
             )
         return value
-    if field == "telemetry_enabled":
-        if environment:
-            if not isinstance(value, str):
-                raise _error(field, origin, "must be true or false")
-            parsed = {"true": True, "false": False}
-            if value.lower() not in parsed:
-                raise _error(field, origin, "must be true or false")
-            return parsed[value.lower()]
-        if not isinstance(value, bool):
-            raise _error(field, origin, "must be a boolean")
-        return value
     raise _error(field, origin, "unknown setting", code="unknown_setting")
 
 
-def _validate_mapping(
-    values: _Mapping[str, _Any], origin: str, *, environment: bool = False
-) -> dict[str, _Any]:
+def _validate_mapping(values: _Mapping[str, _Any], origin: str) -> dict[str, _Any]:
     unknown = sorted(set(values) - set(_FIELDS))
     if unknown:
         raise _error(
@@ -221,7 +200,6 @@ def _validate_mapping(
             field,
             values[field],
             f"argument:{field}" if origin == "explicit" else origin,
-            environment=environment,
         )
         for field in values
     }
@@ -265,9 +243,7 @@ def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
     values: dict[str, _Any] = {}
     for name, field in _ENV_FIELDS.items():
         if name in environment:
-            values[field] = _validate(
-                field, environment[name], f"env:{name}", environment=True
-            )
+            values[field] = _validate(field, environment[name], f"env:{name}")
     return values
 
 
@@ -278,7 +254,6 @@ def load_config(
     cwd: str | _Path | None = None,
     artifact_policy: _Any = _UNSET,
     protocol_revision: _Any = _UNSET,
-    telemetry_enabled: _Any = _UNSET,
 ) -> Config:
     """Resolve SDK settings using explicit, environment, project, default order.
 
@@ -293,7 +268,6 @@ def load_config(
         for field, value in {
             "artifact_policy": artifact_policy,
             "protocol_revision": protocol_revision,
-            "telemetry_enabled": telemetry_enabled,
         }.items()
         if value is not _UNSET
     }
@@ -313,7 +287,6 @@ def load_config(
     values: dict[str, _Any] = {
         "artifact_policy": "failed",
         "protocol_revision": "auto",
-        "telemetry_enabled": False,
     }
     origins: dict[str, ConfigOrigin] = {
         field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
@@ -322,7 +295,6 @@ def load_config(
     for field, source_values, source, origin in (
         ("artifact_policy", project_values, ConfigSource.PROJECT, project_origin),
         ("protocol_revision", project_values, ConfigSource.PROJECT, project_origin),
-        ("telemetry_enabled", project_values, ConfigSource.PROJECT, project_origin),
     ):
         if field in source_values:
             values[field] = source_values[field]

@@ -83,7 +83,7 @@ def _parse_requirement(value: str) -> tuple[str, str | None]:
         return "config", None
     if value.startswith("config:"):
         field = value.partition(":")[2]
-        if field in {"artifact_policy", "protocol_revision", "telemetry_enabled"}:
+        if field in {"artifact_policy", "protocol_revision"}:
             return "config", field
         raise DoctorCLIError("invalid requirement")
     try:

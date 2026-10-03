@@ -15,18 +15,15 @@ def test_defaults_are_frozen_and_value_only() -> None:
     config = load_config(env={}, cwd=Path("/tmp/m3-no-project"))
     assert config.artifact_policy == "failed"
     assert config.protocol_revision == "auto"
-    assert config.telemetry_enabled is False
     assert all(info.source is ConfigSource.DEFAULT for info in config.sources.values())
     with pytest.raises((TypeError, ValueError)):
-        config.telemetry_enabled = True  # type: ignore[misc]
+        config.artifact_policy = "always"  # type: ignore[misc]
     with pytest.raises(TypeError):
-        config.sources["telemetry_enabled"] = config.sources["telemetry_enabled"]  # type: ignore[index]
+        config.sources["artifact_policy"] = config.sources["artifact_policy"]  # type: ignore[index]
 
 
 def test_direct_construction_infers_truthful_provenance() -> None:
-    config = Config(
-        artifact_policy="always", protocol_revision="2025-06-18", telemetry_enabled=True
-    )
+    config = Config(artifact_policy="always", protocol_revision="2025-06-18")
     assert all(info.source is ConfigSource.EXPLICIT for info in config.sources.values())
     assert config.source_for("artifact_policy").origin == "argument:artifact_policy"
     assert Config().source_for("artifact_policy").source is ConfigSource.DEFAULT
@@ -37,7 +34,7 @@ def test_direct_construction_infers_truthful_provenance() -> None:
     [
         {"artifact_policy": "sometimes"},
         {"protocol_revision": "revision with spaces"},
-        {"telemetry_enabled": 1},
+        {"telemetry_enabled": True},
     ],
 )
 def test_direct_construction_rejects_invalid_values(kwargs: dict[str, object]) -> None:
@@ -48,7 +45,7 @@ def test_direct_construction_rejects_invalid_values(kwargs: dict[str, object]) -
 def test_direct_construction_rejects_incomplete_or_untruthful_provenance() -> None:
     defaults = Config().sources
     incomplete = dict(defaults)
-    incomplete.pop("telemetry_enabled")
+    incomplete.pop("protocol_revision")
     with pytest.raises(ValidationError):
         Config(sources=incomplete)
     with pytest.raises(ValidationError):
@@ -57,7 +54,7 @@ def test_direct_construction_rejects_incomplete_or_untruthful_provenance() -> No
 
 def test_all_four_precedence_levels_and_origins(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.m3]\nartifact_policy = "always"\nprotocol_revision = "2025-06-18"\ntelemetry_enabled = true\n',
+        '[tool.m3]\nartifact_policy = "always"\nprotocol_revision = "2025-06-18"\n',
         encoding="utf-8",
     )
     config = load_config(
@@ -67,15 +64,26 @@ def test_all_four_precedence_levels_and_origins(tmp_path: Path) -> None:
             "M3_PROTOCOL_REVISION": "2025-03-26",
         },
         cwd=tmp_path,
-        telemetry_enabled=False,
     )
     assert config.model_dump(mode="json")["sources"]
     assert config.artifact_policy == "failed"
     assert config.protocol_revision == "2025-03-26"
-    assert config.telemetry_enabled is False
     assert config.source_for("artifact_policy").source is ConfigSource.EXPLICIT
     assert config.source_for("protocol_revision").origin == "env:M3_PROTOCOL_REVISION"
-    assert config.source_for("telemetry_enabled").origin == "argument:telemetry_enabled"
+
+
+def test_keyword_argument_overrides_project_and_project_overrides_default(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.m3]\nartifact_policy = "always"\nprotocol_revision = "2025-06-18"\n',
+        encoding="utf-8",
+    )
+    config = load_config(env={}, cwd=tmp_path, protocol_revision="2025-03-26")
+    assert config.artifact_policy == "always"
+    assert config.source_for("artifact_policy").source is ConfigSource.PROJECT
+    assert config.protocol_revision == "2025-03-26"
+    assert config.source_for("protocol_revision").origin == "argument:protocol_revision"
 
 
 def test_project_config_uses_nearest_pyproject_only(tmp_path: Path) -> None:
@@ -96,27 +104,36 @@ def test_supplied_environment_isolated_from_ambient_and_dotenv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".env").write_text(
-        "M3_ARTIFACT_POLICY=always\nM3_TELEMETRY_ENABLED=true\n",
+        "M3_ARTIFACT_POLICY=always\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("M3_ARTIFACT_POLICY", "always")
     config = load_config(env={}, cwd=tmp_path)
     assert config.artifact_policy == "failed"
-    assert config.telemetry_enabled is False
 
 
-def test_stable_environment_names_and_boolean_validation() -> None:
+def test_stable_environment_names() -> None:
     config = load_config(
         env={
             "M3_ARTIFACT_POLICY": "always",
-            "M3_PROTOCOL_REVISION": "auto",
-            "M3_TELEMETRY_ENABLED": "true",
+            "M3_PROTOCOL_REVISION": "2025-06-18",
         },
         cwd=Path("/tmp/m3-no-project"),
     )
     assert config.artifact_policy == "always"
-    assert config.telemetry_enabled is True
-    assert config.source_for("telemetry_enabled").source is ConfigSource.ENVIRONMENT
+    assert config.protocol_revision == "2025-06-18"
+    assert config.source_for("artifact_policy").source is ConfigSource.ENVIRONMENT
+    assert config.source_for("protocol_revision").origin == "env:M3_PROTOCOL_REVISION"
+
+
+def test_invalid_environment_value_reports_variable_without_value() -> None:
+    with pytest.raises(ConfigError) as caught:
+        load_config(
+            env={"M3_ARTIFACT_POLICY": "TOP-SECRET"}, cwd=Path("/tmp/m3-no-project")
+        )
+    message = str(caught.value)
+    assert "artifact_policy" in message and "env:M3_ARTIFACT_POLICY" in message
+    assert "TOP-SECRET" not in message
 
 
 @pytest.mark.parametrize(
@@ -124,7 +141,6 @@ def test_stable_environment_names_and_boolean_validation() -> None:
     [
         ("artifact_policy", "sometimes"),
         ("protocol_revision", "bad revision with spaces"),
-        ("telemetry_enabled", "maybe"),
     ],
 )
 def test_invalid_values_report_field_and_origin_without_value(
@@ -148,6 +164,26 @@ def test_unknown_project_settings_are_rejected_without_echoing_values(
     assert "TOP-SECRET" not in str(caught.value)
 
 
+def test_removed_telemetry_setting_is_an_unknown_project_setting(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3]\ntelemetry_enabled = true\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError) as caught:
+        load_config(env={}, cwd=tmp_path)
+    assert caught.value.code == "unknown_setting"
+    assert caught.value.field == "telemetry_enabled"
+
+
+def test_removed_telemetry_setting_is_an_unknown_explicit_setting() -> None:
+    with pytest.raises(ConfigError) as caught:
+        load_config({"telemetry_enabled": True}, env={}, cwd=Path("/tmp/m3-no-project"))
+    assert caught.value.code == "unknown_setting"
+    with pytest.raises(TypeError):
+        load_config(env={}, cwd=Path("/tmp/m3-no-project"), telemetry_enabled=True)  # type: ignore[call-arg]
+
+
 def test_unknown_prefixed_environment_variables_are_ignored() -> None:
     config = load_config(
         env={
@@ -156,7 +192,7 @@ def test_unknown_prefixed_environment_variables_are_ignored() -> None:
         },
         cwd=Path("/tmp/m3-no-project"),
     )
-    assert config.telemetry_enabled is True
+    assert config == load_config(env={}, cwd=Path("/tmp/m3-no-project"))
 
 
 def test_configuration_json_round_trip_and_aliases() -> None:
@@ -164,7 +200,6 @@ def test_configuration_json_round_trip_and_aliases() -> None:
         {
             "artifact_policy": "never",
             "protocol_revision": "2025-06-18",
-            "telemetry_enabled": True,
         },
         env={},
         cwd=Path("/tmp/m3-no-project"),
