@@ -186,7 +186,7 @@ configuration` and do not repeat the rejected value.
 
 | Command | Code | Meaning |
 | --- | --- | --- |
-| `m3 test`, `m3 ci test` | 0 | pytest passed and M3 saved the run. With `--upload`, publishing must also succeed; if it fails, the exit code is 2 (see [Exit codes with `--upload`](#exit-codes-with---upload)). |
+| `m3 test`, `m3 ci test` | 0 | pytest passed and M3 saved the run. With `--upload`, publishing must also succeed; if it fails, the exit code is 2 (see [Exit codes with `--upload`](#exit-codes-with-upload)). |
 | | 1 | A test failed, or pytest would have exited 0 but M3 fails the run: every selected test was skipped, M3 could not save run records or export `feedback.json`, a pytest-xdist worker failed, or a `required=True` evaluation did not pass. |
 | | 2 | pytest was interrupted, for example by a collection error, or M3 hit an operational error, such as a missing `--env-file`, a missing or malformed upload credential, or, with `--upload`, a failed upload inspection or publish after tests passed. Most of these errors stop M3 before pytest starts; see [below](#telling-an-m3-error-from-a-pytest-interruption). |
 | | 3 | pytest internal error. |
@@ -226,7 +226,7 @@ of M3 error come after pytest has run, with M3's own line on stderr:
 
 - With `--upload`, publishing fails or the run cannot be inspected for
   publishing after the tests pass (`m3 test:` or `m3 ci:`, see
-  [Exit codes with `--upload`](#exit-codes-with---upload)).
+  [Exit codes with `--upload`](#exit-codes-with-upload)).
 - With `m3 test --ui`, the viewer server could not be started, did not become
   ready, or stopped unexpectedly (`m3: UI server readiness failed`,
   `m3: UI server stopped unexpectedly`, `m3: UI server could not be started`).
