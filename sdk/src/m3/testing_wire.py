@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NoReturn
 
 _MAX_CONFIG_BYTES = 64 * 1024
 _MAX_OVERSIZED_BYTES = 64 * 1024 * 1024
@@ -25,8 +26,6 @@ _INVALID_RESULT_SCHEMA = {
 
 
 def _load_config() -> dict[str, Any]:
-    import os
-
     raw = os.environ.get("M3_WIRE_FAULTS", "{}")
     if len(raw.encode("utf-8")) > _MAX_CONFIG_BYTES:
         raise SystemExit(2)
@@ -54,6 +53,19 @@ def _error_frame(request_id: Any, code: int, message: str) -> dict[str, Any]:
     }
 
 
+def _exit_process(code: int) -> NoReturn:
+    """End the fixture at once, like a crashed server.
+
+    ``SystemExit`` raised in a request task cannot end the process: shutdown
+    joins the executor thread blocked reading stdin, so stdout stays open and
+    the client never sees EOF until it closes stdin itself.
+    """
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
 class _WireServer:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
@@ -75,14 +87,14 @@ class _WireServer:
         ).encode("utf-8")
         if _method_fault(self.config, method, "partial_methods"):
             await self.write_bytes(encoded[: max(1, len(encoded) // 2)])
-            raise SystemExit(0)
+            _exit_process(0)
         if _method_fault(self.config, method, "malformed_methods"):
             await self.write_bytes(b"{not-valid-json\n")
-            raise SystemExit(0)
+            _exit_process(0)
         if _method_fault(self.config, method, "disconnect_methods"):
-            raise SystemExit(0)
+            _exit_process(0)
         if _method_fault(self.config, method, "process_crash_methods"):
-            raise SystemExit(17)
+            _exit_process(17)
         if _method_fault(self.config, method, "protocol_errors"):
             configured = self.config["protocol_errors"].get(method, {})
             code = (
@@ -96,7 +108,7 @@ class _WireServer:
             configured_size = self.config["oversized_methods"].get(method, 1)
             size = int(configured_size) if isinstance(configured_size, int) else 1
             if size < 1 or size > _MAX_OVERSIZED_BYTES:
-                raise SystemExit(2)
+                _exit_process(2)
             result = frame.get("result")
             if isinstance(result, dict):
                 content = result.get("content")
@@ -138,7 +150,7 @@ class _WireServer:
         key = json.dumps(request_id, sort_keys=True)
         self.cancel_events.setdefault(key, asyncio.Event())
         if _method_fault(self.config, method, "cancel_before_methods"):
-            raise SystemExit(0)
+            _exit_process(0)
         delays = self.config.get("delays", {})
         if isinstance(delays, Mapping):
             delay = delays.get(method)
