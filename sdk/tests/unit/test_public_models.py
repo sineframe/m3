@@ -605,6 +605,42 @@ def test_nested_payloads_are_copied_and_deeply_immutable() -> None:
     assert restored == payload
 
 
+def test_model_copy_update_is_deeply_immutable_and_serializes_like_construction() -> (
+    None
+):
+    source = {"nested": {"items": [{"value": 1}], "flags": {3, 1}}}
+    original = OpaqueContent(provider="fixture", payload={})
+    copied = original.model_copy(update={"payload": source})
+    source["nested"]["items"][0]["value"] = 99
+    assert copied.payload["nested"]["items"][0]["value"] == 1
+    with pytest.raises(TypeError):
+        copied.payload["nested"]["items"][0]["value"] = 4
+    with pytest.raises(AttributeError):
+        copied.payload["nested"]["flags"].add(5)
+    expected = OpaqueContent(
+        provider="fixture",
+        payload={"nested": {"items": [{"value": 1}], "flags": {3, 1}}},
+    )
+    assert copied.model_dump(mode="json") == expected.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("bad", [object(), float("nan")])
+def test_model_copy_update_rejects_non_json_values(bad: object) -> None:
+    original = OpaqueContent(provider="fixture", payload={})
+    with pytest.raises(ValueError):
+        original.model_copy(update={"payload": {"bad": bad}})
+
+
+def test_parent_serializes_prebuilt_child_models() -> None:
+    child = OpaqueContent(provider="fixture", payload={"a": [1, {"b": 2}]})
+    parent = OpaqueContent(provider="parent", payload={"child": child})
+    assert parent.model_dump(mode="json")["payload"]["child"] == {
+        "kind": "opaque",
+        "provider": "fixture",
+        "payload": {"a": [1, {"b": 2}]},
+    }
+
+
 def test_frozen_mapping_lookups_preserve_mapping_semantics() -> None:
     payload = OpaqueContent(provider="fixture", payload={"a": 1, "b": {"c": 2}})
     assert payload.payload.get(["x"]) is None

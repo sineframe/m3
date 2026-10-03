@@ -90,6 +90,7 @@ class _Entry:
     report: ExecutionReport
     spec: ExecutionSpec | None
     trace: Any = None
+    tool_call_counts: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -195,15 +196,41 @@ def _scenario(value: Any) -> str | None:
     return _TRIAL_SUFFIX.sub("", text)
 
 
-def _entries(store: ExecutionStore, run_id: str) -> tuple[_Entry, ...]:
+def _bulk_tool_call_counts(
+    store: ExecutionStore, execution_ids: Sequence[Any]
+) -> Mapping[str, tuple[int, int]] | None:
+    """Fetch ``(total, successful)`` tool-call counts, or ``None`` if the store
+    can't provide them, in which case entries load full traces instead."""
+    get_counts = getattr(store, "tool_call_counts", None)
+    if not callable(get_counts):
+        return None
+    try:
+        counts: Mapping[str, tuple[int, int]] = get_counts(execution_ids)
+    except Exception:
+        return None
+    return counts
+
+
+def _entries(
+    store: ExecutionStore, run_id: str, *, load_traces: bool
+) -> tuple[_Entry, ...]:
+    """Load a run's entries; ``load_traces=False`` reads tool-call counts instead
+    of building trace views when the store supports it."""
     result: list[_Entry] = []
     offset = 0
     while True:
         page = store.list_executions(limit=100, offset=offset, run_id=run_id)
         if not page.items:
             break
+        counts = (
+            None
+            if load_traces
+            else _bulk_tool_call_counts(
+                store, [snapshot.execution_id for snapshot in page.items]
+            )
+        )
         for snapshot in page.items:
-            entry = _load_entry(store, snapshot.execution_id)
+            entry = _load_entry(store, snapshot.execution_id, counts=counts)
             if entry is not None:
                 result.append(entry)
         offset += len(page.items)
@@ -220,32 +247,38 @@ def _entries_by_id(
     Storage doesn't check that an attempt's ``execution_ids`` belong to its run,
     so executions from other runs are skipped, as :func:`_entries` skips them.
     """
+    counts = _bulk_tool_call_counts(store, list(execution_ids))
     loaded = (
-        _load_entry(store, execution_id, run_id=run_id)
+        _load_entry(store, execution_id, run_id=run_id, counts=counts)
         for execution_id in execution_ids
     )
     return _sorted_entries([entry for entry in loaded if entry is not None])
 
 
 def _load_entry(
-    store: ExecutionStore, execution_id: Any, *, run_id: str | None = None
+    store: ExecutionStore,
+    execution_id: Any,
+    *,
+    run_id: str | None = None,
+    counts: Mapping[str, tuple[int, int]] | None = None,
 ) -> _Entry | None:
+    """Load one entry; with ``counts`` the trace view is skipped and the
+    execution's counts (if any) are attached instead."""
     report = store.get_report(execution_id)
     if report is None:
         return None
     if run_id is not None and _run_key(report.snapshot.run_id) != run_id:
         return None
     get_spec = getattr(store, "get_execution_spec", None)
+    spec = get_spec(execution_id) if callable(get_spec) else None
+    if counts is not None:
+        return _Entry(report, spec, tool_call_counts=counts.get(_id(execution_id)))
     get_trace = getattr(store, "get_trace_view", None)
     try:
         trace = get_trace(execution_id) if callable(get_trace) else None
     except Exception:
         trace = None
-    return _Entry(
-        report,
-        get_spec(execution_id) if callable(get_spec) else None,
-        trace,
-    )
+    return _Entry(report, spec, trace)
 
 
 def _sorted_entries(entries: list[_Entry]) -> tuple[_Entry, ...]:
@@ -1239,6 +1272,11 @@ def _tool_calls(entries: Sequence[_Entry]) -> Mapping[str, int]:
     for entry in entries:
         summary = getattr(entry.trace, "summary", None)
         if summary is None:
+            if entry.tool_call_counts is not None:
+                entry_total, entry_successful = entry.tool_call_counts
+                total += entry_total
+                successful += entry_successful
+                failed += entry_total - entry_successful
             continue
         total += int(getattr(summary, "tool_call_count", 0) or 0)
         successful += int(getattr(summary, "successful_tool_call_count", 0) or 0)
@@ -1641,7 +1679,7 @@ def load_run_entries(store: ExecutionStore, run_id: RunId | str) -> tuple[_Entry
     normalized = _run_key(run_id)
     if normalized is None:
         raise ValueError("run_id is required")
-    return _entries(store, normalized)
+    return _entries(store, normalized, load_traces=True)
 
 
 def _normalised_outcome(value: Mapping[str, Any]) -> Any:
@@ -1783,7 +1821,7 @@ def project_test_attempts(
         linked = {value for result in results for value in _execution_ids(result)}
         entries = _entries_by_id(store, normalized_run_id, sorted(linked))
     else:
-        entries = _entries(store, normalized_run_id)
+        entries = _entries(store, normalized_run_id, load_traces=False)
     execution_kinds = {
         _id(entry.report.snapshot.execution_id): _result_kind(entry)
         for entry in entries
@@ -1938,7 +1976,7 @@ def build_feedback(
     current = (
         _retry_missing_traces(store, entries)
         if entries is not None
-        else _entries(store, current_id)
+        else _entries(store, current_id, load_traces=False)
     )
     results, manifest = _test_values(store, current_id)
     current_label = _run_label(manifest)
@@ -2020,7 +2058,7 @@ def build_feedback(
         baseline = (
             _retry_missing_traces(store, baseline_entries)
             if baseline_entries is not None
-            else _entries(store, baseline_id)
+            else _entries(store, baseline_id, load_traces=False)
         )
         baseline_results, baseline_manifest = _test_values(store, baseline_id)
         baseline_contexts = _contexts(baseline_results, baseline_manifest)
@@ -2272,13 +2310,15 @@ def export_feedback(
 ) -> Path:
     """Write a complete feedback bundle with resolvable supporting files."""
     loaded = (
-        list(entries) if entries is not None else list(_entries(store, feedback.run_id))
+        list(entries)
+        if entries is not None
+        else list(_entries(store, feedback.run_id, load_traces=True))
     )
     if feedback.comparison is not None:
         loaded.extend(
             baseline_entries
             if baseline_entries is not None
-            else _entries(store, feedback.comparison.baseline_run_id)
+            else _entries(store, feedback.comparison.baseline_run_id, load_traces=True)
         )
     reports = {_id(entry.report.snapshot.execution_id): entry for entry in loaded}
     execution_suites = {key: _suite(entry) for key, entry in reports.items()}

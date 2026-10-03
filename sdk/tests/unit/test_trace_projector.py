@@ -643,7 +643,11 @@ def test_json_null_is_observed_and_round_trips_while_invalid_json_is_unavailable
         }
     )
     result = trace.events[8].model_copy(
-        update={"payload": {"result": {"structuredContent": {"bad": {1, 2}}}}}
+        update={"payload": {"result": {"structuredContent": {}}}}
+    )
+    # Simulates evidence that bypassed model validation (non-JSON set value).
+    object.__setattr__(
+        result, "payload", {"result": {"structuredContent": {"bad": {1, 2}}}}
     )
     view = trace.model_copy(
         update={"events": (*trace.events[:7], request, result, *trace.events[9:])}

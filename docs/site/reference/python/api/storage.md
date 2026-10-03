@@ -924,6 +924,14 @@ get_trace_view(
 ```
 
 ```python
+tool_call_counts(
+    self,
+    execution_ids: Sequence[ExecutionId | str],
+) -> dict[str, tuple[int, int]]
+```
+Return ``{execution_id: (total, successful)}`` tool-call counts.
+
+```python
 save_snapshot(
     self,
     snapshot: ExecutionState,
@@ -1546,6 +1554,14 @@ get_trace_view(
     execution_id: ExecutionId | str,
 ) -> TraceView | None
 ```
+
+```python
+tool_call_counts(
+    self,
+    execution_ids: Sequence[ExecutionId | str],
+) -> dict[str, tuple[int, int]]
+```
+Return ``{execution_id: (total, successful)}`` tool-call counts.
 
 ```python
 save_snapshot(
@@ -2474,6 +2490,14 @@ get_trace_view(
     execution_id: ExecutionId | str,
 ) -> TraceView | None
 ```
+
+```python
+tool_call_counts(
+    self,
+    execution_ids: Sequence[ExecutionId | str],
+) -> dict[str, tuple[int, int]]
+```
+Return ``{execution_id: (total, successful)}`` tool-call counts.
 
 ```python
 save_snapshot(
@@ -3447,6 +3471,14 @@ get_trace_view(
     execution_id: ExecutionId | str,
 ) -> TraceView | None
 ```
+
+```python
+tool_call_counts(
+    self,
+    execution_ids: Sequence[ExecutionId | str],
+) -> dict[str, tuple[int, int]]
+```
+Return ``{execution_id: (total, successful)}`` tool-call counts.
 
 ```python
 save_snapshot(

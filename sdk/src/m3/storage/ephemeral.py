@@ -1150,6 +1150,27 @@ class InMemoryExecutionStore:
         trace = self.get_trace(execution_id)
         return trace.view() if trace is not None else None
 
+    def tool_call_counts(
+        self, execution_ids: Sequence[ExecutionId | str]
+    ) -> dict[str, tuple[int, int]]:
+        """Return ``{execution_id: (total, successful)}`` tool-call counts.
+
+        Counts match ``get_trace_view(id).summary``. Executions that are missing,
+        unfinished, or whose trace is unavailable are omitted.
+        """
+        counts: dict[str, tuple[int, int]] = {}
+        for key in dict.fromkeys(_execution_key(value) for value in execution_ids):
+            try:
+                view = self.get_trace_view(key)
+            except (TraceNotFinalized, TraceUnavailable):
+                continue
+            if view is not None:
+                counts[key] = (
+                    view.summary.tool_call_count,
+                    view.summary.successful_tool_call_count,
+                )
+        return counts
+
     def save_snapshot(self, snapshot: ExecutionState) -> None:
         key = _execution_key(snapshot.execution_id)
         with self._lock:

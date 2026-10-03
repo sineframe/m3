@@ -11,6 +11,7 @@ from typing import ClassVar
 
 import pytest
 from mcp import types as mcp_types
+from test_sqlite_storage import _run_execution
 
 from m3.errors import TraceUnavailable
 from m3.events import EventFactory, EventSequence
@@ -2083,3 +2084,58 @@ def test_server_catalog():
     assert rebuilt_changes == generated_changes
     assert payload["run_id"] == current_id
     assert baseline_payload["run_id"] == baseline_id
+
+
+def _sqlite_tool_call_run(tmp_path, *, unfinished=False):
+    store = SQLiteExecutionStore(tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs")
+    execution_ids = [
+        _run_execution(store, "mixed", "run", [True, False, True]).root,
+        _run_execution(store, "single", "run", [True]).root,
+    ]
+    if unfinished:
+        execution_ids.append(
+            _run_execution(store, "live", "run", [True, True], finished=False).root
+        )
+    store.save_test_run("run", {"schema_version": 1, "run_id": "run"})
+    store.save_test_result(
+        "run",
+        "attempt-1",
+        {
+            "attempt_id": "attempt-1",
+            "suite_name": "suite",
+            "node_id": "test.py::test_tool_calls",
+            "outcome": "passed",
+            "execution_ids": execution_ids,
+        },
+    )
+    return store
+
+
+@pytest.mark.parametrize("unfinished", [False, True])
+def test_feedback_tool_calls_do_not_depend_on_loading_trace_views(tmp_path, unfinished):
+    store = _sqlite_tool_call_run(tmp_path, unfinished=unfinished)
+
+    feedback = build_feedback(store, "run")
+
+    assert feedback.tests[0]["tool_calls"] == {"total": 4, "successful": 3, "failed": 1}
+    full = build_feedback(store, "run", entries=load_run_entries(store, "run"))
+    assert feedback.model_dump(mode="json") == full.model_dump(mode="json")
+    assert [
+        attempt["tool_calls"] for attempt in project_test_attempts(store, "run")
+    ] == [feedback.tests[0]["tool_calls"]]
+
+
+def test_feedback_reuses_stored_tool_call_counts_without_trace_views(
+    tmp_path, monkeypatch
+):
+    store = _sqlite_tool_call_run(tmp_path)
+    first = build_feedback(store, "run")
+
+    def fail(execution_id):
+        raise AssertionError("trace view was built")
+
+    monkeypatch.setattr(store, "get_trace_view", fail)
+
+    assert build_feedback(store, "run").model_dump(mode="json") == first.model_dump(
+        mode="json"
+    )

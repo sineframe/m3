@@ -16,13 +16,14 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from test_trace_dedup_equivalence import _corpus, _normalized
 
 from m3.elicitation import (
     ElicitationResponse,
     FormElicitationRequest,
     PendingElicitationRound,
 )
-from m3.events import EventFactory
+from m3.events import EventFactory, EventSequence
 from m3.storage import (
     ArtifactNotFound,
     BlobRecord,
@@ -36,12 +37,15 @@ from m3.trace.redaction import RedactionConfig
 from m3.types import (
     ArtifactRef,
     DirectSpec,
+    EventDirection,
+    EventId,
     EventKind,
     ExecutionId,
     ExecutionOutcome,
     ExecutionState,
     ExecutionStatus,
     Ping,
+    RequestLink,
     RevisionSelection,
     SecretReference,
     ServerBinding,
@@ -64,6 +68,80 @@ def _created(
     factory = EventFactory(execution_id)
     store.append_events([factory.create(EventKind.EXECUTION_CREATED, payload={})])
     return execution_id, factory
+
+
+def _run_execution(
+    store: SQLiteExecutionStore,
+    name: str,
+    run_id: str,
+    tool_results: list[bool],
+    *,
+    finished: bool = True,
+) -> ExecutionId:
+    """Persist an execution whose tool calls succeed (True) or fail (False)."""
+    execution_id = ExecutionId(name)
+    store.create(ExecutionState(execution_id=execution_id, run_id=run_id))
+    factory = EventFactory(execution_id, allocator=EventSequence(start=0))
+    events = [
+        factory.create(
+            EventKind.EXECUTION_CREATED, payload={"trace_id": f"trace-{name}"}
+        )
+    ]
+    for index, succeeded in enumerate(tool_results, 1):
+
+        def link(direction: EventDirection, index: int = index) -> RequestLink:
+            return RequestLink(
+                jsonrpc_id=index, direction=direction, request_sequence=index
+            )
+
+        events.append(
+            factory.create(
+                EventKind.TOOL_CALL_REQUESTED,
+                connection_id="connection",
+                correlation=link(EventDirection.CLIENT_TO_SERVER),
+                payload={
+                    "method": "tools/call",
+                    "call_id": f"call-{index}",
+                    "params": {"name": "echo", "arguments": {}},
+                },
+            )
+        )
+        events.append(
+            factory.create(
+                EventKind.TOOL_RESULT_RECEIVED,
+                connection_id="connection",
+                correlation=link(EventDirection.SERVER_TO_CLIENT),
+                payload={
+                    "method": "tools/call",
+                    "result": {
+                        "content": [{"type": "text", "text": "x"}],
+                        "isError": not succeeded,
+                    },
+                },
+            )
+        )
+    if finished:
+        events.append(
+            factory.create(
+                EventKind.EXECUTION_FINISHED,
+                payload={
+                    "outcome": ExecutionOutcome.COMPLETED.value,
+                    "completeness": "complete",
+                    "limitations": [],
+                },
+            )
+        )
+    store.append_events(events)
+    return execution_id
+
+
+def _stored_counts(tmp_path: Path, execution_id: ExecutionId) -> str | None:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        row = connection.execute(
+            "SELECT tool_call_counts_json FROM v2_executions WHERE id=?",
+            (execution_id.root,),
+        ).fetchone()
+    return row[0]
 
 
 def test_memory_and_sqlite_retain_defensive_typed_execution_specs(
@@ -868,3 +946,77 @@ def test_writer_waits_for_cleanup_before_reusing_orphan(
         reference = writer.result(timeout=10)
 
     assert other.artifacts.get(reference) == content
+
+
+@pytest.mark.parametrize("name", sorted(_corpus()))
+def test_tool_call_counts_match_trace_view_before_and_after_persisting(
+    tmp_path: Path, name: str
+) -> None:
+    store = _store(tmp_path)
+    trace = _normalized(_corpus()[name]())
+    execution_id = ExecutionId("corpus")
+    store.create(ExecutionState(execution_id=execution_id))
+    store.append_events(
+        [
+            event.model_copy(
+                update={
+                    "execution_id": execution_id,
+                    "event_id": EventId(f"corpus-{event.sequence}"),
+                }
+            )
+            for event in trace.events
+        ]
+    )
+    summary = store.get_trace_view(execution_id).summary
+    expected = (summary.tool_call_count, summary.successful_tool_call_count)
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        connection.execute("UPDATE v2_executions SET tool_call_counts_json=NULL")
+
+    assert store.tool_call_counts([execution_id]) == {"corpus": expected}
+    assert json.loads(_stored_counts(tmp_path, execution_id)) == {
+        "schema_version": "2.0",
+        "total": expected[0],
+        "successful": expected[1],
+    }
+    assert store.tool_call_counts([execution_id]) == {"corpus": expected}
+
+
+def test_tool_call_counts_omit_unfinished_and_missing_and_fill_null_rows(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    finished = _run_execution(store, "finished", "run", [True, False, True])
+    empty = _run_execution(store, "empty", "run", [])
+    unfinished = _run_execution(store, "unfinished", "run", [True], finished=False)
+    ids = [finished, empty, unfinished, "missing"]
+
+    assert store.tool_call_counts(ids) == {"finished": (3, 2), "empty": (0, 0)}
+    assert _stored_counts(tmp_path, unfinished) is None
+
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        connection.execute("UPDATE v2_executions SET tool_call_counts_json=NULL")
+
+    assert store.tool_call_counts(ids) == {"finished": (3, 2), "empty": (0, 0)}
+    assert json.loads(_stored_counts(tmp_path, finished)) == {
+        "schema_version": "2.0",
+        "total": 3,
+        "successful": 2,
+    }
+
+    stale = json.dumps({"schema_version": "1.0", "total": 9, "successful": 9})
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        connection.execute(
+            "UPDATE v2_executions SET tool_call_counts_json=? WHERE id=?",
+            (stale, finished.root),
+        )
+        connection.execute(
+            "UPDATE v2_executions SET tool_call_counts_json=? WHERE id=?",
+            ("not json", empty.root),
+        )
+
+    assert store.tool_call_counts(ids) == {"finished": (3, 2), "empty": (0, 0)}
+    assert json.loads(_stored_counts(tmp_path, finished)) == {
+        "schema_version": "2.0",
+        "total": 3,
+        "successful": 2,
+    }
