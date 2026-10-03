@@ -508,7 +508,7 @@ class RuntimeManager:
             _safe_relative(str(entry), "companion")
             for entry in spec.get("companions") or []
         ]
-        source = (item.get("source") or "manifest") if from_manifest else "selector"
+        source = item["source"] if from_manifest else "selector"
         destination = (
             self.cache_root
             / kind
@@ -1172,7 +1172,10 @@ class RuntimeManager:
                 ),
                 **extra,
             }
-        return manifest.get(target) or manifest.get(requested) or manifest
+        generic = manifest.get(target) or manifest.get(requested) or manifest
+        if not isinstance(generic, Mapping):
+            raise RuntimeValidationError("runtime manifest entry must be an object")
+        return {**generic, "source": "manifest"}
 
     @staticmethod
     def _codex_triple(target: str) -> str:
@@ -1455,7 +1458,7 @@ class RuntimeManager:
                 with p.open("rb") as f:
                     for chunk in iter(lambda: f.read(1024 * 1024), b""):
                         h.update(chunk)
-                out[str(p.relative_to(root))] = h.hexdigest()
+                out[p.relative_to(root).as_posix()] = h.hexdigest()
         return out
 
     @staticmethod
@@ -1471,7 +1474,7 @@ class RuntimeManager:
                 and not p.name.startswith("lease-")
                 and p.stat().st_mode & stat.S_IXUSR
             ):
-                out.append(str(p.relative_to(root)))
+                out.append(p.relative_to(root).as_posix())
         return sorted(out)
 
     @classmethod

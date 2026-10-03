@@ -160,7 +160,9 @@ The receipt stores a top-level `format` number (currently `2`), the
 `asset_name`, `verification_method`, and `immutable_release`. `source` records
 where the asset metadata came from: `github-release`, `claude-manifest`,
 `manifest` (any other manifest URL), or `selector` (an explicit download URL in
-the selector). M3 sets it; selector keys cannot override it. A cache entry is
+the selector). M3 sets it; neither selector keys nor manifest contents can
+override it. Receipt paths in `files`, `executables`, `executable`, and
+`companions` always use `/` separators, including on Windows. A cache entry is
 reused only when the receipt format matches, the file hashes and executable
 list match the installed tree, and the main executable and every companion are
 still executable on POSIX systems. Reuse also re-checks the selected release's

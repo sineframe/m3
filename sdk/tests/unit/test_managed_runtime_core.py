@@ -12,6 +12,7 @@ import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -75,6 +76,7 @@ class _Server(BaseHTTPRequestHandler):
     body = _archive()
     requests = 0
     manifest_log = None
+    manifest_extra: ClassVar[dict[str, object]] = {}
 
     def do_GET(self):
         type(self).requests += 1
@@ -86,6 +88,7 @@ class _Server(BaseHTTPRequestHandler):
                     "version": "1.2.3",
                     "url": f"http://127.0.0.1:{self.server.server_port}/asset.zip",
                     "sha256": hashlib.sha256(self.body).hexdigest(),
+                    **type(self).manifest_extra,
                 }
             ).encode()
             self.send_response(200)
@@ -1380,3 +1383,30 @@ def test_github_release_selection_records_github_release_source() -> None:
         "1.2.3",
     )
     assert selected["source"] == "github-release"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claimed", ["selector", "github-release"])
+async def test_generic_manifest_cannot_set_provenance_source(
+    tmp_path: Path,
+    archive_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    claimed: str,
+) -> None:
+    import m3.runtime.core as core
+
+    manifest = archive_server.replace("/asset.zip", "/manifest.json")
+    monkeypatch.setattr(core, "default_manifest_url", lambda *_args: manifest)
+    monkeypatch.setattr(_Server, "manifest_extra", {"source": claimed})
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    lease = await manager.acquire(
+        "claude", {"version": "1.2.3", "manifest_url": manifest}
+    )
+    await lease.release()
+    assert list_cache(cache)[0]["provenance"]["source"] == "manifest"
+
+    requests = _Server.requests
+    plain = await manager.acquire("claude", "1.2.3")
+    await plain.release()
+    assert _Server.requests == requests
