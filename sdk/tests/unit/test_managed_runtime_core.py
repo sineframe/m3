@@ -455,6 +455,9 @@ def test_official_pi_release_metadata_endpoint() -> None:
         ("codex", "linux-arm64-64", "codex-aarch64-unknown-linux-musl.tar.gz"),
         ("codex", "linux-x64-64", "codex-x86_64-unknown-linux-gnu.tar.gz"),
         ("codex", "windows-x64-64", "codex-x86_64-pc-windows-msvc.exe.zip"),
+        ("codex", "darwin-arm64-64", "codex-package-aarch64-apple-darwin.tar.gz"),
+        ("codex", "linux-x64-64", "codex-package-x86_64-unknown-linux-musl.tar.gz"),
+        ("codex", "windows-x64-64", "codex-package-x86_64-pc-windows-msvc.tar.gz"),
         ("pi", "darwin-arm64-64", "pi-darwin-arm64.tar.gz"),
         ("pi", "windows-x64-64", "pi-windows-x64.zip"),
     ],
@@ -466,29 +469,99 @@ def test_deterministic_vendor_target_patterns(
     assert any(re.fullmatch(pattern, name, re.I) for pattern in patterns)
 
 
-def test_codex_prefers_cli_over_package_asset() -> None:
+def _codex_release(*names: str, tag: str = "rust-v0.156.1") -> dict[str, object]:
+    return {
+        "tag_name": tag,
+        "assets": [
+            {
+                "name": name,
+                "browser_download_url": f"https://example.test/{name}",
+                "digest": "sha256:" + "c" * 64,
+            }
+            for name in names
+        ],
+    }
+
+
+def test_codex_prefers_package_over_bare_binary_and_requires_host() -> None:
     selected = _CoreManager._select_manifest_asset(
         "codex",
-        {
-            "tag_name": "rust-v0.155.1",
-            "assets": [
-                {
-                    "name": "codex-package-aarch64-apple-darwin.tar.gz",
-                    "browser_download_url": "http://bad/package",
-                },
-                {
-                    "name": "codex-aarch64-apple-darwin.tar.gz",
-                    "browser_download_url": "http://good/cli",
-                    "digest": "sha256:" + "c" * 64,
-                },
-            ],
-        },
+        _codex_release(
+            "codex-aarch64-apple-darwin.tar.gz",
+            "codex-package-aarch64-apple-darwin.tar.gz",
+            "codex-code-mode-host-aarch64-apple-darwin.tar.gz",
+        ),
         "darwin-arm64-64",
-        "0.155.1",
+        "0.156.1",
     )
-    assert selected["url"] == "http://good/cli"
-    assert selected["version"] == "0.155.1"
-    assert selected["immutable_release"] is None
+    assert selected["url"] == (
+        "https://example.test/codex-package-aarch64-apple-darwin.tar.gz"
+    )
+    assert selected["version"] == "0.156.1"
+    assert selected["executable"] == "bin/codex"
+    assert selected["companions"] == ["bin/codex-code-mode-host"]
+    assert selected["package_manifest"] == "codex-package.json"
+    assert selected["package_target"] == "aarch64-apple-darwin"
+
+
+def test_codex_windows_package_uses_exe_executables() -> None:
+    selected = _CoreManager._select_manifest_asset(
+        "codex",
+        _codex_release(
+            "codex-x86_64-pc-windows-msvc.exe.zip",
+            "codex-package-x86_64-pc-windows-msvc.tar.gz",
+            "codex-code-mode-host-x86_64-pc-windows-msvc.exe.zip",
+        ),
+        "windows-x64-64",
+        "0.156.1",
+    )
+    assert selected["asset_name"] == "codex-package-x86_64-pc-windows-msvc.tar.gz"
+    assert selected["executable"] == "bin/codex.exe"
+    assert selected["companions"] == ["bin/codex-code-mode-host.exe"]
+    assert selected["package_target"] == "x86_64-pc-windows-msvc"
+
+
+def test_codex_package_without_published_host_has_no_companions() -> None:
+    selected = _CoreManager._select_manifest_asset(
+        "codex",
+        _codex_release(
+            "codex-aarch64-apple-darwin.tar.gz",
+            "codex-package-aarch64-apple-darwin.tar.gz",
+            tag="rust-v0.140.0",
+        ),
+        "darwin-arm64-64",
+        "0.140.0",
+    )
+    assert selected["executable"] == "bin/codex"
+    assert selected["companions"] == []
+
+
+def test_codex_legacy_release_without_package_or_host_keeps_bare_binary() -> None:
+    selected = _CoreManager._select_manifest_asset(
+        "codex",
+        _codex_release(
+            "codex-aarch64-apple-darwin.tar.gz",
+            tag="rust-v0.130.0",
+        ),
+        "darwin-arm64-64",
+        "0.130.0",
+    )
+    assert selected["executable"] == "codex-aarch64-apple-darwin"
+    assert not selected.get("companions")
+    assert "package_manifest" not in selected
+
+
+def test_codex_bare_binary_is_rejected_when_host_is_published() -> None:
+    with pytest.raises(RuntimeValidationError, match="no codex-package asset"):
+        _CoreManager._select_manifest_asset(
+            "codex",
+            _codex_release(
+                "codex-aarch64-apple-darwin.tar.gz",
+                "codex-code-mode-host-aarch64-apple-darwin.tar.gz",
+            ),
+            "darwin-arm64-64",
+            "0.156.1",
+        )
 
 
 def test_codex_prefers_current_linux_musl_asset_with_gnu_fallback() -> None:
@@ -963,3 +1036,206 @@ async def test_latest_manifest_recovers_dead_owner_lock(
     manifest = await manager._resolve_manifest("opencode", url, "latest", target)
     assert manifest["tag_name"] == "v1.2.3"
     assert not (invocation / f"{key}.lock").exists()
+
+
+posix_only = pytest.mark.skipif(
+    os.name == "nt", reason="POSIX permission bits are not preserved on Windows"
+)
+
+
+def _tar_bytes(entries: list[tuple[str, bytes, int]]) -> bytes:
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as archive:
+        for name, data, mode in entries:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = mode
+            archive.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def _mode_of(path: Path) -> int:
+    return path.stat().st_mode & 0o7777
+
+
+@posix_only
+@pytest.mark.parametrize(
+    ("member_mode", "expected"),
+    [(0o755, 0o755), (0o644, 0o644), (0o4777, 0o755), (0o2666, 0o644)],
+)
+def test_tar_extraction_normalizes_executable_bits(
+    tmp_path: Path, member_mode: int, expected: int
+) -> None:
+    payload = _tar_bytes([("bin/tool", b"x", member_mode)])
+    out = tmp_path / "out"
+    out.mkdir()
+    with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+        _CoreManager._extract_tar(archive, out, 512, 1024 * 1024)
+    assert _mode_of(out / "bin" / "tool") == expected
+
+
+@posix_only
+@pytest.mark.parametrize(
+    ("attr", "expected"),
+    [(0o100755 << 16, 0o755), (0o104777 << 16, 0o755), (0, 0o644)],
+)
+def test_zip_extraction_normalizes_executable_bits(
+    tmp_path: Path, attr: int, expected: int
+) -> None:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        info = zipfile.ZipInfo("bin/tool")
+        info.external_attr = attr
+        archive.writestr(info, b"x")
+    out = tmp_path / "out"
+    out.mkdir()
+    with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as archive:
+        _CoreManager._extract_zip(archive, out, 512, 1024 * 1024)
+    assert _mode_of(out / "bin" / "tool") == expected
+
+
+CODEX_TARGET = "aarch64-apple-darwin"
+CODEX_SCRIPT = b"#!/bin/sh\necho codex-cli 1.2.3\n"
+
+
+def _codex_package(
+    *,
+    host: bool = True,
+    host_mode: int = 0o755,
+    metadata: dict[str, object] | None = None,
+) -> bytes:
+    manifest: dict[str, object] = {
+        "layoutVersion": 1,
+        "version": "1.2.3",
+        "target": CODEX_TARGET,
+        "variant": "codex",
+        "entrypoint": "bin/codex",
+        "resourcesDir": "codex-resources",
+        "pathDir": "codex-path",
+    }
+    manifest.update(metadata or {})
+    entries = [
+        ("bin/codex", CODEX_SCRIPT, 0o755),
+        ("codex-package.json", json.dumps(manifest).encode(), 0o644),
+        ("codex-path/rg", b"#!/bin/sh\n", 0o755),
+    ]
+    if host:
+        entries.append(("bin/codex-code-mode-host", b"#!/bin/sh\n", host_mode))
+    return _tar_bytes(entries)
+
+
+def _codex_selector(url: str) -> dict[str, object]:
+    return {
+        "version": "1.2.3",
+        "url": url,
+        "sha256": hashlib.sha256(_Server.body).hexdigest(),
+        "executable": "bin/codex",
+        "companions": ["bin/codex-code-mode-host"],
+        "package_manifest": "codex-package.json",
+        "package_target": CODEX_TARGET,
+    }
+
+
+@posix_only
+@pytest.mark.asyncio
+async def test_codex_package_acquire_records_companions_and_executables(
+    tmp_path: Path, archive_server: str
+) -> None:
+    _Server.body = _codex_package()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    lease = await manager.acquire("codex", _codex_selector(archive_server))
+    try:
+        assert lease.executable.parts[-2:] == ("bin", "codex")
+        assert (lease.executable.parent / "codex-code-mode-host").is_file()
+        receipt = json.loads((lease.executable.parents[1] / "receipt.json").read_text())
+        assert receipt["format"] == 2
+        assert receipt["provenance"]["companions"] == ["bin/codex-code-mode-host"]
+        assert receipt["provenance"]["executable"] == "bin/codex"
+        assert {"bin/codex", "bin/codex-code-mode-host"} <= set(receipt["executables"])
+        assert receipt["executables"] == sorted(receipt["executables"])
+        assert "codex-package.json" not in receipt["executables"]
+    finally:
+        await lease.release()
+
+
+@posix_only
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("package", "message"),
+    [
+        (_codex_package(host=False), "lacks required companion executable"),
+        (_codex_package(host_mode=0o644), "lacks required companion executable"),
+        (
+            _codex_package(metadata={"entrypoint": "bin/other"}),
+            "codex package metadata does not match",
+        ),
+        (
+            _codex_package(metadata={"version": "9.9.9"}),
+            "codex package metadata does not match",
+        ),
+        (
+            _codex_package(metadata={"target": "x86_64-unknown-linux-musl"}),
+            "codex package metadata does not match",
+        ),
+    ],
+    ids=["missing-host", "non-executable-host", "entrypoint", "version", "target"],
+)
+async def test_codex_package_validation_failures_are_never_published(
+    tmp_path: Path, archive_server: str, package: bytes, message: str
+) -> None:
+    _Server.body = package
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    with pytest.raises(RuntimeValidationError, match=message):
+        await manager.acquire("codex", _codex_selector(archive_server))
+    assert not list(cache.glob("**/receipt.json"))
+    assert list_cache(cache) == []
+
+
+@posix_only
+@pytest.mark.asyncio
+async def test_receipt_without_format_is_outdated_and_reacquired(
+    tmp_path: Path, archive_server: str
+) -> None:
+    _Server.body = _codex_package()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    selector = _codex_selector(archive_server)
+    lease = await manager.acquire("codex", selector)
+    entry = lease.executable.parents[1]
+    await lease.release()
+    assert _CoreManager._receipt_valid(entry)
+
+    receipt = json.loads((entry / "receipt.json").read_text())
+    del receipt["format"]
+    (entry / "receipt.json").write_text(json.dumps(receipt))
+    assert not _CoreManager._receipt_valid(entry)
+    assert [item["status"] for item in list_cache(cache)] == ["outdated"]
+
+    requests = _Server.requests
+    again = await manager.acquire("codex", selector)
+    try:
+        assert _Server.requests > requests
+        assert again.executable == lease.executable
+        assert _CoreManager._receipt_valid(entry)
+        assert [item["status"] for item in list_cache(cache)] == ["ready"]
+    finally:
+        await again.release()
+
+
+@posix_only
+@pytest.mark.asyncio
+async def test_companion_losing_executable_bit_makes_entry_corrupt(
+    tmp_path: Path, archive_server: str
+) -> None:
+    _Server.body = _codex_package()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, tmp_path / "project")
+    lease = await manager.acquire("codex", _codex_selector(archive_server))
+    entry = lease.executable.parents[1]
+    await lease.release()
+
+    (entry / "bin" / "codex-code-mode-host").chmod(0o644)
+    assert not _CoreManager._receipt_valid(entry)
+    assert [item["status"] for item in list_cache(cache)] == ["corrupt"]

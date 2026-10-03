@@ -33,6 +33,8 @@ from typing import Any, cast
 
 from .recipes import default_manifest_url
 
+RECEIPT_FORMAT = 2
+
 VERSION_RE = re.compile(
     r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9a-z]+(?:\.[0-9a-z]+)*)?$"
 )
@@ -43,7 +45,7 @@ CAPS = {
     "claude": (512 * 1024**2, 512 * 1024**2, 1),
     "claude_code": (512 * 1024**2, 512 * 1024**2, 1),
     "opencode": (256 * 1024**2, 512 * 1024**2, 64),
-    "codex": (384 * 1024**2, 768 * 1024**2, 64),
+    "codex": (384 * 1024**2, 768 * 1024**2, 128),
     # Measured official pi-darwin-arm64 v0.86.1 bundle: 230 tar members.
     "pi": (256 * 1024**2, 512 * 1024**2, 512),
 }
@@ -598,6 +600,34 @@ class RuntimeManager:
                         raise RuntimeValidationError(
                             "runtime archive contains no expected executable"
                         )
+                    companions = [
+                        _safe_relative(str(item), "companion")
+                        for item in spec.get("companions") or []
+                    ]
+                    for companion in companions:
+                        companion_path = staging_destination / companion
+                        if (
+                            not companion_path.is_file()
+                            or companion_path.is_symlink()
+                            or staging_destination
+                            not in companion_path.resolve().parents
+                            or (
+                                os.name != "nt"
+                                and not companion_path.stat().st_mode & stat.S_IXUSR
+                            )
+                        ):
+                            raise RuntimeValidationError(
+                                "runtime archive lacks required companion executable"
+                            )
+                    package_manifest = spec.get("package_manifest")
+                    if package_manifest:
+                        self._verify_package_metadata(
+                            staging_destination,
+                            _safe_relative(str(package_manifest), "package_manifest"),
+                            executable_name,
+                            version,
+                            spec.get("package_target"),
+                        )
                     try:
                         with tempfile.TemporaryDirectory(
                             prefix=".smoke-", dir=self.cache_root
@@ -636,13 +666,18 @@ class RuntimeManager:
                             "verification_method", "github_asset_digest"
                         ),
                         "immutable_release": spec.get("immutable_release"),
+                        "companions": sorted(companions),
                     }
                     pending_receipt = staging_destination / "receipt.pending"
                     pending_receipt.write_text(
                         json.dumps(
                             {
+                                "format": RECEIPT_FORMAT,
                                 "provenance": provenance,
                                 "files": self._tree_hashes(staging_destination),
+                                "executables": self._executable_files(
+                                    staging_destination
+                                ),
                             },
                             sort_keys=True,
                             indent=2,
@@ -682,6 +717,38 @@ class RuntimeManager:
             bytes=0,
         )
         return lease
+
+    @staticmethod
+    def _verify_package_metadata(
+        root: Path,
+        manifest_name: str,
+        executable: str,
+        version: str,
+        package_target: Any,
+    ) -> None:
+        error = RuntimeValidationError(
+            "codex package metadata does not match the selected release"
+        )
+        path = root / manifest_name
+        try:
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or root not in path.resolve().parents
+                or path.stat().st_size > 1024 * 1024
+            ):
+                raise error
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(metadata, dict)
+                or metadata.get("layoutVersion") != 1
+                or metadata.get("entrypoint") != executable
+                or _version(metadata.get("version")) != version
+                or metadata.get("target") != package_target
+            ):
+                raise error
+        except (OSError, ValueError) as exc:
+            raise error from exc
 
     @staticmethod
     def _smoke_environment(home: Path) -> dict[str, str]:
@@ -1017,12 +1084,40 @@ class RuntimeManager:
             asset = matches[0]
             digest = str(asset.get("digest", "")).removeprefix("sha256:")
             name = str(asset.get("name", "")).lower()
+            extra: dict[str, Any] = {}
             if kind == "pi":
                 executable = "pi.exe" if target.startswith("windows-") else "pi/pi"
             elif kind == "opencode":
                 executable = (
                     "opencode.exe" if target.startswith("windows-") else "opencode"
                 )
+            elif kind == "codex":
+                triple = RuntimeManager._codex_triple(target)
+                windows = target.startswith("windows-")
+                host_published = any(
+                    isinstance(a, Mapping)
+                    and str(a.get("name", ""))
+                    .lower()
+                    .startswith(f"codex-code-mode-host-{triple}".lower())
+                    for a in manifest["assets"]
+                )
+                if name.startswith("codex-package-"):
+                    executable = "bin/codex.exe" if windows else "bin/codex"
+                    host = "bin/codex-code-mode-host" + (".exe" if windows else "")
+                    extra = {
+                        "package_manifest": "codex-package.json",
+                        "package_target": triple,
+                        "companions": [host] if host_published else [],
+                    }
+                elif host_published:
+                    raise RuntimeValidationError(
+                        f"codex release publishes codex-code-mode-host for target {target} but no codex-package asset"
+                    )
+                else:
+                    executable = (
+                        Path(name).name.rsplit(".tar", 1)[0].rsplit(".zip", 1)[0]
+                    )
+                    extra = {"companions": []}
             else:
                 executable = Path(name).name.rsplit(".tar", 1)[0].rsplit(".zip", 1)[0]
             return {
@@ -1037,8 +1132,21 @@ class RuntimeManager:
                 "immutable_release": (
                     bool(manifest["immutable"]) if "immutable" in manifest else None
                 ),
+                **extra,
             }
         return manifest.get(target) or manifest.get(requested) or manifest
+
+    @staticmethod
+    def _codex_triple(target: str) -> str:
+        parts = target.split("-")
+        system, arch = parts[0], parts[1]
+        codex_arch = "aarch64" if arch == "arm64" else "x86_64"
+        platform = {
+            "darwin": "apple-darwin",
+            "linux": "unknown-linux-musl",
+            "windows": "pc-windows-msvc",
+        }.get(system, system)
+        return f"{codex_arch}-{platform}"
 
     @staticmethod
     def _asset_patterns(kind: str, target: str) -> tuple[str, ...]:
@@ -1062,19 +1170,16 @@ class RuntimeManager:
             platform = "windows" if system == "windows" else system
             return (rf"opencode-{platform}-{arch}\.(?:tar\.gz|tgz|zip)",)
         if kind == "codex":
-            codex_arch = "aarch64" if arch == "arm64" else "x86_64"
-            platform = {
-                "darwin": "apple-darwin",
-                "linux": "unknown-linux-musl",
-                "windows": "pc-windows-msvc",
-            }.get(system, system)
+            triple = RuntimeManager._codex_triple(target)
+            package = rf"codex-package-{triple}\.tar\.gz"
             if system == "windows":
-                return (rf"codex-{codex_arch}-{platform}\.exe\.zip",)
-            preferred = rf"codex-{codex_arch}-{platform}\.(?:tar\.gz|tgz|zip)"
+                return (package, rf"codex-{triple}\.exe\.zip")
+            preferred = rf"codex-{triple}\.(?:tar\.gz|tgz|zip)"
             if system == "linux":
+                codex_arch = "aarch64" if arch == "arm64" else "x86_64"
                 legacy = rf"codex-{codex_arch}-unknown-linux-gnu\.(?:tar\.gz|tgz|zip)"
-                return (preferred, legacy)
-            return (preferred,)
+                return (package, preferred, legacy)
+            return (package, preferred)
         if kind == "pi":
             return (rf"pi-{system}-{arch}\.(?:tar\.gz|tgz|zip)",)
         raise RuntimeValidationError(f"unsupported release target for {kind}: {target}")
@@ -1248,6 +1353,7 @@ class RuntimeManager:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with z.open(info) as src, target.open("xb") as dst:
                     RuntimeManager._copy_bounded(src, dst, info.file_size)
+                target.chmod(0o755 if (info.external_attr >> 16) & 0o100 else 0o644)
 
     @staticmethod
     def _extract_tar(
@@ -1280,6 +1386,7 @@ class RuntimeManager:
                 if src:
                     with target.open("xb") as dst:
                         RuntimeManager._copy_bounded(src, dst, member.size)
+                    target.chmod(0o755 if member.mode & 0o100 else 0o644)
 
     @staticmethod
     def _copy_bounded(source: Any, destination: Any, expected_bytes: int) -> None:
@@ -1313,6 +1420,22 @@ class RuntimeManager:
                 out[str(p.relative_to(root))] = h.hexdigest()
         return out
 
+    @staticmethod
+    def _executable_files(root: Path) -> list[str]:
+        if os.name == "nt":
+            return []
+        out = []
+        for p in sorted(root.rglob("*")):
+            if (
+                p.is_file()
+                and not p.is_symlink()
+                and p.name not in {"receipt.json", "receipt.pending"}
+                and not p.name.startswith("lease-")
+                and p.stat().st_mode & stat.S_IXUSR
+            ):
+                out.append(str(p.relative_to(root)))
+        return sorted(out)
+
     @classmethod
     def _receipt_valid(cls, root: Path) -> bool:
         receipt = root / "receipt.json"
@@ -1342,9 +1465,46 @@ class RuntimeManager:
             files = payload.get("files")
             if not isinstance(files, dict):
                 return False
+            if payload.get("format") != RECEIPT_FORMAT:
+                return False
+            executables = payload.get("executables")
+            if not isinstance(executables, list) or not all(
+                isinstance(item, str) for item in executables
+            ):
+                return False
+            if executables != cls._executable_files(root):
+                return False
+            companions = provenance.get("companions")
+            if not isinstance(companions, list) or not all(
+                isinstance(item, str) for item in companions
+            ):
+                return False
+            for companion in companions:
+                if companion not in files:
+                    return False
+                if os.name != "nt" and companion not in executables:
+                    return False
+            if os.name != "nt" and provenance.get("executable") not in executables:
+                return False
             return files == cls._tree_hashes(root)
         except (OSError, ValueError, TypeError):
             return False
+
+    @classmethod
+    def _receipt_status(cls, root: Path) -> str:
+        if cls._receipt_valid(root):
+            return "ready"
+        try:
+            payload = json.loads((root / "receipt.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "corrupt"
+        if (
+            isinstance(payload, dict)
+            and isinstance(payload.get("provenance"), dict)
+            and payload.get("format") != RECEIPT_FORMAT
+        ):
+            return "outdated"
+        return "corrupt"
 
 
 def list_cache(cache_root: str | Path) -> list[Mapping[str, Any]]:
@@ -1371,9 +1531,7 @@ def list_cache(cache_root: str | Path) -> list[Mapping[str, Any]]:
             )
             item = dict(parsed) if isinstance(parsed, Mapping) else {}
             item["path"] = str(receipt.parent)
-            item["status"] = (
-                "ready" if RuntimeManager._receipt_valid(entry) else "corrupt"
-            )
+            item["status"] = RuntimeManager._receipt_status(entry)
             result.append(item)
         except (OSError, TypeError, ValueError):
             if not entry.is_symlink() and entry.is_dir():
