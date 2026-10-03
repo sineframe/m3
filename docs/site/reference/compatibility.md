@@ -27,8 +27,10 @@ Codex owns tool selection, dispatch, retries, and cancellation. M3 answers
 Codex's tool approval for calls to bound servers from the test's tool
 selection, and observes and answers supported native requests when their
 association is unambiguous. Overlapping same-server approval or elicitation
-cannot currently be associated reliably and is rejected. The effective tested plan limit is
-nine surfaced prompts. Prompt/resource elicitation and sampling/roots callbacks
+cannot currently be associated reliably and is rejected. The tested Codex version
+fails the action when a server asks for a tenth elicitation round, so an action can
+use at most 9 rounds even when `elicitation_round_limit` is higher. M3's default
+limit is 10. Prompt/resource elicitation and sampling/roots callbacks
 inside a native Codex tool round are not verified supported paths.
 
 The capture barrier cannot flush an event that has not reached the M3 process.
@@ -37,8 +39,11 @@ Codex integration uses the unmodified App Server.
 ## Pi elicitation
 
 Pi supports the native request-key and round behavior used by M3's interaction
-bridge. Its tested round capacity differs from Codex. Use the version named in
-the elicitation guide and do not transfer Codex-specific limits to Pi.
+bridge. Pi has no 9-round cap: M3 enforces `elicitation_round_limit` as given,
+10 by default. With managed input (`human_input="managed"`), the limit can be at
+most 1024, the largest value the managed-input control channel accepts. A larger
+value raises `ModelValidationError` before the turn starts. Use the Pi version
+named in the elicitation guide.
 
 Managed Pi delivery is verified for same-worker form, multi-round, and URL
 rounds with `SQLiteExecutionStore`. Worker or process restart redelivery and

@@ -60,4 +60,12 @@ To require a second request in a later protocol round, compose bound leaves with
 The tool assertion runs after the action because one logical call owns all
 retries. Assert one logical operation and its ordered attempts.
 
+## Round limit
+
+Each `InputRequiredResult` the server returns during an action counts as one round, including a result that carries only `requestState`. A plan that chains three steps with `sequence(...)` needs at least three rounds. The limit is 10 by default; pass `elicitation_round_limit` beside `elicitation` to change it.
+
+When a direct operation goes past the limit, the client raises `ElicitationRoundLimitError`. In an agent test, the turn fails instead.
+
+A harness can stop earlier than M3's limit. For example, the tested Codex version fails the action when a server asks for a tenth round, so a Codex action can use at most 9 rounds. Setting `elicitation_round_limit` above 9 does not raise that cap. With Pi, M3 enforces the limit you pass. Managed input on Pi has its own maximum, listed in [compatibility details](../../reference/compatibility.md).
+
 Tool calls, prompt retrieval, resource reads, and agent actions bind the plan at different API boundaries. Agent-driven elicitation also depends on harness capability, and ACP agents that ask before calling tools need explicit tool approval through `permission_policy`. Identify the execution mode before applying an example. Next: [submit input to a paused execution](managed-input.md).
