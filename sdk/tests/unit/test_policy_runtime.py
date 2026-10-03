@@ -178,6 +178,72 @@ def test_two_anonymous_updates_correlate_to_two_same_turn_stable_calls() -> None
 
 
 @pytest.mark.asyncio
+async def test_allowed_tool_called_twice_in_one_turn_keeps_the_reply() -> None:
+    class Repeating(ReportingAdapter):
+        async def send(self, message, *, timeout=None, metadata=None) -> AdapterTurn:
+            turn = await super().send(message, timeout=timeout, metadata=metadata)
+            return AdapterTurn(
+                response=turn.response, tool_calls=(self.tool_call, self.tool_call)
+            )
+
+    async with AsyncAgentSession(
+        _spec(RestrictiveToolPolicy(allowed_tools=("fixture:allowed",))),
+        Repeating({"server": "fixture", "tool": "allowed"}),
+    ) as session:
+        result = await session.send("run")
+    assert result.error is None
+    assert result.response is not None
+
+
+def _evaluate(
+    policy: RestrictiveToolPolicy,
+    calls: tuple[Mapping[str, object], ...],
+    captured: tuple[ToolDescriptor, ...] = (),
+) -> tuple[dict[str, object], ...]:
+    adapter = ReportingAdapter({"kind": "tool_call"})
+    session = AsyncAgentSession(_spec(policy), adapter)
+    session._tool_policy_evidence = adapter.last_policy_evidence
+    raw = AdapterTurn(
+        response=TurnResponse(content=(TextContent(text="done"),)), tool_calls=calls
+    )
+    return session._evaluate_reported_tool_calls(raw, captured_tool_calls=captured)
+
+
+def test_repeated_allowed_tool_does_not_hide_a_denied_call() -> None:
+    allowed = {"server": "fixture", "tool": "allowed"}
+    violations = _evaluate(
+        RestrictiveToolPolicy(allowed_tools=("fixture:allowed",)),
+        (allowed, allowed, {"server": "fixture", "tool": "blocked"}),
+    )
+    assert [v["reason"] for v in violations] == ["tool denied by restrictive policy"]
+
+
+def test_repeated_tool_keeps_each_calls_destructive_flag() -> None:
+    violations = _evaluate(
+        RestrictiveToolPolicy(allowed_tools=("fixture:allowed",)),
+        (
+            {"server": "fixture", "tool": "allowed"},
+            {"server": "fixture", "tool": "allowed", "destructive": True},
+        ),
+    )
+    assert [v["reason"] for v in violations] == [
+        "destructive tool requires confirmation"
+    ]
+
+
+def test_anonymous_call_beside_an_identified_call_is_evaluated() -> None:
+    violations = _evaluate(
+        RestrictiveToolPolicy(allowed_tools=("fixture:first", "fixture:second")),
+        ({"server": "fixture", "tool": "first"}, {"kind": "tool_call"}),
+        (
+            ToolDescriptor(server="fixture", name="first"),
+            ToolDescriptor(server="fixture", name="second"),
+        ),
+    )
+    assert violations == ()
+
+
+@pytest.mark.asyncio
 async def test_allowing_policy_without_preflight_proof_fails_before_opening() -> None:
     class NoProof(ReportingAdapter):
         async def preflight(self, _launch: object) -> object:
