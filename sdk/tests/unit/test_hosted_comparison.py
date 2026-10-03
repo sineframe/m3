@@ -587,12 +587,27 @@ def test_worker_classifies_permanent_invalid_input(monkeypatch) -> None:
     assert json.loads(destination.getvalue()) == {"error": "comparison_incompatible"}
 
 
-def test_committed_cli_export_fixture_matches_golden() -> None:
+def test_committed_cli_export_fixture_matches_golden(tmp_path: Path) -> None:
     fixture = json.loads(
         (
             Path(__file__).parents[1] / "fixtures" / "hosted-comparison-exported.json"
         ).read_text()
     )
+    generated = hosted_golden_fixture()
+    for run in generated["runs"]:
+        store = _RunStore(
+            run["run_id"], run, {key: int(key) for key in run["suite_ids"]}
+        )
+        exported = json.loads(
+            export_feedback(
+                build_feedback(store, run["run_id"]), store, tmp_path / run["run_id"]
+            ).read_text()
+        )
+        run["feedback"]["feedback"] = neutralize_response(
+            "/api/v2/feedback/{run_id}", exported
+        )
+        run["comparison_input"] = comparison_input(store.manifest, store.test_results)
+    assert fixture == generated
     by_id = {run["run_id"]: run for run in fixture["runs"]}
     for pair in fixture["comparisons"]:
         assert (
@@ -634,3 +649,90 @@ def test_compact_evidence_maps_reserved_detached_evaluator_identity() -> None:
         restored["test_results"][0]["detached_evaluations"][0]["name"]
         == "m3.output.has_text.v1"
     )
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_missing_attempt_execution_is_ignored_like_local_feedback(legacy) -> None:
+    current = _run_with_report("current", 11, "current", (0.8,))
+    baseline = _run_with_report("baseline", 22, "baseline", (0.2,))
+    if legacy:
+        current.pop("comparison_input")
+        attempt = current["feedback"]["feedback"]["tests"][0]
+    else:
+        attempt = current["comparison_input"]["test_results"][0]
+    attempt["execution_ids"] = ["execution-current", "deleted-or-unassociated"]
+    result = compare_runs({"current": current, "baseline": baseline})
+    attempt["execution_ids"] = ["execution-current"]
+    assert result == compare_runs({"current": current, "baseline": baseline})
+
+
+def test_absolute_selection_does_not_change_monorepo_identity() -> None:
+    current = _run("current", "failed", 11)
+    baseline = _run("baseline", "passed", 22)
+    for run in (current, baseline):
+        manifest = run["comparison_input"]["manifest"]
+        manifest["project_root"] = "/ci/repo/pkg"
+        manifest["selection"] = ["/ci/repo/pkg/tests/test_api.py"]
+        run["comparison_input"]["test_results"][0]["node_id"] = (
+            "pkg/tests/test_api.py::test_list"
+        )
+    original = compare_runs({"current": current, "baseline": baseline})
+    for run in (current, baseline):
+        raw = run["comparison_input"]
+        run["comparison_input"] = comparison_input(raw["manifest"], raw["test_results"])
+        assert run["comparison_input"]["manifest"]["selection"] == []
+    assert compare_runs({"current": current, "baseline": baseline}) == original
+
+
+def test_detached_user_details_stay_opaque_in_both_wire_directions() -> None:
+    value = {
+        "test_results": [
+            {
+                "detached_evaluations": [
+                    {
+                        "name": "m3.matcher.foo.v1",
+                        "details": {
+                            "name": "matcher.foo.v1",
+                            "nested": {"name": "m3.matcher.foo.v1"},
+                        },
+                    }
+                ]
+            }
+        ]
+    }
+    wire = neutralize_response("/api/v2/feedback/current", value)
+    restored = internalize_request("/api/v2/feedback/current", wire)
+    assert restored == value
+
+
+@pytest.mark.parametrize("limit", ["input", "output"])
+def test_worker_bounds_input_and_output(monkeypatch, limit) -> None:
+    import io
+
+    import m3.hosted_comparison as worker
+
+    payload = {
+        "current": _run("current", "passed", 11),
+        "baseline": _run("baseline", "failed", 22),
+    }
+    destination = io.BytesIO()
+    monkeypatch.setattr(
+        worker.sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO(json.dumps(payload).encode())),
+    )
+    monkeypatch.setattr(worker.sys, "stdout", SimpleNamespace(buffer=destination))
+    monkeypatch.setattr(
+        worker, "_MAX_INPUT_BYTES" if limit == "input" else "_MAX_OUTPUT_BYTES", 1
+    )
+    assert worker.main() == 1
+    assert json.loads(destination.getvalue()) == {"error": "comparison_incompatible"}
+
+
+def test_manifest_error_kind_cannot_override_failure_category() -> None:
+    from m3.feedback import _manifest_failures
+
+    failures = _manifest_failures(
+        {"worker_errors": [{"kind": "node_down", "message": "stopped"}]}
+    )
+    assert failures == ({"kind": "worker", "message": "stopped"},)

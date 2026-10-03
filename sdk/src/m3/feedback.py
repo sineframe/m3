@@ -1798,10 +1798,10 @@ def _manifest_failures(
     values: list[Mapping[str, Any]] = []
     for report in manifest.get("collection_reports", ()) or ():
         if isinstance(report, Mapping) and report.get("outcome") == "failed":
-            values.append({"kind": "collection", **dict(report)})
+            values.append({**dict(report), "kind": "collection"})
     for error in manifest.get("worker_errors", ()) or ():
         if isinstance(error, Mapping):
-            values.append({"kind": "worker", **dict(error)})
+            values.append({**dict(error), "kind": "worker"})
     if manifest.get("persistence_error"):
         values.append(
             {

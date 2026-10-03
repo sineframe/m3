@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from ._wire import internalize_request, neutralize_response
 from .feedback import Feedback, build_feedback
@@ -77,7 +77,8 @@ def comparison_input(manifest: Mapping[str, Any], tests: Any) -> dict[str, Any]:
     }
     selected = []
     for value in manifest.get("selection", ()) or ():
-        value = node(value)
+        # Absolute selections do not normalize relative pytest node IDs in
+        # local feedback. Rewriting them would change monorepo case identity.
         if (
             isinstance(value, str)
             and value
@@ -299,6 +300,10 @@ class _RunStore:
                         "started_at",
                         "finished_at",
                         "duration_seconds",
+                        "worker_id",
+                        "project_id",
+                        "project_name",
+                        "schema_version",
                     )
                     if item.get("attempt_id") in projected_tests
                     and key in projected_tests[item.get("attempt_id")]
@@ -384,8 +389,7 @@ class _RunStore:
                 raise ValueError("test attempt run identity mismatch")
             execution_ids = attempt.get("execution_ids") or ()
             if not isinstance(execution_ids, (list, tuple)) or any(
-                not isinstance(value, str) or value not in self.reports
-                for value in execution_ids
+                not isinstance(value, str) for value in execution_ids
             ):
                 raise ValueError("test attempt execution identity mismatch")
 
@@ -459,6 +463,14 @@ class _PairStore:
                 if execution_id in self.by_execution:
                     raise ValueError("execution identity is duplicated across runs")
                 self.by_execution[execution_id] = run
+        for run in self.runs.values():
+            for attempt in run.test_results:
+                for execution_id in attempt.get("execution_ids") or ():
+                    owner = self.by_execution.get(execution_id)
+                    if owner is not None and owner is not run:
+                        raise ValueError("test attempt execution identity mismatch")
+                    # Missing, deleted or unpersisted executions are ignored
+                    # by local feedback too; never route them to another run.
 
     def list_executions(
         self, *, run_id: Any, limit: int = 100, offset: int = 0, **_: Any
@@ -573,7 +585,13 @@ def main() -> int:
             raise ValueError("response too large")
         sys.stdout.buffer.write(output + b"\n")
         return 0
-    except (ValueError, MemoryError):
+    except ValidationError:
+        sys.stdout.buffer.write(b'{"error":"comparison_schema_invalid"}\n')
+        return 1
+    except MemoryError:
+        sys.stdout.buffer.write(b'{"error":"comparison_resource_limit"}\n')
+        return 1
+    except ValueError:
         sys.stdout.buffer.write(b'{"error":"comparison_incompatible"}\n')
         return 1
     except Exception:
