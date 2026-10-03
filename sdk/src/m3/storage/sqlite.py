@@ -336,6 +336,7 @@ class Command:
     payload: Mapping[str, Any]
     session_id: SessionId | None = None
     turn_id: TurnId | None = None
+    queue_key: str | None = None
 
 
 SCHEMA = """
@@ -454,7 +455,7 @@ CREATE TABLE IF NOT EXISTS v2_commands (
   id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
   kind TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('queued','claimed','done','failed','cancelled','interrupted')),
   payload_json TEXT NOT NULL, session_id TEXT, turn_id TEXT, created_at TEXT NOT NULL,
-  claimed_at TEXT, owner_id TEXT
+  claimed_at TEXT, owner_id TEXT, queue_key TEXT
 );
 CREATE TABLE IF NOT EXISTS v2_test_runs (
   run_id TEXT PRIMARY KEY, record_json TEXT NOT NULL,
@@ -603,6 +604,7 @@ class _SqliteBase:
                     ("v2_executions", "project_id", "TEXT"),
                     ("v2_test_runs", "project_id", "TEXT"),
                     ("v2_test_runs", "run_label", "TEXT"),
+                    ("v2_commands", "queue_key", "TEXT"),
                 ):
                     columns = connection.execute(
                         f"PRAGMA table_info({table})"
@@ -647,6 +649,9 @@ class _SqliteBase:
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_executions_project ON v2_executions(project_id, created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_commands_queue ON v2_commands(queue_key, status, created_at, id)"
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_suites_project ON v2_suites(project_id, suite_name)"
@@ -1513,10 +1518,18 @@ class SQLiteExecutionStore(_SqliteBase):
         config: RedactionConfig | None = None,
         capture_config: CaptureOptions | None = None,
         payload_blob_threshold: int = 64 * 1024,
+        execution_queue: str | None = None,
         **kwargs: Any,
     ) -> None:
         if payload_blob_threshold < 0:
             raise ValueError("payload_blob_threshold must be non-negative")
+        if execution_queue is not None and (
+            not isinstance(execution_queue, str) or not execution_queue.strip()
+        ):
+            raise ValueError("execution_queue must be a non-empty string")
+        # Commands enqueued and claimed through this store instance use this
+        # queue; None is the shared queue.
+        self.execution_queue = execution_queue
         # Store initialization performs legacy migration before returning, so
         # migration must see the same explicit redaction policy used by all
         # later profile and execution writes.
@@ -4224,6 +4237,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     and str(existing["payload_json"]) == payload_json
                     and existing["session_id"] == session_key
                     and existing["turn_id"] == turn_key
+                    and existing["queue_key"] == self.execution_queue
                 )
                 if not same:
                     raise StorageConflict(
@@ -4232,7 +4246,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 self._rollback(connection)
                 return self.get_command(command)  # type: ignore[return-value]
             connection.execute(
-                "INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at,queue_key) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     command,
                     execution_key,
@@ -4242,6 +4256,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     session_key,
                     turn_key,
                     _iso(_utcnow()),
+                    self.execution_queue,
                 ),
             )
             self._commit(connection)
@@ -4273,6 +4288,7 @@ class SQLiteExecutionStore(_SqliteBase):
             _loads(row["payload_json"], {}),
             SessionId(str(row["session_id"])) if row["session_id"] else None,
             TurnId(str(row["turn_id"])) if row["turn_id"] else None,
+            str(row["queue_key"]) if row["queue_key"] is not None else None,
         )
 
     def claim_next(
@@ -4283,25 +4299,26 @@ class SQLiteExecutionStore(_SqliteBase):
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
+            now = _utcnow()
             row = connection.execute(
                 "SELECT c.* FROM v2_commands c JOIN v2_executions e ON e.id=c.execution_id "
                 "LEFT JOIN v2_cancellation x ON x.execution_id=c.execution_id "
-                "WHERE c.status IN ('queued','claimed') "
+                "LEFT JOIN v2_leases l ON l.execution_id=c.execution_id "
+                "WHERE c.queue_key IS ? "
+                "AND c.status IN ('queued','claimed') "
                 "AND (c.status='claimed' OR x.execution_id IS NULL) "
                 "AND json_extract(e.snapshot_json,'$.lifecycle') <> 'finished' "
-                "ORDER BY c.created_at,c.id LIMIT 1"
+                "AND (l.execution_id IS NULL OR l.expires_at<=?) "
+                "ORDER BY c.created_at,c.id LIMIT 1",
+                (self.execution_queue, _iso(now)),
             ).fetchone()
             if row is None:
                 self._rollback(connection)
                 return None
             execution_id = str(row["execution_id"])
-            now = _utcnow()
             current = connection.execute(
                 "SELECT * FROM v2_leases WHERE execution_id=?", (execution_id,)
             ).fetchone()
-            if current and _parse_dt(current["expires_at"]) > now:
-                self._rollback(connection)
-                return None
             if row["status"] == "claimed" and (
                 current is None or _parse_dt(current["expires_at"]) <= now
             ):

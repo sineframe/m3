@@ -129,6 +129,26 @@ def test_ci_without_upload_never_inspects_or_publishes(monkeypatch, tmp_path):
     assert main(["ci", "test", "--project-root", str(tmp_path)]) == 0
 
 
+def test_ci_test_forwards_num_processes(monkeypatch, tmp_path):
+    import m3_cli.supervisor as supervisor
+
+    monkeypatch.delenv("M3_ACCESS_TOKEN", raising=False)
+    captured = {}
+
+    def run_ci_test(**kwargs):
+        captured.update(kwargs)
+        return RunResult(
+            0,
+            run_id="run-local",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        )
+
+    monkeypatch.setattr(supervisor, "run_ci_test", run_ci_test)
+    assert main(["ci", "test", "-n", "auto", "--project-root", str(tmp_path)]) == 0
+    assert captured["num_processes"] == "auto"
+
+
 def test_ci_early_failure_does_not_attempt_upload_inspection(
     monkeypatch, tmp_path, capsys
 ):

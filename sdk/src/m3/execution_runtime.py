@@ -117,6 +117,9 @@ from .workspace import WorkspaceError, WorkspaceManager
 _DIRECT_RESULT_ADAPTER: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
 _ERROR_INFO_ADAPTER: TypeAdapter[ErrorInfo] = TypeAdapter(ErrorInfo)
 _CLEANUP_TIMEOUT_SECONDS = 10.0
+# Concurrent executions per kit on a private (pytest-scoped) queue; shared-queue
+# kits keep one worker.
+_PRIVATE_QUEUE_WORKER_LIMIT = 4
 
 
 def _consume_worker_cancellation(future: ConcurrentFuture[Any]) -> None:
@@ -1472,8 +1475,14 @@ class AsyncExecutionController:
         self._persistent_store: _PersistentExecutionStore | None = cast(
             _PersistentExecutionStore | None, store
         )
-        self._persistent_worker: Any = None
-        self._worker_thread: threading.Thread | None = None
+        self._persistent_workers: list[Any] = []
+        self._worker_threads: list[threading.Thread] = []
+        self._worker_lock = threading.Lock()
+        self._worker_limit = (
+            _PRIVATE_QUEUE_WORKER_LIMIT
+            if getattr(store, "execution_queue", None) is not None
+            else 1
+        )
         self._worker_stop = threading.Event()
         self._worker_enabled = worker
         self._worker_loop: asyncio.AbstractEventLoop | None = None
@@ -1486,93 +1495,107 @@ class AsyncExecutionController:
     def _ensure_persistent_worker(self) -> None:
         if self._persistent_store is None or not self._worker_enabled:
             return
-        if self._worker_thread is not None and self._worker_thread.is_alive():
-            return
-        self._worker_loop = asyncio.get_running_loop()
-        self._worker_stop.clear()
+        with self._worker_lock:
+            self._worker_threads = [t for t in self._worker_threads if t.is_alive()]
+            if not self._worker_threads:
+                self._worker_loop = asyncio.get_running_loop()
+                self._worker_stop.clear()
+                self._start_worker_thread(idle_exit=False)
+            if self._worker_limit > 1:
+                wanted = min(self._worker_limit, len(self._handles_by_id))
+                while len(self._worker_threads) < wanted:
+                    self._start_worker_thread(idle_exit=True)
+                    self._worker_threads = [
+                        t for t in self._worker_threads if t.is_alive()
+                    ]
 
-        def run_command(command: Any, _store: Any, _lease: Any) -> None:
-            identifier = str(command.execution_id)
-            handle = self._handles_by_id.get(identifier)
-            if handle is None:
-                payload = (
-                    command.payload.get("spec")
-                    if isinstance(command.payload, Mapping)
-                    else None
-                )
-                if not isinstance(payload, Mapping):
-                    raise RuntimeError(
-                        "persistent command has no portable execution specification"
-                    )
-                kind = payload.get("kind")
-                spec = (
-                    AgentSpec.model_validate(payload)
-                    if kind == "agent"
-                    else DirectSpec.model_validate(payload)
-                    if kind == "direct"
-                    else None
-                )
-                if spec is None:
-                    raise RuntimeError(
-                        "persistent command specification kind is invalid"
-                    )
-                handle = AsyncExecutionHandle(
-                    self,
-                    spec,
-                    store=self._persistent_store,
-                    persistent=True,
-                    execution_id=command.execution_id,
-                    run_id=str(command.payload.get("run_id"))
-                    if command.payload.get("run_id")
-                    else None,
-                    human_input=_command_human_input(command.payload),
-                )
-                self._handles_by_id[identifier] = handle
-            loop = self._worker_loop
-            if loop is None or loop.is_closed():
-                raise RuntimeError("persistent toolkit event loop is closed")
-            future = asyncio.run_coroutine_threadsafe(handle._start_from_worker(), loop)
-            future.result()
-
-        def cancel_managed_command(command: Any) -> None:
-            handle = self._handles_by_id.get(str(command.execution_id))
-            loop = self._worker_loop
-            if handle is None or loop is None or loop.is_closed():
-                return
-            future = asyncio.run_coroutine_threadsafe(
-                handle._cancel_after_managed_recovery_loss(), loop
+    def _run_claimed_command(self, command: Any, _store: Any, _lease: Any) -> None:
+        identifier = str(command.execution_id)
+        handle = self._handles_by_id.get(identifier)
+        if handle is None:
+            payload = (
+                command.payload.get("spec")
+                if isinstance(command.payload, Mapping)
+                else None
             )
-            future.add_done_callback(_consume_worker_cancellation)
+            if not isinstance(payload, Mapping):
+                raise RuntimeError(
+                    "persistent command has no portable execution specification"
+                )
+            kind = payload.get("kind")
+            spec = (
+                AgentSpec.model_validate(payload)
+                if kind == "agent"
+                else DirectSpec.model_validate(payload)
+                if kind == "direct"
+                else None
+            )
+            if spec is None:
+                raise RuntimeError("persistent command specification kind is invalid")
+            handle = AsyncExecutionHandle(
+                self,
+                spec,
+                store=self._persistent_store,
+                persistent=True,
+                execution_id=command.execution_id,
+                run_id=str(command.payload.get("run_id"))
+                if command.payload.get("run_id")
+                else None,
+                human_input=_command_human_input(command.payload),
+            )
+            self._handles_by_id[identifier] = handle
+        loop = self._worker_loop
+        if loop is None or loop.is_closed():
+            raise RuntimeError("persistent toolkit event loop is closed")
+        future = asyncio.run_coroutine_threadsafe(handle._start_from_worker(), loop)
+        future.result()
 
+    def _cancel_managed_command(self, command: Any) -> None:
+        handle = self._handles_by_id.get(str(command.execution_id))
+        loop = self._worker_loop
+        if handle is None or loop is None or loop.is_closed():
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            handle._cancel_after_managed_recovery_loss(), loop
+        )
+        future.add_done_callback(_consume_worker_cancellation)
+
+    def _start_worker_thread(self, *, idle_exit: bool) -> None:
         # Keep storage optional at import time; this concrete worker is loaded
         # only when a persistent toolkit explicitly starts its worker.
         from .services.persistent import SQLiteStoreWorker
 
-        self._persistent_worker = SQLiteStoreWorker(
+        worker = SQLiteStoreWorker(
             self._persistent_store,
-            run_command,
-            cancel_runner=cancel_managed_command,
+            self._run_claimed_command,
+            cancel_runner=self._cancel_managed_command,
         )
+        self._persistent_workers.append(worker)
 
         def worker_main() -> None:
-            assert self._persistent_worker is not None
             while not self._worker_stop.is_set():
                 try:
-                    claimed = self._persistent_worker.run_once()
+                    claimed = worker.run_once()
                 except Exception:
                     # The store has already durably marked a claimed command
                     # failed. Keep the embedded worker available for later
                     # submissions instead of losing the owning thread.
                     claimed = True
                 if not claimed:
+                    if idle_exit:
+                        with self._worker_lock:
+                            if worker in self._persistent_workers:
+                                self._persistent_workers.remove(worker)
+                        return
                     self._worker_stop.wait(0.05)
 
-        self._worker_thread = threading.Thread(
+        thread = threading.Thread(
             target=worker_main,
             name="m3-embedded-worker",
             daemon=True,
         )
-        self._worker_thread.start()
+        self._worker_threads.append(thread)
+        thread.start()
 
     def submit(
         self,
@@ -1631,6 +1654,10 @@ class AsyncExecutionController:
                 EventKind.EXECUTION_STATE_CHANGED,
                 payload={"lifecycle": ExecutionStatus.QUEUED.value},
             )
+            # Register before enqueue so a worker claiming immediately finds
+            # this handle instead of rebuilding a duplicate from the payload.
+            self._handles.add(handle)
+            self._handles_by_id[str(handle.execution_id)] = handle
             try:
                 payload = spec.model_dump(mode="json")
                 enqueue_command = self._persistent_store.enqueue_command
@@ -1644,6 +1671,8 @@ class AsyncExecutionController:
                     command_id=f"command-{handle.execution_id.root}",
                 )
             except Exception:
+                self._handles.discard(handle)
+                self._handles_by_id.pop(str(handle.execution_id), None)
                 # Leave no orphaned metadata when a non-serializable runtime
                 # specification cannot enter the durable queue.
                 try:
@@ -1654,9 +1683,9 @@ class AsyncExecutionController:
                 except Exception:
                     pass
                 raise
-        self._handles.add(handle)
-        if self._persistent_store is not None:
-            self._handles_by_id[str(handle.execution_id)] = handle
+        if self._persistent_store is None:
+            self._handles.add(handle)
+        else:
             self._ensure_persistent_worker()
         return handle
 
@@ -1674,13 +1703,17 @@ class AsyncExecutionController:
             await handle.cancel()
         if self._persistent_store is not None:
             self._worker_stop.set()
-            if self._persistent_worker is not None:
-                self._persistent_worker.stop()
-            thread = self._worker_thread
-            if thread is not None and thread.is_alive():
-                await asyncio.to_thread(thread.join)
-            self._worker_thread = None
-            self._persistent_worker = None
+            with self._worker_lock:
+                workers = list(self._persistent_workers)
+                threads = list(self._worker_threads)
+            for worker in workers:
+                worker.stop()
+            for thread in threads:
+                if thread.is_alive():
+                    await asyncio.to_thread(thread.join)
+            with self._worker_lock:
+                self._persistent_workers.clear()
+                self._worker_threads.clear()
             self._worker_loop = None
 
     def _finished(self, handle: AsyncExecutionHandle) -> None:

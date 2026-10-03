@@ -57,5 +57,49 @@ in the same file. Keep direct-only and agent tests in separate files.
 installs a default `SQLiteExecutionStore` for kits without an explicit store;
 an explicit kit store takes precedence.
 
+## Parallel runs
+
+`m3 test -n 4` runs tests in four pytest-xdist worker processes; `m3 test -n
+auto` uses one per CPU. `m3 setup` installs pytest-xdist. Without it, the
+command fails with `--num-processes requires pytest-xdist in the project
+Python; run m3 setup in the project`. `-n` cannot be combined with `-n` or
+`--numprocesses` after `--`.
+
+All workers write one run: the same run ID, verdicts, feedback, and judge
+budget. `--judge-max-requests` is shared across workers. When `-n` is used,
+pytest's normal output replaces the M3 progress line.
+
+Inside one test, up to 4 executions submitted with `agent.submit(...)` or
+`kit.submit(...)` run at once; further submissions wait. A kit created by the
+plugin only runs executions submitted in its own process. A kit given an
+explicit `store=` uses the shared queue and runs one execution at a time.
+
+Mark tests that share a resource so they run on the same worker, and select
+`loadgroup` distribution:
+
+```python
+import pytest
+
+
+@pytest.mark.xdist_group(name="orders-db")
+def test_creates_order(agent): ...
+
+
+@pytest.mark.xdist_group(name="orders-db")
+def test_cancels_order(agent): ...
+```
+
+```sh
+m3 test -n 4 -- --dist loadgroup
+```
+
+Tests without the mark are distributed normally.
+
+pytest-xdist sets `PYTEST_XDIST_WORKER` (`gw0`, `gw1`, ...) in each worker.
+Use it to give each worker its own ports, directories, or accounts.
+
+N workers running up to 4 executions each can reach model rate limits. Lower
+`-n` if executions fail with provider rate-limit errors.
+
 `m3 ci test` excludes tests whose nearest marker has `ci=False`. `m3 test`
 does not apply that exclusion.

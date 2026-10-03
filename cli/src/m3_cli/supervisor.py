@@ -113,7 +113,14 @@ def _validate_selection_options(
     credential_env: Sequence[str],
     execution_timeout: float | None = None,
     runtime: str = "system",
+    num_processes: str | None = None,
 ) -> str | None:
+    if not (
+        num_processes is None
+        or num_processes == "auto"
+        or (num_processes.isdigit() and int(num_processes) > 0)
+    ):
+        return "--num-processes must be a positive integer or auto"
     if runtime not in {"system", "managed"}:
         return "--runtime must be system or managed"
     if execution_timeout is not None and (
@@ -326,7 +333,7 @@ import importlib.metadata
 import json
 
 checks = {}
-for name in ("pytest", "m3", "m3.pytest_plugin", "openai"):
+for name in ("pytest", "m3", "m3.pytest_plugin", "openai", "xdist"):
     try:
         importlib.import_module(name)
     except Exception:
@@ -361,6 +368,7 @@ def validate_project_python(
     *,
     cli_sdk_version: str | None = None,
     project_root: Path | None = None,
+    require_xdist: bool = False,
 ) -> str:
     """Check project imports in a child process and enforce the SDK version."""
 
@@ -405,6 +413,10 @@ def validate_project_python(
         names = ", ".join(missing)
         raise ProjectPythonError(
             f"the project Python is missing required M3 packages: {names}; run m3 setup in the project"
+        )
+    if require_xdist and not checks.get("xdist"):
+        raise ProjectPythonError(
+            "--num-processes requires pytest-xdist in the project Python; run m3 setup in the project"
         )
     project_version = payload.get("version")
     expected = _cli_sdk_version() if cli_sdk_version is None else cli_sdk_version
@@ -833,6 +845,7 @@ def pytest_command(
     ci_mode: bool = False,
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
+    num_processes: str | None = None,
 ) -> list[str]:
     command = [
         str(python),
@@ -880,6 +893,8 @@ def pytest_command(
         command.extend(("--execution-timeout", str(execution_timeout)))
     if judge_max_requests is not None:
         command.extend(("--judge-max-requests", str(judge_max_requests)))
+    if num_processes is not None:
+        command.extend(("-n", num_processes))
     command.extend(pytest_args)
     return command
 
@@ -909,6 +924,23 @@ def _passthrough_option_error(args: Sequence[str]) -> str | None:
         option = arg.split("=", 1)[0]
         if option in _RESERVED_PYTEST_OPTIONS:
             return f"{option} must be set through m3, not pytest passthrough"
+    return None
+
+
+def _num_processes_conflict(
+    num_processes: str | None, pytest_args: Sequence[str]
+) -> str | None:
+    """Reject CLI -n alongside raw pytest-xdist worker-count options."""
+    if num_processes is None:
+        return None
+    for arg in pytest_args:
+        if (
+            arg == "-n"
+            or (arg.startswith("-n") and not arg.startswith("--"))
+            or arg == "--numprocesses"
+            or arg.startswith("--numprocesses=")
+        ):
+            return "--num-processes cannot be combined with pytest passthrough -n/--numprocesses"
     return None
 
 
@@ -965,6 +997,7 @@ def _run_pytest_process(
     ci_mode: bool = False,
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
+    num_processes: str | None = None,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
@@ -1025,6 +1058,7 @@ def _run_pytest_process(
                     ci_mode=ci_mode,
                     run_id=run_id,
                     ci_metadata=ci_metadata,
+                    num_processes=num_processes,
                 ),
                 env=child_environment,
                 **kwargs,
@@ -1140,12 +1174,16 @@ def _prepare_test(
     python: str | os.PathLike[str] | None,
     database: str | os.PathLike[str] | None,
     root: Path,
+    *,
+    require_xdist: bool = False,
 ) -> tuple[Path, Path] | None:
     database_path = _absolute_database(database, project_root=root)
     try:
         database_path.parent.mkdir(parents=True, exist_ok=True)
         selected = resolve_project_python(python, project_root=root)
-        validate_project_python(selected, project_root=root)
+        validate_project_python(
+            selected, project_root=root, require_xdist=require_xdist
+        )
     except (OSError, ProjectPythonError) as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return None
@@ -1333,6 +1371,7 @@ def run_test_with_runs(
     ci_mode: bool = False,
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
+    num_processes: str | None = None,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
@@ -1341,8 +1380,18 @@ def run_test_with_runs(
         print(f"m3 test: {passthrough_error}", file=sys.stderr)
         return TestRunResult(OPERATIONAL_ERROR)
 
+    conflict_error = _num_processes_conflict(num_processes, pytest_args)
+    if conflict_error is not None:
+        print(f"m3 test: {conflict_error}", file=sys.stderr)
+        return TestRunResult(OPERATIONAL_ERROR)
+
     option_error = _validate_selection_options(
-        harnesses, trials, credential_env, execution_timeout, runtime
+        harnesses,
+        trials,
+        credential_env,
+        execution_timeout,
+        runtime,
+        num_processes=num_processes,
     )
     if suite is not None and not suite.strip():
         print("m3 test: --suite must not be blank", file=sys.stderr)
@@ -1378,7 +1427,9 @@ def run_test_with_runs(
         )
 
     before = list_stored_runs(database_path)
-    prepared = _prepare_test(python, database, root)
+    prepared = _prepare_test(
+        python, database, root, require_xdist=num_processes is not None
+    )
     if prepared is None:
         return TestRunResult(
             OPERATIONAL_ERROR,
@@ -1435,6 +1486,7 @@ def run_test_with_runs(
         ci_mode=ci_mode,
         run_id=invocation_run_id,
         ci_metadata=ci_metadata,
+        num_processes=num_processes,
     )
     after = list_stored_runs(database_path)
     warnings = tuple(
@@ -1482,6 +1534,7 @@ def run_test(
     ci_mode: bool = False,
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
+    num_processes: str | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1490,12 +1543,22 @@ def run_test(
         print(f"m3 test: {passthrough_error}", file=sys.stderr)
         return OPERATIONAL_ERROR
 
+    conflict_error = _num_processes_conflict(num_processes, pytest_args)
+    if conflict_error is not None:
+        print(f"m3 test: {conflict_error}", file=sys.stderr)
+        return OPERATIONAL_ERROR
+
     if suite is not None and not suite.strip():
         print("m3 test: --suite must not be blank", file=sys.stderr)
         return 2
 
     option_error = _validate_selection_options(
-        harnesses, trials, credential_env, execution_timeout, runtime
+        harnesses,
+        trials,
+        credential_env,
+        execution_timeout,
+        runtime,
+        num_processes=num_processes,
     )
     if option_error is not None:
         print(f"m3 test: {option_error}", file=sys.stderr)
@@ -1524,9 +1587,12 @@ def run_test(
             ci_mode=ci_mode,
             run_id=run_id,
             ci_metadata=ci_metadata,
+            num_processes=num_processes,
         ).exit_code
     root = resolve_project_root(project_root)
-    prepared = _prepare_test(python, database, root)
+    prepared = _prepare_test(
+        python, database, root, require_xdist=num_processes is not None
+    )
     if prepared is None:
         return OPERATIONAL_ERROR
     selected, database_path = prepared
@@ -1565,6 +1631,7 @@ def run_test(
         ci_mode=ci_mode,
         run_id=invocation_run_id,
         ci_metadata=ci_metadata,
+        num_processes=num_processes,
     )
 
 

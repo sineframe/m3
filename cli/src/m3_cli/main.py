@@ -207,6 +207,14 @@ def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> N
     add_server_arguments(test)
     test.add_argument("--harness-cache-dir", type=Path, default=None, metavar="PATH")
     test.add_argument("--trials", type=int, default=None, metavar="N")
+    test.add_argument(
+        "-n",
+        "--num-processes",
+        dest="num_processes",
+        default=None,
+        metavar="N|auto",
+        help="run tests in N pytest-xdist worker processes, or auto for one per CPU",
+    )
     test.add_argument("--suite", type=str, default=None, metavar="NAME")
     test.add_argument(
         "--execution-timeout",
@@ -383,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
                 harnesses=args.harness,
                 server_selections=server_selections,
                 trials=args.trials,
+                num_processes=args.num_processes,
                 suite=args.suite,
                 credential_env=args.credential_env,
                 env_file=args.env_file,

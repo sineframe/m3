@@ -181,15 +181,35 @@ def test_stable_store_worker_rejects_terminal_report_after_lease_expiry(tmp_path
         )
 
 
-def test_stable_store_strict_fifo_blocks_newer_command_while_oldest_is_leased(tmp_path):
+def test_store_claims_next_command_while_oldest_is_leased(tmp_path):
     store = _store(tmp_path)
     for name in ("execution-1", "execution-2"):
         store.create(ExecutionState(execution_id=ExecutionId(name)))
     first = store.enqueue_command("execution-1", command_id="command-1")
-    store.enqueue_command("execution-2", command_id="command-2")
+    second = store.enqueue_command("execution-2", command_id="command-2")
     claimed = store.claim_next("worker-a", lease_seconds=30)
     assert claimed is not None and claimed[0].id == first.id
-    assert store.claim_next("worker-b") is None
+    next_claimed = store.claim_next("worker-b", lease_seconds=30)
+    assert next_claimed is not None and next_claimed[0].id == second.id
+    assert store.claim_next("worker-c") is None
+
+
+def test_store_claims_only_its_execution_queue(tmp_path):
+    path = tmp_path / "stable.sqlite"
+    stores = {
+        "a": SQLiteExecutionStore(path, execution_queue="a"),
+        "b": SQLiteExecutionStore(path, execution_queue="b"),
+        None: SQLiteExecutionStore(path),
+    }
+    for key, store in stores.items():
+        name = f"execution-{key}"
+        store.create(ExecutionState(execution_id=ExecutionId(name)))
+        command = store.enqueue_command(name, command_id=f"command-{key}")
+        assert store.get_command(command.id).queue_key == key
+    for key, store in stores.items():
+        claimed = store.claim_next(f"worker-{key}")
+        assert claimed is not None and claimed[0].id == f"command-{key}"
+        assert store.claim_next(f"worker-{key}-again") is None
 
 
 def test_stable_command_retry_is_idempotent_and_key_reuse_conflicts(tmp_path):
@@ -208,6 +228,18 @@ def test_stable_command_retry_is_idempotent_and_key_reuse_conflicts(tmp_path):
         store.enqueue_command(
             "execution-1", command_id="stable", payload={"message": "changed"}
         )
+    other_queue = SQLiteExecutionStore(
+        tmp_path / "stable.sqlite", execution_queue="other"
+    )
+    with pytest.raises(StorageConflict):
+        other_queue.enqueue_command(
+            "execution-1", command_id="stable", payload={"message": "hello"}
+        )
+
+
+def test_execution_queue_rejects_empty_name(tmp_path):
+    with pytest.raises(ValueError):
+        SQLiteExecutionStore(tmp_path / "stable.sqlite", execution_queue=" ")
 
 
 def test_stable_worker_marks_heartbeat_failure_interrupted(tmp_path, monkeypatch):

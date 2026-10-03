@@ -356,7 +356,7 @@ def pytest_configure(config: _Any) -> None:
         lambda: config._m3_judge_max_requests
     )
     config._m3_store_token = _install_default_store_factory(
-        lambda: SQLiteExecutionStore(path)
+        lambda: SQLiteExecutionStore(path, execution_queue=f"pytest-{_uuid4().hex}")
     )
     config._m3_progress = _Progress(config)
     config._m3_progress.reporter = config.pluginmanager.getplugin("terminalreporter")

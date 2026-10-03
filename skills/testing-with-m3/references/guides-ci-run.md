@@ -24,6 +24,14 @@ m3 setup
 m3 ci test -- tests/
 ```
 
+Add `-n` to run tests in parallel worker processes:
+
+```sh
+m3 ci test -n auto
+```
+
+See [parallel runs](reference-pytest.md#parallel-runs).
+
 Ordinary `m3 test` still includes the marked test. Paths, `-k`, `-m`, and
 `--suite` combine with the CI exclusion. Publishing is separate and occurs
 only when `--upload` is present.
