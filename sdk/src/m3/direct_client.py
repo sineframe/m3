@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, Protocol, TypeVar, cast
 
@@ -20,7 +21,22 @@ from jsonschema import (  # type: ignore[import-untyped]
 )
 from mcp import types as _mcp_types
 from mcp.client.session import ClientRequestContext as _ClientRequestContext
+from mcp.client.subscriptions import Subscription as _OfficialSubscription
+from mcp.client.subscriptions import SubscriptionLost as _SubscriptionLost
+from mcp.client.subscriptions import listen as _official_listen
 from mcp.shared.exceptions import MCPError as _OfficialMCPError
+from mcp.shared.subscriptions import (
+    PromptsListChanged as _PromptsListChanged,
+)
+from mcp.shared.subscriptions import (
+    ResourcesListChanged as _ResourcesListChanged,
+)
+from mcp.shared.subscriptions import (
+    ResourceUpdated as _ResourceUpdated,
+)
+from mcp.shared.subscriptions import (
+    ToolsListChanged as _ToolsListChanged,
+)
 from pydantic import Field, model_validator
 from referencing import Registry
 
@@ -316,6 +332,109 @@ class EmptyResult(_RawValue):
     result_type: str | None = None
 
 
+class SubscriptionFilter(FrozenModel):
+    """Change notifications a ``subscriptions/listen`` stream delivers."""
+
+    tools_list_changed: bool = False
+    prompts_list_changed: bool = False
+    resources_list_changed: bool = False
+    resource_subscriptions: tuple[str, ...] = ()
+
+
+class SubscriptionEvent(FrozenModel):
+    """One change notification received on a ``subscriptions/listen`` stream."""
+
+    method: str
+    uri: str | None = None
+
+
+_LISTEN_OPERATION = "subscriptions/listen"
+
+
+def _subscription_event(event: Any) -> SubscriptionEvent:
+    if isinstance(event, _ToolsListChanged):
+        return SubscriptionEvent(method="notifications/tools/list_changed")
+    if isinstance(event, _PromptsListChanged):
+        return SubscriptionEvent(method="notifications/prompts/list_changed")
+    if isinstance(event, _ResourcesListChanged):
+        return SubscriptionEvent(method="notifications/resources/list_changed")
+    if isinstance(event, _ResourceUpdated):
+        return SubscriptionEvent(
+            method="notifications/resources/updated", uri=event.uri
+        )
+    raise ProtocolError(
+        "MCP client operation failed: subscriptions/listen",
+        details={"operation": _LISTEN_OPERATION, "phase": "protocol"},
+    )
+
+
+class AsyncSubscription:
+    """One open ``subscriptions/listen`` stream of a direct client.
+
+    Iterating waits for each event under the client timeout; :meth:`next`
+    takes an explicit timeout. Iteration ends when the server closes the
+    stream gracefully.
+    """
+
+    def __init__(
+        self,
+        client: AsyncDirectClient,
+        context: AbstractAsyncContextManager[_OfficialSubscription],
+        official: _OfficialSubscription,
+    ) -> None:
+        self._client = client
+        self._context = context
+        self._official = official
+        self._closed = False
+        honored = official.honored
+        self.subscription_id: str | int = official.subscription_id
+        self.honored = SubscriptionFilter(
+            tools_list_changed=bool(honored.tools_list_changed),
+            prompts_list_changed=bool(honored.prompts_list_changed),
+            resources_list_changed=bool(honored.resources_list_changed),
+            resource_subscriptions=tuple(honored.resource_subscriptions or ()),
+        )
+
+    def __aiter__(self) -> AsyncSubscription:
+        return self
+
+    async def __anext__(self) -> SubscriptionEvent:
+        event = await self.next()
+        if event is None:
+            raise StopAsyncIteration
+        return event
+
+    async def next(self, *, timeout: float | None = None) -> SubscriptionEvent | None:
+        """Return the next event, or ``None`` once the server closed the stream."""
+
+        if self._closed:
+            raise RuntimeError("subscription is closed")
+        self._client._require_open()
+        effective = self._client._timeout if timeout is None else timeout
+        if not math.isfinite(effective) or effective <= 0:
+            raise ModelValidationError(
+                "timeout must be positive", details={"operation": _LISTEN_OPERATION}
+            )
+        try:
+            event = await asyncio.wait_for(self._official.__anext__(), effective)
+        except StopAsyncIteration:
+            return None
+        except asyncio.TimeoutError as exc:
+            raise self._client._timeout_failure(_LISTEN_OPERATION, effective) from exc
+        except _SubscriptionLost as exc:
+            raise self._client._transport_failure(_LISTEN_OPERATION, exc) from exc
+        return _subscription_event(event)
+
+    async def aclose(self) -> None:
+        """End the subscription; idempotent."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self._client._subscriptions.discard(self)
+        await self._context.__aexit__(None, None, None)
+
+
 _T = TypeVar("_T")
 
 
@@ -547,6 +666,7 @@ class AsyncDirectClient:
         self._closed = False
         self._initialized: InitializationResult | None = None
         self._modern_protocol = False
+        self._subscriptions: set[AsyncSubscription] = set()
 
     @property
     def initialization(self) -> InitializationResult | None:
@@ -617,6 +737,13 @@ class AsyncDirectClient:
         if self._closed:
             return
         self._closed = True
+        # Open listen streams ride the session's task group; end them first
+        # so the session exits without orphaned subscription routes.
+        for subscription in tuple(self._subscriptions):
+            try:
+                await subscription.aclose()
+            except Exception:
+                pass
         if self._entered:
             await self._session.__aexit__(None, None, None)
             self._entered = False
@@ -800,7 +927,9 @@ class AsyncDirectClient:
                 result = await asyncio.wait_for(awaitable, timeout=effective_timeout)
             self._emit_event(operation, "succeeded")
             return result
-        except asyncio.TimeoutError as exc:
+        # Python 3.10 keeps asyncio.TimeoutError distinct from the builtin
+        # TimeoutError that AnyIO deadlines inside the official client raise.
+        except (asyncio.TimeoutError, TimeoutError) as exc:
             raise self._timeout_failure(operation, effective_timeout) from exc
         except asyncio.CancelledError as exc:
             raise self._cancelled_failure(operation) from exc
@@ -1474,6 +1603,55 @@ class AsyncDirectClient:
                 "notifications/roots/list_changed", exc
             ) from exc
 
+    @asynccontextmanager
+    async def listen(
+        self,
+        *,
+        tools_list_changed: bool = False,
+        prompts_list_changed: bool = False,
+        resources_list_changed: bool = False,
+        resource_subscriptions: Sequence[str] = (),
+    ) -> AsyncIterator[AsyncSubscription]:
+        """Open a ``subscriptions/listen`` stream (MCP 2026-07-28 only).
+
+        At 2026-07-28 servers deliver ``notifications/*/list_changed`` and
+        ``notifications/resources/updated`` only on such a stream. Earlier
+        protocol versions deliver them as ordinary connection notifications,
+        so this raises :class:`UnsupportedFeature` there.
+        """
+
+        self._require_open()
+        if isinstance(resource_subscriptions, str):
+            raise ModelValidationError(
+                "resource_subscriptions takes a sequence of URIs, not a string",
+                details={"operation": _LISTEN_OPERATION},
+            )
+        if not self._modern_protocol:
+            raise UnsupportedFeature(
+                "subscriptions/listen requires MCP protocol 2026-07-28; earlier "
+                "protocol versions deliver change notifications on the connection",
+                details={"operation": _LISTEN_OPERATION, "phase": "preflight"},
+            )
+        official = _official_listen(
+            cast(Any, self._session),
+            tools_list_changed=tools_list_changed,
+            prompts_list_changed=prompts_list_changed,
+            resources_list_changed=resources_list_changed,
+            resource_subscriptions=tuple(resource_subscriptions),
+        )
+        try:
+            opened = await self._execute(_LISTEN_OPERATION, official.__aenter__())
+        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+            raise
+        except Exception as exc:
+            raise self._protocol_failure(_LISTEN_OPERATION, exc) from exc
+        subscription = AsyncSubscription(self, official, opened)
+        self._subscriptions.add(subscription)
+        try:
+            yield subscription
+        finally:
+            await subscription.aclose()
+
     def register_callbacks(self, **callbacks: Any) -> NoReturn:
         """Reject post-construction callback mutation explicitly.
 
@@ -1516,6 +1694,7 @@ CallToolResult = ToolCallResult
 
 __all__ = [
     "AsyncDirectClient",
+    "AsyncSubscription",
     "CallToolResult",
     "ClientSessionOptions",
     "DirectEventHook",
@@ -1542,6 +1721,8 @@ __all__ = [
     "ResourceTemplatePage",
     "ResourceTemplatesPage",
     "ResourcesPage",
+    "SubscriptionEvent",
+    "SubscriptionFilter",
     "TemplateInfo",
     "Tool",
     "ToolCallResult",

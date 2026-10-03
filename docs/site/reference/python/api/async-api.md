@@ -511,6 +511,35 @@ agent_session(
 ) -> AsyncAgentSession
 ```
 
+## `AsyncSubscription`
+
+```python
+m3.async_api.AsyncSubscription(
+    client: AsyncDirectClient,
+    context: AbstractAsyncContextManager[_OfficialSubscription],
+    official: _OfficialSubscription,
+) -> None
+```
+
+One open ``subscriptions/listen`` stream of a direct client.
+
+
+```python
+next(
+    self,
+    *,
+    timeout: float | None = None,
+) -> SubscriptionEvent | None
+```
+Return the next event, or ``None`` once the server closed the stream.
+
+```python
+aclose(
+    self,
+) -> None
+```
+End the subscription; idempotent.
+
 ## `CallToolResult`
 
 ```python
@@ -1246,6 +1275,48 @@ Model fields:
 | `raw` | `Any` | No | `None` | — | — |
 | `resources` | `tuple[m3.types.ResourceInfo, ...]` | No | `()` | — | — |
 | `next_cursor` | `str \| None` | No | `None` | — | — |
+
+## `SubscriptionEvent`
+
+```python
+m3.async_api.SubscriptionEvent(
+    *,
+    method: str,
+    uri: str | None = None,
+) -> None
+```
+
+One change notification received on a ``subscriptions/listen`` stream.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `method` | `str` | Yes | — | — | — |
+| `uri` | `str \| None` | No | `None` | — | — |
+
+## `SubscriptionFilter`
+
+```python
+m3.async_api.SubscriptionFilter(
+    *,
+    tools_list_changed: bool = False,
+    prompts_list_changed: bool = False,
+    resources_list_changed: bool = False,
+    resource_subscriptions: tuple[str, ...] = (),
+) -> None
+```
+
+Change notifications a ``subscriptions/listen`` stream delivers.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `tools_list_changed` | `bool` | No | `False` | — | — |
+| `prompts_list_changed` | `bool` | No | `False` | — | — |
+| `resources_list_changed` | `bool` | No | `False` | — | — |
+| `resource_subscriptions` | `tuple[str, ...]` | No | `()` | — | — |
 
 ## `Tool`
 
