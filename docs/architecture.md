@@ -130,5 +130,21 @@ require external credentials and may incur provider costs.
   use the live recipes only when credentials and external services are
   intentionally available.
 
+### Timing spans
+
+The opt-in `M3_TIMINGS=1` log is fed by `m3._timing` decorators and spans.
+
+- Instrument shared code paths only. Never add spans to an individual harness
+  adapter; adapter time shows up under `harness.open` and `session.turn`.
+- Prefer `@_timing.timed("name")` when the whole function is the step, and a
+  single `with _timing.span("name", key=...)` when it is a portion of one.
+- Use `_timing.counted` or `_timing.count` for anything called per event or per
+  MCP frame, so no record is written per call.
+- Pass `key` as a callable when computing it costs anything, and keep keys and
+  notes to names, ids, kinds and counts. Never record prompts, arguments,
+  paths with user data, or credentials.
+- Step names are part of the public surface. Renaming one means updating the
+  timings guide as well.
+
 See the package-specific READMEs for implementation commands and the
 [release guide](releasing.md) for versioned artifacts.

@@ -22,6 +22,7 @@ from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
 
+from . import _timing
 from .policy import ToolDescriptor, ToolPolicyEvaluator
 from .types import (
     FilesystemPolicy,
@@ -735,6 +736,7 @@ class AllowedCommands:
             pass
         await process.wait()
 
+    @_timing.timed("interaction.command")
     async def __call__(self, request: TerminalRequest) -> TerminalResult:
         if (
             not isinstance(request.argv, (tuple, list))

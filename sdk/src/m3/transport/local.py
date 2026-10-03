@@ -20,6 +20,7 @@ from typing import Any, Protocol, TypeAlias
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.memory import create_client_server_memory_streams
 
+from .. import _timing
 from ..trace.redaction import is_sensitive_key
 from ..types import InProcessServer, SecretReference, StdioServer
 
@@ -203,6 +204,7 @@ class _InProcessConnection(_Connection):
                 evidence=self.evidence,
             )
 
+    @_timing.timed("server.close")
     async def close(self) -> None:
         if not self._closed:
             self._closed = True
@@ -276,6 +278,7 @@ class _StdioConnection(_Connection):
         self.read_stream, self.write_stream = streams
         self._streams = streams
 
+    @_timing.timed("server.close")
     async def close(self) -> None:
         if self._closed:
             return
@@ -337,6 +340,7 @@ class InProcessMCPTransport:
         self._workspace_root = workspace_root
         self._connection: _InProcessConnection | None = None
 
+    @_timing.timed("server.launch")
     async def open(self) -> _InProcessConnection:
         memory_context = create_client_server_memory_streams()
         preserve_original_startup = False
@@ -520,6 +524,7 @@ class StdioMCPTransport:
             ) from None
         return str(resolved)
 
+    @_timing.timed("server.launch")
     async def open(self) -> _StdioConnection:
         if "\x00" in self._server.command or any(
             "\x00" in arg for arg in self._server.args

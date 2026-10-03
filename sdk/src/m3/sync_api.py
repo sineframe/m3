@@ -46,6 +46,7 @@ from anyio.from_thread import (
 )
 from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 
+from . import _timing
 from ._check_recording import (
     bind_subject as _bind_subject,
 )
@@ -664,7 +665,21 @@ class _PortalRuntime:
         return self.execution(identifier).on_event(callback)
 
 
+def _adopting(function: _Callable[..., _Any], token: _Any) -> _Callable[..., _Any]:
+    """Carry the timing context onto the portal's event-loop thread."""
+
+    async def run(*args: _Any, **kwargs: _Any) -> _Any:
+        with _timing.adopt(token):
+            result = function(*args, **kwargs)
+            if _inspect.isawaitable(result):
+                result = await result
+            return result
+
+    return run
+
+
 class _SyncPortal:
+    @_timing.timed("portal.start")
     def __init__(
         self,
         config: Config,
@@ -715,8 +730,11 @@ class _SyncPortal:
             if self._closed:
                 raise RuntimeError("synchronous portal is closed")
             portal = self._portal
+        if _timing.active():
+            function = _adopting(function, _timing.current())
         return portal.call(function, *args, **kwargs)
 
+    @_timing.timed("portal.close")
     def close(self) -> None:
         with self._lock:
             if self._closed:
@@ -1676,6 +1694,7 @@ class MCPTestKit:
         if should_close:
             self.close()
 
+    @_timing.timed("kit.close")
     def close(self) -> None:
         """Close the shell; repeated calls are intentionally harmless."""
 

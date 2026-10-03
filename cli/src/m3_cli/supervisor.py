@@ -29,6 +29,8 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
+from m3 import _timing, _timing_report
+
 from .branding import M3_ASCII_ART
 from .ci_credentials import ACCESS_TOKEN_ENV, parse_credential_mapping
 
@@ -865,6 +867,8 @@ def pytest_command(
         command.append("--m3-ci")
     if run_id is not None:
         command.extend(("--m3-run-id", run_id))
+    if _timing.ENABLED:
+        command.append("--m3-timings-owner=cli")
     if ci_metadata is not None:
         command.extend(
             (
@@ -914,6 +918,7 @@ _RESERVED_PYTEST_OPTIONS = frozenset(
         "--m3-server-selections",
         "--m3-ci",
         "--m3-run-id",
+        "--m3-timings-owner",
         "--m3-ci-metadata",
     }
 )
@@ -1184,9 +1189,10 @@ def _prepare_test(
     try:
         database_path.parent.mkdir(parents=True, exist_ok=True)
         selected = resolve_project_python(python, project_root=root)
-        validate_project_python(
-            selected, project_root=root, require_xdist=require_xdist
-        )
+        with _timing.span("cli.validate_python"):
+            validate_project_python(
+                selected, project_root=root, require_xdist=require_xdist
+            )
     except (OSError, ProjectPythonError) as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return None
@@ -1249,6 +1255,42 @@ def _open_ui_in_browser(
         )
 
 
+def _run_pytest_timed(*args: Any, **kwargs: Any) -> int:
+    with _timing.span("cli.pytest"):
+        return _run_pytest_process(*args, **kwargs)
+
+
+_timing_state: dict[str, Any] = {"directory": None, "run": None}
+
+
+def _start_timings(root: Path, run_id: str) -> None:
+    """Start the CLI timing sink and the root ``cli.run`` span (opt-in)."""
+
+    if not _timing.ENABLED or _timing_state["directory"] is not None:
+        return
+    directory = root / ".m3" / "reports" / run_id / "timings"
+    _timing.start(directory, "cli")
+    run = _timing.span("cli.run")
+    run.__enter__()
+    _timing_state["directory"] = directory
+    _timing_state["run"] = run
+
+
+def _finish_timings() -> None:
+    """Close ``cli.run``, stop the sink, and print the report, once."""
+
+    directory = _timing_state["directory"]
+    run = _timing_state["run"]
+    if directory is None:
+        return
+    _timing_state["directory"] = None
+    _timing_state["run"] = None
+    if run is not None:
+        run.__exit__(None, None, None)
+    _timing.stop()
+    _timing_report.finish(directory)
+
+
 def _run_ui_server(
     database: Path,
     port: int,
@@ -1261,8 +1303,10 @@ def _run_ui_server(
     child: _ServerChild | None = None
     auth_token = secrets.token_urlsafe(32)
     try:
-        child = _ServerChild(database, port, auth_token)
-        if not _wait_ready(child):
+        with _timing.span("cli.ui.start"):
+            child = _ServerChild(database, port, auth_token)
+            ready = _wait_ready(child)
+        if not ready:
             print("m3: UI server readiness failed", file=sys.stderr)
             for line in _server_diagnostics(child, auth_token):
                 print(f"m3: UI server: {line}", file=sys.stderr)
@@ -1414,6 +1458,7 @@ def run_test_with_runs(
             return TestRunResult(OPERATIONAL_ERROR)
     root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
+    _start_timings(root, invocation_run_id)
     database_path = _absolute_database(database, project_root=root)
     try:
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1429,7 +1474,8 @@ def run_test_with_runs(
             project_root=root,
         )
 
-    before = list_stored_runs(database_path)
+    with _timing.span("cli.history_scan", "before"):
+        before = list_stored_runs(database_path)
     prepared = _prepare_test(
         python, database, root, require_xdist=num_processes is not None
     )
@@ -1442,13 +1488,18 @@ def run_test_with_runs(
             project_root=root,
         )
     selected, database_path = prepared
-    if baseline is not None and not baseline_exists(
-        database_path,
-        baseline,
-        python=selected,
-        project_root=root,
-        project_id=_project_id(root),
-    ):
+    if baseline is not None:
+        with _timing.span("cli.baseline_check"):
+            baseline_found = baseline_exists(
+                database_path,
+                baseline,
+                python=selected,
+                project_root=root,
+                project_id=_project_id(root),
+            )
+    else:
+        baseline_found = True
+    if not baseline_found:
         print(f"m3 test: baseline run was not found: {baseline}", file=sys.stderr)
         return TestRunResult(
             OPERATIONAL_ERROR,
@@ -1469,7 +1520,7 @@ def run_test_with_runs(
         return TestRunResult(
             OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
         )
-    exit_code = _run_pytest_process(
+    exit_code = _run_pytest_timed(
         selected,
         database_path,
         pytest_args,
@@ -1491,7 +1542,8 @@ def run_test_with_runs(
         ci_metadata=ci_metadata,
         num_processes=num_processes,
     )
-    after = list_stored_runs(database_path)
+    with _timing.span("cli.history_scan", "after"):
+        after = list_stored_runs(database_path)
     warnings = tuple(
         dict.fromkeys(
             warning
@@ -1508,6 +1560,7 @@ def run_test_with_runs(
         return TestRunResult(
             exit_code, new_runs, warnings, invocation_run_id, database_path, root
         )
+    _finish_timings()
     server_code = _run_ui_server(database_path, port, exit_code, new_runs, warnings)
     return TestRunResult(
         server_code, new_runs, warnings, invocation_run_id, database_path, root
@@ -1593,19 +1646,26 @@ def run_test(
             num_processes=num_processes,
         ).exit_code
     root = resolve_project_root(project_root)
+    invocation_run_id = run_id or f"run-{uuid4().hex}"
+    _start_timings(root, invocation_run_id)
     prepared = _prepare_test(
         python, database, root, require_xdist=num_processes is not None
     )
     if prepared is None:
         return OPERATIONAL_ERROR
     selected, database_path = prepared
-    if baseline is not None and not baseline_exists(
-        database_path,
-        baseline,
-        python=selected,
-        project_root=root,
-        project_id=_project_id(root),
-    ):
+    if baseline is not None:
+        with _timing.span("cli.baseline_check"):
+            baseline_found = baseline_exists(
+                database_path,
+                baseline,
+                python=selected,
+                project_root=root,
+                project_id=_project_id(root),
+            )
+    else:
+        baseline_found = True
+    if not baseline_found:
         print(f"m3 test: baseline run was not found: {baseline}", file=sys.stderr)
         return OPERATIONAL_ERROR
     try:
@@ -1613,8 +1673,7 @@ def run_test(
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR
-    invocation_run_id = run_id or f"run-{uuid4().hex}"
-    return _run_pytest_process(
+    return _run_pytest_timed(
         selected,
         database_path,
         pytest_args,

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
+from .. import _timing
 from .recipes import default_manifest_url
 
 RECEIPT_FORMAT = 2
@@ -426,6 +427,7 @@ class RuntimeManager:
         self._leases: list[RuntimeLease] = []
         self._manifest_cache: dict[str, Mapping[str, Any]] = {}
 
+    @_timing.timed("runtime.acquire")
     async def acquire(
         self, kind: str, selector: str | Mapping[str, Any]
     ) -> RuntimeLease:
@@ -633,16 +635,17 @@ class RuntimeManager:
                         ) as smoke_home_value:
                             smoke_home = Path(smoke_home_value)
                             smoke_home.chmod(0o700)
-                            result = await asyncio.to_thread(
-                                subprocess.run,
-                                [str(smoke), "--version"],
-                                capture_output=True,
-                                timeout=10,
-                                check=True,
-                                text=True,
-                                cwd=smoke_home,
-                                env=self._smoke_environment(smoke_home),
-                            )
+                            with _timing.span("runtime.smoke"):
+                                result = await asyncio.to_thread(
+                                    subprocess.run,
+                                    [str(smoke), "--version"],
+                                    capture_output=True,
+                                    timeout=10,
+                                    check=True,
+                                    text=True,
+                                    cwd=smoke_home,
+                                    env=self._smoke_environment(smoke_home),
+                                )
                         output = (result.stdout + result.stderr).lower()
                         if not self._output_reports_version(output, version):
                             raise RuntimeValidationError(
@@ -719,6 +722,7 @@ class RuntimeManager:
         return lease
 
     @staticmethod
+    @_timing.timed("runtime.verify")
     def _verify_requirements(
         root: Path,
         executable_name: str,
@@ -892,6 +896,7 @@ class RuntimeManager:
             raise RuntimeValidationError("invalid runtime manifest")
         return value
 
+    @_timing.timed("runtime.resolve")
     async def _resolve_manifest(
         self, kind: str, url: str, version: str, target: str
     ) -> Mapping[str, Any]:
@@ -1292,6 +1297,7 @@ class RuntimeManager:
             staged.unlink(missing_ok=True)
 
     @staticmethod
+    @_timing.timed("runtime.download")
     def _download_staged(
         url: str,
         kind: str,
@@ -1339,6 +1345,7 @@ class RuntimeManager:
             raise RuntimeValidationError("runtime download failed") from None
 
     @staticmethod
+    @_timing.timed("runtime.install")
     def _install(data: Path, destination: Path, executable: str, kind: str) -> None:
         with tempfile.TemporaryDirectory(dir=destination.parent) as td:
             source = Path(td) / "archive"

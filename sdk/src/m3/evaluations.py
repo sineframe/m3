@@ -21,6 +21,7 @@ from typing import Protocol as _Protocol
 from typing import TypeAlias as _TypeAlias
 from uuid import uuid4 as _uuid4
 
+from . import _timing
 from .errors import ModelValidationError as _ModelValidationError
 from .errors import UnsupportedFeature as _UnsupportedFeature
 from .trace.redaction import (
@@ -434,6 +435,7 @@ class EvaluationRunner:
     ) -> EvaluatorRegistration:
         return self.registry.register(name, evaluator)
 
+    @_timing.timed("eval.run")
     def evaluate(
         self,
         subject: _Any,
@@ -539,6 +541,7 @@ class EvaluationRunner:
         _raise_for_required(result)
         return result.model_copy()
 
+    @_timing.timed("eval.run")
     async def evaluate_async(
         self,
         subject: _Any,
@@ -638,6 +641,7 @@ class EvaluationRunner:
     def results(self) -> tuple[_EvaluationResult, ...]:
         return self.store.all()
 
+    @_timing.timed("eval.persist")
     def _persist(self, result: _EvaluationResult) -> None:
         execution_id = (
             result.context.execution_id if result.context is not None else None

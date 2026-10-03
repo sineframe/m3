@@ -33,6 +33,7 @@ import httpx2
 from mcp import ClientSession as _ClientSession
 from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 
+from . import _timing
 from ._check_recording import (
     bind_execution as _bind_execution,
 )
@@ -920,6 +921,7 @@ class AsyncMCPTestKit:
     operations never block the event loop.
     """
 
+    @_timing.timed("kit.open")
     def __init__(
         self,
         config: Config | _Mapping[str, _Any] | None = None,
@@ -1163,6 +1165,7 @@ class AsyncMCPTestKit:
     ) -> None:
         await self.aclose()
 
+    @_timing.timed("kit.close")
     async def aclose(self) -> None:
         """Close the shell; repeated calls are intentionally harmless."""
 

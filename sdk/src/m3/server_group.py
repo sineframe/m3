@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from . import _timing
 from .errors import MCPError
 from .transport.capture_proxy import McpCaptureManager
 from .types import (
@@ -537,6 +538,7 @@ class _LoopbackEndpoint:
             raise ServerStartupError("loopback endpoint is not started")
         return self._url
 
+    @_timing.timed("servers.loopback")
     async def start(self) -> str:
         try:
             import uvicorn
@@ -724,6 +726,7 @@ class ServerGroupManager:
             )
         return ServerGroupSnapshot(tuple(records), self._evidence)
 
+    @_timing.timed("servers.start")
     async def start(
         self,
         *,
@@ -921,6 +924,7 @@ class ServerGroupManager:
         )
         return self.snapshot()
 
+    @_timing.timed("servers.close")
     async def close(self) -> None:
         if self._closed:
             return

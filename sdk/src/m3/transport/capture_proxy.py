@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from mcp.client.stdio import get_default_environment
 
+from .. import _timing
 from ..trace.capture import CaptureWriter, read_capture
 from ..trace.redaction import is_sensitive_key
 from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
@@ -852,6 +853,7 @@ class McpCaptureManager:
             ):
                 self._fail_subscribers(authenticated_connection, "observer_eof")
 
+    @_timing.timed("servers.instrument")
     async def instrument(
         self,
         configurations: Iterable[Any],
@@ -1127,6 +1129,7 @@ class McpCaptureManager:
             "capture_complete": self._closed,
         }
 
+    @_timing.timed("capture.close")
     async def close(self) -> None:
         if self._closed:
             return

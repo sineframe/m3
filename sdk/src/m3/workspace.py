@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from glob import has_magic
 from pathlib import Path
 
+from . import _timing
 from .storage import ArtifactStore, InMemoryArtifactStore
 from .types import (
     ArtifactPolicy,
@@ -209,6 +210,7 @@ class WorkspaceManager:
     def _has_excluded_component(self, relative: str) -> bool:
         return any(self._excluded(part, is_dir=True) for part in Path(relative).parts)
 
+    @_timing.timed("workspace.create")
     def create(self) -> Path:
         with self._lock:
             if self._root is not None:
@@ -235,6 +237,7 @@ class WorkspaceManager:
             self._baseline = self._snapshot(root)
             return root
 
+    @_timing.timed("workspace.worktree")
     def _create_worktree(self, source: Path, target: Path) -> None:
         try:
             subprocess.run(
@@ -250,6 +253,7 @@ class WorkspaceManager:
             self._owned_root = False
             raise WorkspaceError("git worktree could not be created") from exc
 
+    @_timing.timed("workspace.copy")
     def _copy_tree(self, source: Path, target: Path) -> None:
         try:
             root_stat = source.lstat()
@@ -326,6 +330,7 @@ class WorkspaceManager:
                     path.chmod(0o555)
         root.chmod(0o555)
 
+    @_timing.timed("workspace.hash")
     def _snapshot(self, root: Path) -> dict[str, tuple[int, str]]:
         result: dict[str, tuple[int, str]] = {}
         stack = [root]
@@ -396,6 +401,7 @@ class WorkspaceManager:
                 os.close(fd)
         return size, digest.hexdigest()
 
+    @_timing.timed("workspace.capture")
     def capture(self, outcome: ExecutionOutcome) -> WorkspaceCapture:
         with self._lock:
             if self._captured is not None:
@@ -541,6 +547,7 @@ class WorkspaceManager:
             )
         ]
 
+    @_timing.timed("workspace.cleanup")
     def cleanup(self) -> None:
         with self._lock:
             if self._cleaned:

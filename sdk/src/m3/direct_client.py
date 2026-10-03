@@ -40,6 +40,7 @@ from mcp.shared.subscriptions import (
 from pydantic import Field, model_validator
 from referencing import Registry
 
+from . import _timing
 from ._mrtr import input_required as _normalized_input_required
 from ._mrtr import (
     normalize_requests as _normalize_elicitation_requests,
@@ -949,10 +950,13 @@ class AsyncDirectClient:
             # __aenter__; wrapping that particular awaitable in wait_for would
             # move ownership to a child asyncio task and make official cleanup
             # fail. Protocol initialization and requests remain bounded below.
-            if operation == "session/enter":
-                result = await awaitable
-            else:
-                result = await asyncio.wait_for(awaitable, timeout=effective_timeout)
+            with _timing.span("mcp.request", key=operation):
+                if operation == "session/enter":
+                    result = await awaitable
+                else:
+                    result = await asyncio.wait_for(
+                        awaitable, timeout=effective_timeout
+                    )
             self._emit_event(operation, "succeeded")
             return result
         # Python 3.10 keeps asyncio.TimeoutError distinct from the builtin

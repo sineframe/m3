@@ -8,6 +8,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from .. import _timing
 from ..errors import RawEvidenceIntegrityError, RawEvidenceUnavailable
 from ..observability import (
     CaptureOptions,
@@ -53,6 +54,7 @@ def validate_evidence_id(evidence_id: str) -> str:
     return evidence_id
 
 
+@_timing.counted("evidence.prepare")
 def prepare_evidence(
     content: bytes,
     *,

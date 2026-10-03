@@ -29,6 +29,7 @@ from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter, ValidationError
 
+from .. import _timing
 from .._types.agent_identity import project_agent_identity
 from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from ..domain.validation import validate_mcp_config
@@ -542,8 +543,10 @@ class _SqliteBase:
         from sqlalchemy import event
 
         event.listen(self._engine, "connect", _register_run_search)
-        self._initialize()
+        with _timing.span("store.open", key=type(self).__name__):
+            self._initialize()
 
+    @_timing.counted("store.connect")
     def _connect(self) -> _CompatConnection:
         # SQLite follows a database symlink (and WAL/SHM symlinks) before this
         # method gets a chance to write.  Refuse those paths before opening.
@@ -2010,6 +2013,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
         return tuple(values), total
 
+    @_timing.counted("store.save_test_result")
     def save_test_result(
         self, run_id: str, attempt_id: str, value: Mapping[str, object]
     ) -> None:
@@ -2318,6 +2322,7 @@ class SQLiteExecutionStore(_SqliteBase):
         trace = self.get_trace(execution_id)
         return trace.view() if trace is not None else None
 
+    @_timing.counted("store.save_snapshot")
     def save_snapshot(self, snapshot: ExecutionState) -> None:
         key = _execution_key(snapshot.execution_id)
         actual = self.get_snapshot(key)
@@ -2334,6 +2339,7 @@ class SQLiteExecutionStore(_SqliteBase):
 
     update_snapshot = save_snapshot
 
+    @_timing.counted("store.load_events")
     def _events(self, execution_id: str) -> tuple[Event, ...]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -2597,6 +2603,7 @@ class SQLiteExecutionStore(_SqliteBase):
             ),
         )
 
+    @_timing.counted("store.append")
     def _append(
         self,
         execution_id: str,
@@ -2970,6 +2977,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 (_iso(_utcnow()), key),
             )
 
+    @_timing.counted("store.save_turn")
     def save_turn(
         self, snapshot: TurnState, result: TurnResult | Mapping[str, Any] | None = None
     ) -> None:
@@ -3058,6 +3066,7 @@ class SQLiteExecutionStore(_SqliteBase):
             for row in rows
         )
 
+    @_timing.counted("store.save_evaluation")
     def save_evaluation(
         self,
         execution_id: ExecutionId | str,
@@ -3466,6 +3475,7 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict("execution does not exist")
         return _SqliteBatch(self, _execution_key(execution_id))
 
+    @_timing.counted("store.allocate_seq")
     def allocate(
         self, execution_id: ExecutionId | str, *, count: int = 1
     ) -> tuple[int, ...]:

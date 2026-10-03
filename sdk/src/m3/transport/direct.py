@@ -31,6 +31,7 @@ from mcp.shared._httpx_utils import (
     McpHttpClientFactory,
 )
 
+from .. import _timing
 from ..direct_trace import DirectTraceBridge
 from ..trace.redaction import is_sensitive_key
 from ..types import HTTPServer, SecretReference, TrustLevel
@@ -653,6 +654,7 @@ class _RemoteConnection:
             # contract.
             pass
 
+    @_timing.timed("server.launch")
     async def __aenter__(self) -> ClientSession:
         if self._opened or self._close_complete:
             raise TransportConnectionError(
@@ -751,6 +753,7 @@ class _RemoteConnection:
                 self._transport, "initialize", evidence=self.evidence
             ) from None
 
+    @_timing.timed("server.close")
     async def aclose(self) -> None:
         if self._close_complete:
             return
