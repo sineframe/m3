@@ -46,6 +46,10 @@ from ._default_store import (
 from ._default_store import (
     restore_default_store_factory as _restore_default_store_factory,
 )
+from ._terminal import Style as _Style
+from ._terminal import stream_is_utf8 as _stream_is_utf8
+from ._terminal import truncate as _truncate
+from ._terminal import visible_len as _visible_len
 from ._test_runs import (
     activate_test as _activate_test,
 )
@@ -1775,9 +1779,6 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
     config._m3_feedback_path = str(output)
     reporter = config.pluginmanager.getplugin("terminalreporter")
     if reporter is not None:
-        reporter.write_line("")
-        reporter.write_line(f"M3 run {run_id.root}")
-        reporter.write_line(f"M3 feedback: {output}")
         verdicts = [
             str(test.get("verdict", test.get("outcome", "unknown")))
             for test in feedback.tests
@@ -1791,22 +1792,37 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             ("pytest_error", "pytest error"),
             ("skipped", "skipped"),
         )
-        counts = ", ".join(
-            f"{verdicts.count(kind)} {label}"
-            for kind, label in categories
-            if verdicts.count(kind)
-        )
-        reporter.write_line("M3 verdicts: " + (counts or "no test cases recorded"))
         tool_errors = sum(
             test.get("tool_result") == "tool_error" for test in feedback.tests
         )
         completed = sum(
             execution.get("outcome") == "completed" for execution in feedback.executions
         )
-        reporter.write_line(
-            f"M3 observations: {tool_errors} tool error result(s); "
-            f"{completed} completed execution(s)"
-        )
+        style = None if config.getoption("--m3-ci") else _terminal_style(reporter)
+        if style is not None:
+            _write_run_panel(
+                reporter,
+                style,
+                run_id.root,
+                output,
+                [(verdicts.count(kind), kind, label) for kind, label in categories],
+                tool_errors,
+                completed,
+            )
+        else:
+            counts = ", ".join(
+                f"{verdicts.count(kind)} {label}"
+                for kind, label in categories
+                if verdicts.count(kind)
+            )
+            reporter.write_line("")
+            reporter.write_line(f"M3 run {run_id.root}")
+            reporter.write_line(f"M3 feedback: {output}")
+            reporter.write_line("M3 verdicts: " + (counts or "no test cases recorded"))
+            reporter.write_line(
+                f"M3 observations: {tool_errors} tool error result(s); "
+                f"{completed} completed execution(s)"
+            )
         if no_executed_tests:
             reporter.write_line(
                 "M3: no tests executed; skipped-only runs fail", red=True
@@ -1828,6 +1844,54 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
                 + "; ".join(config._m3_required_evaluation_issues),
                 red=True,
             )
+
+
+def _write_run_panel(
+    reporter: _Any,
+    style: _Style,
+    run_id: str,
+    output: _Any,
+    counts: list[tuple[int, str, str]],
+    tool_errors: int,
+    completed: int,
+) -> None:
+    """Terminal rendering of the M3 run summary for interactive sessions."""
+
+    dot = f" {style.dim(style.glyphs.dot)} "
+    verdict_parts = []
+    for count, kind, label in counts:
+        if not count:
+            continue
+        paint = (
+            style.green
+            if kind == "passed"
+            else style.yellow
+            if kind == "skipped"
+            else style.red
+        )
+        verdict_parts.append(paint(f"{count} {label}"))
+    observations = (
+        (style.yellow if tool_errors else str)(
+            f"{tool_errors} tool error{'' if tool_errors == 1 else 's'}"
+        )
+        + dot
+        + f"{completed} execution{'' if completed == 1 else 's'}"
+    )
+    feedback = _Path(output)
+    try:
+        feedback = feedback.relative_to(_Path.cwd())
+    except ValueError:
+        pass
+    width = getattr(getattr(reporter, "_tw", None), "fullwidth", 80)
+    rows = [
+        ("verdicts", dot.join(verdict_parts) or "no test cases recorded"),
+        ("observations", observations),
+        ("feedback", style.dim(str(feedback))),
+    ]
+    title = style.bold(f"M3 {run_id}")
+    reporter.write_line("")
+    for line in style.box(title, rows, width if isinstance(width, int) else 80):
+        reporter.write_line(line)
 
 
 class _ManifestHooks:
@@ -1877,6 +1941,28 @@ class _ManifestHooks:
             _pytest_sessionfinish(session, exitstatus)
 
 
+def _terminal_style(reporter: _Any) -> _Style | None:
+    """Styling for a TTY terminal reporter, or None for plain output."""
+
+    if reporter is None or _os.environ.get("TERM") == "dumb":
+        return None
+    writer = getattr(reporter, "_tw", None)
+    value = getattr(reporter, "isatty", None)
+    if callable(value):
+        tty = bool(value())
+    elif value is not None:
+        tty = bool(value)
+    else:
+        isatty = getattr(getattr(writer, "_file", None), "isatty", None)
+        tty = bool(callable(isatty) and isatty())
+    if not tty:
+        return None
+    return _Style(
+        bool(getattr(writer, "hasmarkup", False)),
+        unicode=_stream_is_utf8(getattr(writer, "_file", None)),
+    )
+
+
 class _Progress:
     def __init__(self, config: _Any) -> None:
         self.config = config
@@ -1887,18 +1973,57 @@ class _Progress:
         self._last_write = 0.0
         self._finished = False
         self._native_progress: object = _NATIVE_PROGRESS_UNSET
+        self._native_fspath: object = _NATIVE_PROGRESS_UNSET
+        self._started = _time.monotonic()
+        self._current = ""
+        self._frame = 0
         option = config.option
-        self.enabled = int(getattr(option, "verbose", 0) or 0) <= 0 and not bool(
-            getattr(option, "numprocesses", 0)
+        self.enabled = (
+            int(getattr(option, "verbose", 0) or 0) <= 0
+            and not bool(getattr(option, "numprocesses", 0))
+            # Uncaptured test output and live logs would interleave with the
+            # live line; pytest's native output handles those better.
+            and getattr(option, "capture", None) != "no"
+            and not self._live_logging()
         )
+
+    def _live_logging(self) -> bool:
+        getini = getattr(self.config, "getini", None)
+        if not callable(getini):
+            return False
+        try:
+            return bool(getini("log_cli"))
+        except (ValueError, KeyError):
+            return False
 
     @_pytest.hookimpl(trylast=True)
     def pytest_collection_finish(self, session: _Any) -> None:
         self.total = len(session.items)
+        self._started = _time.monotonic()
         if self.reporter is None:
             self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
             self.enabled = self.enabled and self._is_tty()
             self.disable_native_progress()
+
+    @_pytest.hookimpl(wrapper=True)
+    def pytest_report_teststatus(self, report: _Any, config: _Any) -> _Any:
+        # The live line replaces pytest's per-test letters, which would
+        # otherwise be appended to it.
+        result = yield
+        if self.enabled and not self._finished and result and len(result) == 3:
+            category, _letter, word = result
+            return category, "", word
+        return result
+
+    @_pytest.hookimpl
+    def pytest_runtest_logstart(self, nodeid: str, location: _Any) -> None:
+        if not self.enabled:
+            return
+        # Parameter values may contain secrets; show the test id only.
+        # The test name is the useful part; the file is already on screen
+        # in failures and summaries.
+        self._current = str(nodeid).split("[", 1)[0].split("::", 1)[-1]
+        self._write(force=True)
 
     @_pytest.hookimpl(trylast=True)
     def pytest_runtest_logreport(self, report: _Any) -> None:
@@ -1917,7 +2042,8 @@ class _Progress:
                     self.skipped -= 1
                 self.failed += 1
                 self._outcomes[report.nodeid] = "failed"
-                self._write()
+                self._report_failure(report.nodeid)
+                self._write(force=True)
             return
         if report.nodeid in self._counted:
             return
@@ -1933,24 +2059,79 @@ class _Progress:
             self.passed += 1
         elif report.outcome == "failed":
             self.failed += 1
+            self._report_failure(report.nodeid)
         else:
             self.skipped += 1
-        self._write()
+        self._write(force=report.outcome == "failed")
 
-    def _write(self, *, force: bool = False) -> None:
+    def _style(self) -> _Style:
+        return _terminal_style(self.reporter) or _Style(False, unicode=False)
+
+    def _width(self) -> int:
+        width = getattr(getattr(self.reporter, "_tw", None), "fullwidth", 80)
+        return width if isinstance(width, int) and width > 0 else 80
+
+    def _report_failure(self, nodeid: str) -> None:
+        """Keep each failure visible above the live line."""
+
+        if self.reporter is None or not self._is_tty():
+            return
+        style = self._style()
+        name = _truncate(
+            str(nodeid).split("[", 1)[0], self._width() - 5, style.glyphs.ellipsis
+        )
+        self.reporter.rewrite(
+            f"  {style.red(style.glyphs.failed)} {style.red(name)}\x1b[K\n", flush=True
+        )
+
+    def _line(self, *, done: bool = False) -> str:
+        style = self._style()
+        glyphs = style.glyphs
+        total = max(self.total, self.completed)
+        if done:
+            lead = (
+                style.red(glyphs.failed)
+                if self.failed
+                # An interrupted run did not pass, even with no failures.
+                else style.yellow(glyphs.warning)
+                if self.completed < total
+                else style.green(glyphs.passed)
+            )
+        else:
+            lead = style.cyan(glyphs.spinner[self._frame % len(glyphs.spinner)])
+            self._frame += 1
+        width = self._width()
+        # Pad numbers to the total's width so the line does not jitter.
+        digits = len(str(total))
+        counts = (
+            f"   {style.green(f'{glyphs.passed} {self.passed:<{digits}}')}"
+            f"  {(style.red if self.failed else style.grey)(f'{glyphs.failed} {self.failed:<{digits}}')}"
+            f"  {(style.yellow if self.skipped else style.grey)(f'{glyphs.skipped} {self.skipped:<{digits}}')}"
+            f" {style.dim(f'{_time.monotonic() - self._started:5.1f}s')}"
+        )
+        fraction = (
+            f"  {style.bold(f'{self.completed:>{digits}}')}{style.dim(f'/{total}')}"
+        )
+        bar_width = max(10, min(28, width - 64))
+        line = (
+            f"  {lead} {style.bar(self.completed, total, bar_width)}{fraction}{counts}"
+        )
+        room = width - _visible_len(line) - 3
+        if not done and self._current and room >= 12:
+            line += "  " + style.dim(
+                _truncate(self._current, room, glyphs.ellipsis, keep="start")
+            )
+        return line
+
+    def _write(self, *, force: bool = False, done: bool = False) -> None:
         if self.reporter is None:
             return
         now = _time.monotonic()
         if not force and now - self._last_write < 0.05:
             return
         self._last_write = now
-        total = max(self.total, self.completed)
-        filled = round(24 * self.completed / total) if total else 0
-        bar = "=" * filled + " " * (24 - filled)
-        percent = self.completed / total * 100 if total else 0
-        text = f"[{bar}] {self.completed}/{total} {percent:3.0f}% pass={self.passed} fail={self.failed} skip={self.skipped}"
         if self._is_tty():
-            self.reporter.rewrite("\r" + text, flush=True)
+            self.reporter.rewrite(self._line(done=done) + "\x1b[K", flush=True)
 
     def disable_native_progress(self) -> None:
         if not self.enabled or self.reporter is None:
@@ -1958,16 +2139,24 @@ class _Progress:
         if hasattr(self.reporter, "_show_progress_info"):
             self._native_progress = self.reporter._show_progress_info
             self.reporter._show_progress_info = False
+        if hasattr(self.reporter, "_showfspath"):
+            # File names would also land on the live line.
+            self._native_fspath = self.reporter._showfspath
+            self.reporter._showfspath = False
 
     def restore_native_progress(self) -> None:
-        if (
-            self._native_progress is not _NATIVE_PROGRESS_UNSET
-            and self.reporter is not None
-        ):
+        if self.reporter is None:
+            return
+        if self._native_progress is not _NATIVE_PROGRESS_UNSET:
             self.reporter._show_progress_info = self._native_progress
             self._native_progress = _NATIVE_PROGRESS_UNSET
+        if self._native_fspath is not _NATIVE_PROGRESS_UNSET:
+            self.reporter._showfspath = self._native_fspath
+            self._native_fspath = _NATIVE_PROGRESS_UNSET
 
     def _is_tty(self) -> bool:
+        if _os.environ.get("TERM") == "dumb":
+            return False
         value = getattr(self.reporter, "isatty", None)
         if callable(value):
             return bool(value())
@@ -1988,9 +2177,16 @@ class _Progress:
             self.reporter = self.config.pluginmanager.getplugin("terminalreporter")
         if self.reporter is None:
             return
-        self._write(force=True)
+        if self.total == 0 and self.completed == 0:
+            return
+        self._write(force=True, done=True)
         if self._is_tty():
             self.reporter.write_line("")
+
+    @_pytest.hookimpl(tryfirst=True)
+    def pytest_sessionfinish(self, session: _Any, exitstatus: int) -> None:
+        # Close the live line before the M3 summary is written below it.
+        self.finish()
 
     @_pytest.hookimpl(tryfirst=True)
     def pytest_terminal_summary(self, terminalreporter: _Any, **_: _Any) -> None:

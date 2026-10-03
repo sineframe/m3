@@ -1925,3 +1925,145 @@ def test_ui_prints_timing_summary_before_serving(
     assert "cli.ui.start" in output
     assert output.index("cli.ui.start") < output.index("http://127.0.0.1:8123")
     assert supervisor._timing_state["directory"] is None
+
+
+class _TTYStream:
+    encoding = "utf-8"
+
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.parts.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return True
+
+    def getvalue(self) -> str:
+        return "".join(self.parts)
+
+
+def test_start_banner_prints_run_context_on_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "m3.toml").write_text(
+        'schema_version = 1\nproject_name = "ops-demo"\n', encoding="utf-8"
+    )
+    stream = _TTYStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("TERM", raising=False)
+    shown = supervisor._print_start_banner(
+        tmp_path,
+        "run-abcdef1234",
+        ui=True,
+        harnesses=("codex=gpt-5",),
+        suite="smoke",
+        num_processes="2",
+    )
+    output = stream.getvalue()
+    assert shown is True
+    assert "\x1b[" not in output
+    lines = output.splitlines()
+    assert lines[1].startswith(f"  {M3_ASCII_ART.splitlines()[0]}")
+    assert "project  ops-demo" in output
+    assert "run      abcdef1" in output
+    assert "suite smoke · codex=gpt-5 · 2 workers" in output
+    assert "opens in your browser" in output
+
+
+def test_start_banner_is_skipped_for_piped_output(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    assert (
+        supervisor._print_start_banner(
+            tmp_path, "run-1", ui=False, harnesses=(), suite=None, num_processes=None
+        )
+        is False
+    )
+    assert capsys.readouterr().out == ""
+
+
+def test_start_banner_is_skipped_on_dumb_terminals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stream = _TTYStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setenv("TERM", "dumb")
+    assert (
+        supervisor._print_start_banner(
+            tmp_path, "run-1", ui=False, harnesses=(), suite=None, num_processes=None
+        )
+        is False
+    )
+    assert stream.getvalue() == ""
+
+
+def test_pytest_command_omits_header_only_when_requested() -> None:
+    python, database = Path(sys.executable), Path("results.sqlite")
+    assert "--no-header" not in supervisor.pytest_command(python, database, ["-k", "x"])
+    command = supervisor.pytest_command(python, database, ["-k", "x"], no_header=True)
+    assert command[-3:] == ["--no-header", "-k", "x"]
+
+
+def test_run_test_skips_pytest_header_after_printing_banner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stream = _TTYStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("TERM", raising=False)
+    monkeypatch.setattr(
+        supervisor,
+        "_prepare_test",
+        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+    )
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_run_pytest_process",
+        lambda *_args, **kwargs: calls.append(kwargs) or 0,
+    )
+    assert supervisor.run_test(project_root=tmp_path) == 0
+    assert calls[0]["no_header"] is True
+    assert M3_ASCII_ART.splitlines()[0] in stream.getvalue()
+
+
+def test_ui_server_on_a_terminal_prints_styled_report_links(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Child:
+        process = SimpleNamespace(poll=lambda: None)
+
+        def alive(self) -> bool:
+            return True
+
+    stream = _TTYStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("TERM", raising=False)
+    monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
+    monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
+    monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        supervisor.webbrowser, "open", lambda url: opened.append(url) or True
+    )
+    monkeypatch.setattr(
+        supervisor.time,
+        "sleep",
+        lambda seconds: (
+            None if seconds == 1 else (_ for _ in ()).throw(KeyboardInterrupt())
+        ),
+    )
+    runs = (_run("run-two", 2),)
+    assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, runs, ()) == 0
+    output = stream.getvalue()
+    # The banner was printed before pytest; the end of the run shows links only.
+    assert M3_ASCII_ART.splitlines()[0] not in output
+    assert f"  ➜  Report  {opened[0]}" in output
+    assert "press Ctrl-C to stop the UI server" in output

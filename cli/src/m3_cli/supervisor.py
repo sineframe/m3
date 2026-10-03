@@ -30,8 +30,9 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from m3 import _timing, _timing_report
+from m3._terminal import Style, stream_is_utf8
 
-from .branding import M3_ASCII_ART
+from .branding import M3_ASCII_ART, M3_TAGLINE, render_banner
 from .ci_credentials import ACCESS_TOKEN_ENV, parse_credential_mapping
 
 if typing.TYPE_CHECKING:
@@ -858,6 +859,7 @@ def pytest_command(
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
+    no_header: bool = False,
 ) -> list[str]:
     command = [
         str(python),
@@ -909,6 +911,9 @@ def pytest_command(
         command.extend(("--judge-max-requests", str(judge_max_requests)))
     if num_processes is not None:
         command.extend(("-n", num_processes))
+    if no_header:
+        # The M3 banner already shows the run context.
+        command.append("--no-header")
     command.extend(pytest_args)
     return command
 
@@ -1013,6 +1018,7 @@ def _run_pytest_process(
     run_id: str | None = None,
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
+    no_header: bool = False,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
@@ -1074,6 +1080,7 @@ def _run_pytest_process(
                     run_id=run_id,
                     ci_metadata=ci_metadata,
                     num_processes=num_processes,
+                    no_header=no_header,
                 ),
                 env=child_environment,
                 **kwargs,
@@ -1218,6 +1225,74 @@ def _stop_server(child: _ServerChild | None) -> None:
             pass
 
 
+def _stdout_style() -> Style | None:
+    """Styling for an interactive stdout, or None to keep the plain output."""
+
+    try:
+        interactive = sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return None
+    if not interactive or os.environ.get("TERM") == "dumb":
+        return None
+    return Style("NO_COLOR" not in os.environ, unicode=stream_is_utf8(sys.stdout))
+
+
+def _project_name(root: Path) -> str | None:
+    try:
+        value = _tomllib.loads((root / "m3.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    name = value.get("project_name")
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def _print_start_banner(
+    root: Path,
+    run_id: str,
+    *,
+    ui: bool,
+    harnesses: Sequence[str],
+    suite: str | None,
+    num_processes: str | None,
+) -> bool:
+    """Print the banner before pytest starts; return whether it was shown."""
+
+    style = _stdout_style()
+    if style is None:
+        return False
+    try:
+        version = importlib.metadata.version("sf-m3-cli")
+    except importlib.metadata.PackageNotFoundError:
+        version = ""
+    dot = f" {style.dim(style.glyphs.dot)} "
+
+    def row(key: str, value: str) -> str:
+        return f"{style.grey(key.ljust(9))}{value}"
+
+    details = []
+    if suite is not None:
+        details.append(f"suite {suite}")
+    if harnesses:
+        details.append(", ".join(harnesses))
+    if num_processes is not None:
+        details.append(f"{num_processes} workers")
+    info = [
+        f"{style.bold('m3')} {style.dim(version)}".rstrip(),
+        style.dim(M3_TAGLINE),
+        "",
+        row("project", _project_name(root) or root.name),
+        row("run", run_id.removeprefix("run-")[:7]),
+    ]
+    if details:
+        info.append(row("with", dot.join(details)))
+    if ui:
+        info.append(row("report", "opens in your browser when the run ends"))
+    print(file=sys.stdout)
+    print(render_banner(style, info), flush=True)
+    print(flush=True)
+    return True
+
+
 def _print_ui_output(
     port: int,
     auth_token: str,
@@ -1239,6 +1314,41 @@ def _print_ui_output(
         if run.run_label is not None:
             print(f"Run label: {run.run_label}", flush=True)
         print(f"Run: {build_run_url(run.run_id, port, auth_token)}", flush=True)
+
+
+def _print_styled_ui_output(
+    style: Style,
+    port: int,
+    auth_token: str,
+    new_runs: Sequence[StoredRun],
+    warnings: Sequence[str],
+    *,
+    history_index: bool = False,
+) -> None:
+    """Interactive counterpart of ``_print_ui_output``."""
+
+    for warning in dict.fromkeys(warnings):
+        print(f"{style.glyphs.warning} Warning: {warning}", file=sys.stderr)
+    arrow = style.cyan(style.glyphs.arrow)
+    links: list[tuple[str, str]] = []
+    if history_index or not new_runs:
+        if not history_index:
+            print(f"\n  {style.dim('No new stored runs.')}")
+        links.append(("UI", build_ui_url(port, auth_token)))
+    else:
+        for run in new_runs:
+            label = run.run_label if run.run_label is not None else "Report"
+            links.append((label, build_run_url(run.run_id, port, auth_token)))
+    print()
+    for label, url in links:
+        print(f"  {arrow}  {style.bold(label)}  {style.underline(url)}")
+    print(
+        "     "
+        + style.dim(
+            f"opening in your browser {style.glyphs.dot} press Ctrl-C to stop the UI server"
+        )
+    )
+    print(flush=True)
 
 
 def _open_ui_in_browser(
@@ -1319,10 +1429,20 @@ def _run_ui_server(
             for line in _server_diagnostics(child, auth_token):
                 print(f"m3: UI server: {line}", file=sys.stderr)
             return OPERATIONAL_ERROR
-        print(M3_ASCII_ART, flush=True)
-        _print_ui_output(
-            port, auth_token, new_runs, warnings, history_index=history_index
-        )
+        style = _stdout_style()
+        if style is None:
+            print(M3_ASCII_ART, flush=True)
+            _print_ui_output(
+                port, auth_token, new_runs, warnings, history_index=history_index
+            )
+        else:
+            if history_index:
+                # `m3 ui` runs no tests, so the banner was not printed yet.
+                print(file=sys.stdout)
+                print(render_banner(style, ("", style.dim(M3_TAGLINE))))
+            _print_styled_ui_output(
+                style, port, auth_token, new_runs, warnings, history_index=history_index
+            )
         with _termination_signal_handlers():
             time.sleep(1)
             if not child.alive():
@@ -1528,6 +1648,14 @@ def run_test_with_runs(
         return TestRunResult(
             OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
         )
+    no_header = not ci_mode and _print_start_banner(
+        root,
+        invocation_run_id,
+        ui=ui,
+        harnesses=harnesses,
+        suite=suite,
+        num_processes=num_processes,
+    )
     exit_code = _run_pytest_timed(
         selected,
         database_path,
@@ -1549,6 +1677,7 @@ def run_test_with_runs(
         run_id=invocation_run_id,
         ci_metadata=ci_metadata,
         num_processes=num_processes,
+        no_header=no_header,
     )
     with _timing.span("cli.history_scan", "after"):
         after = list_stored_runs(database_path)
@@ -1680,6 +1809,14 @@ def run_test(
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR
+    no_header = not ci_mode and _print_start_banner(
+        root,
+        invocation_run_id,
+        ui=False,
+        harnesses=harnesses,
+        suite=suite,
+        num_processes=num_processes,
+    )
     return _run_pytest_timed(
         selected,
         database_path,
@@ -1701,6 +1838,7 @@ def run_test(
         run_id=invocation_run_id,
         ci_metadata=ci_metadata,
         num_processes=num_processes,
+        no_header=no_header,
     )
 
 
