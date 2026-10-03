@@ -334,8 +334,8 @@ def test_run_panel_adds_baseline_and_slowest_rows(
         in text
     )
     # The test name comes first; the file is last, so it is cut first.
-    assert "slowest       test_slow ━━━━━━━━━━━━   2.0s  a.py" in text
-    assert "              test_fast ━━━            0.5s  b.py" in text
+    assert "slowest       test_slow    ━━━━━━━━━━━━   2.0s  a.py" in text
+    assert "              test_fast    ━━━            0.5s  b.py" in text
     assert len({visible_len(line) for line in reporter.lines[1:]}) == 1
 
 
