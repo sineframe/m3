@@ -294,7 +294,7 @@ def resolve_project_python(
 ) -> Path:
     """Resolve Python in the documented order, without importing project code."""
 
-    root = (project_root or Path.cwd()).resolve()
+    root = resolve_project_root(project_root)
     env = os.environ if environment is None else environment
     if explicit is not None:
         return _explicit_python(explicit, path=env.get("PATH"))
@@ -367,7 +367,7 @@ def validate_project_python(
     try:
         result = subprocess.run(
             [str(python), "-c", _VALIDATE_SCRIPT],
-            cwd=str((project_root or Path.cwd()).resolve()),
+            cwd=str(resolve_project_root(project_root)),
             capture_output=True,
             text=True,
             check=False,
@@ -419,10 +419,27 @@ def validate_project_python(
     return project_version
 
 
+def resolve_project_root(explicit: Path | None = None) -> Path:
+    """Return the explicit root, else the nearest ``m3.toml`` directory above cwd.
+
+    The walk stops after checking a directory that contains ``.git``; without an
+    ``m3.toml`` the current directory is the root.
+    """
+    if explicit is not None:
+        return explicit.expanduser().resolve()
+    start = Path.cwd().resolve()
+    for directory in (start, *start.parents):
+        if (directory / "m3.toml").is_file():
+            return directory
+        if (directory / ".git").exists():
+            break
+    return start
+
+
 def _absolute_database(
     value: str | os.PathLike[str] | None, *, project_root: Path | None = None
 ) -> Path:
-    root = (project_root or Path.cwd()).resolve()
+    root = resolve_project_root(project_root)
     return (
         Path(value).expanduser() if value else root / ".m3" / "executions.sqlite"
     ).resolve()
@@ -434,7 +451,7 @@ def discover_env_file(
     """Return the selected dotenv file: explicit, else ``PROJECT_ROOT/.env``."""
     if env_file is not None:
         return Path(env_file).expanduser()
-    candidate = (project_root or Path.cwd()).resolve() / ".env"
+    candidate = resolve_project_root(project_root) / ".env"
     return candidate if candidate.is_file() else None
 
 
@@ -579,7 +596,7 @@ def baseline_exists(
                     str(run_id),
                     project_id or "",
                 ],
-                cwd=str((project_root or Path.cwd()).resolve()),
+                cwd=str(resolve_project_root(project_root)),
                 capture_output=True,
                 text=True,
                 check=False,
@@ -804,6 +821,7 @@ def pytest_command(
     *,
     baseline: str | None = None,
     project_root: Path | None = None,
+    explicit_root: bool = True,
     harnesses: Sequence[str] = (),
     server_selections: Sequence[Mapping[str, object]] = (),
     trials: int | None = None,
@@ -840,7 +858,11 @@ def pytest_command(
         )
     if project_root is not None:
         command.extend(("--project-root", str(project_root)))
-    if project_root is not None and not _has_rootdir_option(pytest_args):
+    if (
+        project_root is not None
+        and explicit_root
+        and not _has_rootdir_option(pytest_args)
+    ):
         command.extend(("--rootdir", str(project_root)))
     for value in harnesses:
         command.extend(("--harness", value))
@@ -929,6 +951,7 @@ def _run_pytest_process(
     *,
     baseline: str | None = None,
     project_root: Path | None = None,
+    explicit_root: bool = True,
     harnesses: Sequence[str] = (),
     server_selections: Sequence[Mapping[str, object]] = (),
     trials: int | None = None,
@@ -957,7 +980,7 @@ def _run_pytest_process(
                 flags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
                 if flags:
                     kwargs["creationflags"] = flags
-            if project_root is not None:
+            if project_root is not None and explicit_root:
                 kwargs["cwd"] = str(project_root)
             child_environment = (
                 dict(environment) if environment is not None else dict(os.environ)
@@ -990,6 +1013,7 @@ def _run_pytest_process(
                     pytest_args,
                     baseline=baseline,
                     project_root=project_root,
+                    explicit_root=explicit_root,
                     harnesses=harnesses,
                     server_selections=server_selections,
                     trials=trials,
@@ -1262,15 +1286,15 @@ def _history_database_error(database: Path) -> str | None:
     return None
 
 
-def run_ui(*, port: int = 8000) -> int:
-    """Serve existing history from the current directory without running pytest."""
+def run_ui(*, port: int = 8000, project_root: Path | None = None) -> int:
+    """Serve existing history from the project root without running pytest."""
 
-    database = Path.cwd() / ".m3" / "executions.sqlite"
+    database = resolve_project_root(project_root) / ".m3" / "executions.sqlite"
     error = _history_database_error(database)
     if error is not None:
         print(
             f"m3 ui: {error} at {database}; "
-            "run from the directory containing .m3/executions.sqlite",
+            "run from the project or pass --project-root",
             file=sys.stderr,
         )
         return OPERATIONAL_ERROR
@@ -1336,7 +1360,7 @@ def run_test_with_runs(
         if ui_error is not None:
             print(f"m3 test: {ui_error}", file=sys.stderr)
             return TestRunResult(OPERATIONAL_ERROR)
-    root = (project_root or Path.cwd()).resolve()
+    root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
     database_path = _absolute_database(database, project_root=root)
     try:
@@ -1397,6 +1421,7 @@ def run_test_with_runs(
         pytest_args,
         baseline=baseline,
         project_root=root,
+        explicit_root=project_root is not None,
         harnesses=harnesses,
         server_selections=server_selections,
         trials=trials,
@@ -1500,7 +1525,7 @@ def run_test(
             run_id=run_id,
             ci_metadata=ci_metadata,
         ).exit_code
-    root = (project_root or Path.cwd()).resolve()
+    root = resolve_project_root(project_root)
     prepared = _prepare_test(python, database, root)
     if prepared is None:
         return OPERATIONAL_ERROR
@@ -1526,6 +1551,7 @@ def run_test(
         pytest_args,
         baseline=baseline,
         project_root=root,
+        explicit_root=project_root is not None,
         harnesses=harnesses,
         server_selections=server_selections,
         trials=trials,
@@ -1562,6 +1588,7 @@ __all__ = [
     "list_stored_runs",
     "pytest_command",
     "resolve_project_python",
+    "resolve_project_root",
     "run_ci_test",
     "run_test",
     "run_test_with_runs",

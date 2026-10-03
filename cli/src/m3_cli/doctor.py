@@ -223,10 +223,11 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         ProjectPythonError,
         discover_env_file,
         resolve_project_python,
+        resolve_project_root,
         validate_project_python,
     )
 
-    root = (args.project_root or Path.cwd()).resolve()
+    root = resolve_project_root(args.project_root)
     environment = (
         _read_selected_environment(discover_env_file(args.env_file, root))
         if any(kind == "config" for kind, _ in requirements)

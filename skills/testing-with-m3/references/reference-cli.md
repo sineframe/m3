@@ -41,7 +41,9 @@ Install the matching SDK with pytest, storage, and judge support into an
 isolated project environment. It does not install the CLI there or update a
 dependency manifest or lockfile.
 
-Options: `--project-root PATH`, `--python PATH`, `--no-skill`.
+Options: `--project-root PATH`, `--python PATH`, `--no-skill`. Without
+`--project-root`, the project root is the nearest `m3.toml` at or above the
+current directory, stopping at the Git root; otherwise the current directory.
 
 On success, it installs or updates the `testing-with-m3` agent skill; see
 [Install the M3 agent skill](https://m3.sineframe.com/docs/guides/agents/skill).
@@ -50,8 +52,10 @@ On success, it installs or updates the `testing-with-m3` agent skill; see
 
 Check requested project capabilities. Repeat `--require KIND:TARGET` for
 configuration, binaries, harnesses, protocol, transport, or storage. Use
-`--json` for machine-readable output. Configuration checks load the project
-root `.env` automatically; `--env-file PATH` selects a custom file instead.
+`--json` for machine-readable output. `--project-root PATH` defaults to the
+nearest `m3.toml` at or above the current directory, stopping at the Git root;
+otherwise the current directory. Configuration checks load the project root
+`.env` automatically; `--env-file PATH` selects a custom file instead.
 
 ## `m3 test`
 
@@ -59,9 +63,9 @@ Run pytest in the project environment and save M3 history.
 
 | Option | Default/effect |
 | --- | --- |
-| `--project-root PATH` | Git root or current project. |
+| `--project-root PATH` | Nearest `m3.toml` at or above the current directory, stopping at the Git root; otherwise the current directory. |
 | `--python PATH` | Selected project interpreter. |
-| `--results-db PATH` | `.m3/executions.sqlite`. |
+| `--results-db PATH` | `.m3/executions.sqlite` under the project root. |
 | `--baseline RUN_ID` | Read an earlier run from the same database for comparison. |
 | `--harness KIND[@VERSION]=MODEL[,MODEL...]` | Add a harness/model selection. Repeatable. |
 | `--runtime system\|managed` | `system`. |
@@ -72,7 +76,7 @@ Run pytest in the project environment and save M3 history.
 | `--execution-timeout SECONDS` | Deadline for each selected agent execution. Defaults to 180. A `timeout=` passed to `agent.run()`, `agent.submit()`, or `agent.session()` takes precedence over this flag. |
 | `--judge-max-requests N` | Judge request budget for the run. |
 | `--credential-env [KIND:]TARGET=SOURCE` | Map a credential variable. Repeatable. |
-| `--env-file PATH` | Project root `.env` when present; otherwise none. Pass a path to load a custom dotenv file instead. |
+| `--env-file PATH` | `.env` in the project root when present; otherwise none. Pass a path to load a custom dotenv file instead. |
 | `--upload` | Publish the run; see [Publishing](#publishing). Cannot be combined with `--ui`. |
 | `--ui` | Open the bundled viewer after pytest. |
 | `--port PORT` | Viewer port; `8000` by default. |
@@ -113,7 +117,10 @@ Neither command passes `M3_ACCESS_TOKEN` to pytest.
 
 Publish a run started with `--upload` that was not published, without
 rerunning tests. Options: `--project-root`, `--results-db`, and `--env-file`.
-The project root `.env` is loaded automatically when `--env-file` is omitted.
+Without `--project-root`, the project root is the nearest `m3.toml` at or above
+the current directory, stopping at the Git root; otherwise the current
+directory. Its `.env` is loaded automatically when `--env-file` is omitted, and
+`--results-db` defaults to `.m3/executions.sqlite` under it.
 
 The run must meet all of these conditions:
 
@@ -135,9 +142,11 @@ m3 upload: run RUN_ID cannot be uploaded: it was not started with --upload, pyte
 
 ## `m3 ui`
 
-Open history from the default database in the current project without running
-pytest. `--port PORT` changes the loopback port. It does not accept a custom
-database path.
+Open history from `.m3/executions.sqlite` under the project root without running
+pytest. `--project-root PATH` selects the project; by default it is the nearest
+`m3.toml` at or above the current directory, stopping at the Git root;
+otherwise the current directory. `--port PORT` changes the loopback port. It
+does not accept a custom database path.
 
 ## `m3 auth`
 
@@ -152,7 +161,9 @@ revoke or remove `M3_ACCESS_TOKEN`.
 ## `m3 runtime cache`
 
 `list` shows managed harness assets. `prune` removes unused assets. Both accept
-`--cache-dir` (also `--harness-cache-dir`) and `--project-root`.
+`--cache-dir` (also `--harness-cache-dir`) and `--project-root`; the project
+root defaults to the nearest `m3.toml` at or above the current directory,
+stopping at the Git root, otherwise the current directory.
 
 Use `list` to inspect downloaded versions and `prune` when you want to reclaim
 disk space. Cleanup is optional; later tests download pruned runtimes again.

@@ -317,7 +317,9 @@ def _install_sdk(target: EnvironmentTarget, version: str) -> str:
 
 
 def run(args: Any) -> int:
-    root = (args.project_root or Path.cwd()).resolve()
+    from .supervisor import resolve_project_root
+
+    root = resolve_project_root(args.project_root)
     version = _cli_version()
     target = resolve_target(root, args.python)
     print(f"Installing M3 SDK {version}")

@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -175,11 +175,10 @@ class _Process:
         return self.returncode
 
 
-def test_ui_command_rejects_database_and_project_overrides() -> None:
+def test_ui_command_rejects_database_override() -> None:
     parser = main.__module__
     assert parser == "m3_cli.main"
     assert main(["ui", "--results-db", "other.sqlite"]) == 2
-    assert main(["ui", "--project-root", "other"]) == 2
 
 
 def test_old_port_flags_are_rejected(capsys: pytest.CaptureFixture[str]) -> None:
@@ -424,7 +423,9 @@ def test_ui_from_uninitialized_directory_does_not_create_history(
         lambda *_args, **_kwargs: pytest.fail("UI started"),
     )
     assert main(["ui"]) == 2
-    assert ".m3/executions.sqlite" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert ".m3/executions.sqlite" in error
+    assert "pass --project-root" in error
     assert not (tmp_path / ".m3").exists()
 
 
@@ -1477,3 +1478,222 @@ def test_pytest_exit_code_is_forwarded(
         supervisor.subprocess, "Popen", lambda *_args, **_kwargs: process
     )
     assert supervisor.run_test(project_root=tmp_path) == code
+
+
+def _project_with_subdirectory(tmp_path: Path) -> tuple[Path, Path]:
+    root = tmp_path / "project"
+    subdirectory = root / "tests" / "nested"
+    subdirectory.mkdir(parents=True)
+    (root / ".git").mkdir()
+    (root / "m3.toml").write_text(
+        'schema_version = 1\nproject_id = "11111111-1111-4111-8111-111111111111"\n'
+        'project_name = "demo"\n',
+        encoding="utf-8",
+    )
+    return root, subdirectory
+
+
+def _stub_project_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        supervisor,
+        "resolve_project_python",
+        lambda *_args, **_kwargs: Path(sys.executable),
+    )
+    monkeypatch.setattr(
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
+    )
+
+
+def test_resolve_project_root_finds_m3_toml_above_the_subdirectory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, subdirectory = _project_with_subdirectory(tmp_path)
+    monkeypatch.chdir(subdirectory)
+    assert supervisor.resolve_project_root() == root.resolve()
+
+
+def test_resolve_project_root_falls_back_to_cwd_without_m3_toml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".git").mkdir()
+    subdirectory = tmp_path / "a"
+    subdirectory.mkdir()
+    monkeypatch.chdir(subdirectory)
+    assert supervisor.resolve_project_root() == subdirectory.resolve()
+
+
+def test_resolve_project_root_stops_at_the_git_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "m3.toml").write_text("", encoding="utf-8")
+    repository = tmp_path / "repo"
+    subdirectory = repository / "pkg"
+    subdirectory.mkdir(parents=True)
+    (repository / ".git").mkdir()
+    monkeypatch.chdir(subdirectory)
+    assert supervisor.resolve_project_root() == subdirectory.resolve()
+
+
+def test_resolve_project_root_checks_the_git_root_before_stopping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, subdirectory = _project_with_subdirectory(tmp_path)
+    assert (root / ".git").is_dir()
+    monkeypatch.chdir(subdirectory)
+    assert supervisor.resolve_project_root() == root.resolve()
+
+
+def test_resolve_project_root_prefers_the_explicit_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _root, subdirectory = _project_with_subdirectory(tmp_path)
+    monkeypatch.chdir(subdirectory)
+    other = tmp_path / "other"
+    other.mkdir()
+    assert supervisor.resolve_project_root(other) == other.resolve()
+
+
+def test_pytest_command_omits_rootdir_for_a_discovered_root(tmp_path: Path) -> None:
+    command = supervisor.pytest_command(
+        Path("/project/.venv/bin/python"),
+        (tmp_path / "results.sqlite").resolve(),
+        ["-q"],
+        project_root=tmp_path,
+        explicit_root=False,
+    )
+    assert command[-3:] == ["--project-root", str(tmp_path), "-q"]
+    assert "--rootdir" not in command
+
+
+def test_test_from_subdirectory_uses_the_discovered_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, subdirectory = _project_with_subdirectory(tmp_path)
+    (root / ".env").write_text("M3_FROM_ROOT_ENV=yes\n", encoding="utf-8")
+    monkeypatch.chdir(subdirectory)
+    monkeypatch.delenv("M3_FROM_ROOT_ENV", raising=False)
+    _stub_project_python(monkeypatch)
+    seen: dict[str, Any] = {}
+
+    def spawn(command: list[str], **kwargs: Any) -> _Process:
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return _Process(0)
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", spawn)
+    assert main(["test", "--", "-q"]) == 0
+    command = seen["command"]
+    assert command[command.index("--project-root") + 1] == str(root.resolve())
+    assert "--rootdir" not in command
+    assert command[command.index("--results-db") + 1] == str(
+        root.resolve() / ".m3" / "executions.sqlite"
+    )
+    assert "cwd" not in seen["kwargs"]
+    assert seen["kwargs"]["env"]["M3_FROM_ROOT_ENV"] == "yes"
+    assert (root / ".m3").is_dir()
+    assert not (subdirectory / ".m3").exists()
+
+
+def test_explicit_project_root_keeps_child_cwd_and_rootdir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, subdirectory = _project_with_subdirectory(tmp_path)
+    monkeypatch.chdir(subdirectory)
+    _stub_project_python(monkeypatch)
+    seen: dict[str, Any] = {}
+
+    def spawn(command: list[str], **kwargs: Any) -> _Process:
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return _Process(0)
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", spawn)
+    assert main(["test", "--project-root", str(root), "--", "-q"]) == 0
+    command = seen["command"]
+    assert command[command.index("--rootdir") + 1] == str(root.resolve())
+    assert seen["kwargs"]["cwd"] == str(root.resolve())
+
+
+def test_real_subprocess_from_subdirectory_writes_feedback_under_the_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, subdirectory = _project_with_subdirectory(tmp_path)
+    (subdirectory / "test_one.py").write_text(
+        "import pytest\npytestmark = pytest.mark.m3(suite_name='supervisor')\n"
+        "def test_one():\n    pass\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(subdirectory)
+    result = supervisor.run_test_with_runs(
+        python=sys.executable, pytest_args=["-q", "test_one.py"]
+    )
+    assert result.exit_code == 0
+    assert result.project_root == root.resolve()
+    assert result.run_id is not None
+    assert (root / ".m3" / "executions.sqlite").is_file()
+    assert (root / ".m3" / "reports" / result.run_id / "feedback.json").is_file()
+    assert not (subdirectory / ".m3").exists()
+
+
+def test_ui_from_subdirectory_serves_the_root_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from m3.storage import SQLiteExecutionStore
+
+    root, subdirectory = _project_with_subdirectory(tmp_path)
+    database = root / ".m3" / "executions.sqlite"
+    SQLiteExecutionStore(database).close()
+    monkeypatch.chdir(subdirectory)
+    seen: list[Path] = []
+    monkeypatch.setattr(supervisor, "_validate_port", lambda _port: None)
+    monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
+    monkeypatch.setattr(
+        supervisor,
+        "_run_ui_server",
+        lambda path, *_args, **_kwargs: seen.append(path) or 0,
+    )
+    assert main(["ui"]) == 0
+    assert seen == [database.resolve()]
+
+
+def test_ui_accepts_project_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from m3.storage import SQLiteExecutionStore
+
+    root, _subdirectory = _project_with_subdirectory(tmp_path)
+    database = root / ".m3" / "executions.sqlite"
+    SQLiteExecutionStore(database).close()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    seen: list[Path] = []
+    monkeypatch.setattr(supervisor, "_validate_port", lambda _port: None)
+    monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
+    monkeypatch.setattr(
+        supervisor,
+        "_run_ui_server",
+        lambda path, *_args, **_kwargs: seen.append(path) or 0,
+    )
+    assert main(["ui", "--project-root", str(root)]) == 0
+    assert seen == [database.resolve()]
+
+
+def test_upload_from_subdirectory_uses_the_discovered_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import m3_cli.ci_upload as ci_upload
+
+    root, subdirectory = _project_with_subdirectory(tmp_path)
+    (root / ".env").write_text("M3_ACCESS_TOKEN=x\n", encoding="utf-8")
+    monkeypatch.chdir(subdirectory)
+    seen: dict[str, Any] = {}
+
+    def publish(run_id: str, **kwargs: Any) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(ci_upload, "publish_run", publish)
+    assert main(["upload", "run-1"]) == 0
+    assert seen["project_root"] == root.resolve()
+    assert seen["database"] == root.resolve() / ".m3" / "executions.sqlite"
+    assert seen["env_file"] == root.resolve() / ".env"

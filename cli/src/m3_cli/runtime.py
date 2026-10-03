@@ -18,9 +18,11 @@ from m3.runtime import resolve_cache_root as _sdk_resolve_cache_root
 def resolve_cache_root(
     override: str | os.PathLike[str] | None = None, *, project_root: Path | None = None
 ) -> Path:
+    from .supervisor import resolve_project_root
+
     return (
         _sdk_resolve_cache_root(
-            project_root or Path.cwd(),
+            resolve_project_root(project_root),
             cli_override=Path(override).expanduser() if override is not None else None,
         )
         .expanduser()

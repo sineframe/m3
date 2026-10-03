@@ -23,12 +23,13 @@ To open existing history without running tests:
 m3 ui
 ```
 
-Run `m3 ui` from the directory containing `.m3/executions.sqlite`. It currently
-uses that default path; a database selected with `m3 test --results-db PATH`
-cannot be supplied to `m3 ui`.
-`m3 ui` prints a tokenized `/reports` link. It never creates a database or
-searches parent directories, refuses missing or invalid history, and does not
-accept `--project-root`.
+`m3 ui` reads `.m3/executions.sqlite` under the project root: the nearest
+`m3.toml` at or above the current directory, stopping at the Git root, or the
+directory passed as `--project-root PATH`. It uses that default path; a
+database selected with `m3 test --results-db PATH` cannot be supplied to
+`m3 ui`.
+`m3 ui` prints a tokenized `/reports` link. It never creates a database and
+refuses missing or invalid history.
 
 The server binds to `127.0.0.1` and requires the launch token. Treat the
 printed URL as a credential while the process is running. Do not expose the

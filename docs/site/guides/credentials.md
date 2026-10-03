@@ -22,7 +22,7 @@ Credentials enter M3 under a source name and reach a child process under the nam
 
 ## Credential sources
 
-The SDK reads the process environment and does not load dotenv files. The CLI also reads the process environment and automatically loads `.env` from the project root (`--project-root`, or the current directory) when that file exists. Pass `--env-file PATH` to load a custom file instead.
+The SDK reads the process environment and does not load dotenv files. The CLI also reads the process environment and automatically loads `.env` from the project root (`--project-root`, or the nearest `m3.toml` at or above the current directory, stopping at the Git root, otherwise the current directory) when that file exists. Pass `--env-file PATH` to load a custom file instead.
 
 When an environment file is loaded, values already present in the process environment take precedence, including empty values. File values fill names absent from the process environment. Values in the file are not interpolated. If an ambient variable is set but empty, M3 will not replace it with the non-empty value from the file.
 
