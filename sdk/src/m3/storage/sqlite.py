@@ -1503,13 +1503,15 @@ class _SqliteBase:
         Pooled connections keep the WAL open, so without this the database
         file alone would lack recent commits after the store closes. Other
         processes may hold readers, so a busy or locked database is not an
-        error.
+        error, and closing never waits for them.
         """
         if self.journal_mode != "wal":
             return
         try:
-            with self._engine.connect() as connection:
-                connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+            with self._connect() as connection:
+                connection.mark_settings_dirty()
+                connection.execute("PRAGMA busy_timeout=0")
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except Exception:
             pass
 

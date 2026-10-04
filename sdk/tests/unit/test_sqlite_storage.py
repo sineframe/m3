@@ -1720,14 +1720,17 @@ def test_close_leaves_a_self_contained_database_file(tmp_path: Path) -> None:
 
 def test_close_tolerates_a_reader_blocking_the_checkpoint(tmp_path: Path) -> None:
     store = SQLiteExecutionStore(
-        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", busy_timeout_ms=50
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", busy_timeout_ms=5000
     )
     _created(store, "blocked")
     reader = sqlite3.connect(tmp_path / "m3.sqlite")
     try:
         reader.execute("BEGIN")
         reader.execute("SELECT COUNT(*) FROM v2_executions").fetchone()
+        started = time.monotonic()
         store.close()
+        # Closing must not wait out the busy timeout for another reader.
+        assert time.monotonic() - started < 1.0
     finally:
         reader.close()
 
