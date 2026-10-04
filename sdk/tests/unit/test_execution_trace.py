@@ -17,8 +17,10 @@ from m3.execution_trace import (
 )
 from m3.storage import (
     InMemoryExecutionStore,
+    SequenceConflict,
     SQLiteExecutionStore,
     StorageConflict,
+    TerminalConflict,
 )
 from m3.trace.redaction import REDACTED, RedactionConfig, RedactionError
 from m3.types import (
@@ -423,7 +425,7 @@ def test_concurrent_emits_are_serialized_into_one_contiguous_trace() -> None:
     assert [event.sequence for event in recorder.events()] == list(range(13))
 
 
-def test_failed_emit_releases_its_reservation_for_the_next_producer() -> None:
+def test_failed_emit_does_not_consume_a_sequence() -> None:
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-release")
     with pytest.raises(TraceRecorderError):
         recorder.emit(
@@ -433,6 +435,299 @@ def test_failed_emit_releases_its_reservation_for_the_next_producer() -> None:
     event = recorder.emit(EventKind.DIAGNOSTIC, payload={"after": "failure"})
     assert event.sequence == 1
     assert [item.sequence for item in recorder.events()] == [0, 1]
+
+
+class _SpyStore:
+    """Delegate to a real store and count the calls a hot path must not make."""
+
+    _WATCHED = frozenset(
+        {
+            "allocate",
+            "allocate_sequence",
+            "allocate_sequences",
+            "release",
+            "iter_events",
+            "events",
+            "get_snapshot",
+        }
+    )
+
+    def __init__(self, store: InMemoryExecutionStore | SQLiteExecutionStore) -> None:
+        self._store = store
+        self.calls: list[str] = []
+
+    def __getattr__(self, name: str) -> object:
+        attribute = getattr(self._store, name)
+        if name not in self._WATCHED:
+            return attribute
+
+        def spy(*args: object, **kwargs: object) -> object:
+            self.calls.append(name)
+            return attribute(*args, **kwargs)
+
+        return spy
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_emit_does_not_reserve_sequences_or_reload_history(
+    backend: str, tmp_path: Path
+) -> None:
+    store = (
+        InMemoryExecutionStore()
+        if backend == "memory"
+        else SQLiteExecutionStore(tmp_path / "spy.sqlite")
+    )
+    spy = _SpyStore(store)
+    recorder = ExecutionTraceRecorder(spy, "execution-spy")  # type: ignore[arg-type]
+    spy.calls.clear()
+    events = [
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"index": index})
+        for index in range(5)
+    ]
+    recorder.add_limitation("capture_incomplete")
+    assert [event.sequence for event in events] == [1, 2, 3, 4, 5]
+    assert spy.calls == []
+    assert [event.sequence for event in store.events("execution-spy")] == list(range(7))
+
+
+def _backend_store(
+    backend: str, tmp_path: Path
+) -> InMemoryExecutionStore | SQLiteExecutionStore:
+    if backend == "memory":
+        return InMemoryExecutionStore()
+    return SQLiteExecutionStore(tmp_path / "backend.sqlite")
+
+
+def _diagnostic(execution_id: str, sequence: int, name: str) -> Event:
+    return Event(
+        event_id=EventId(name),
+        execution_id=ExecutionId(execution_id),
+        sequence=sequence,
+        kind=EventKind.DIAGNOSTIC,
+        monotonic_offset_ms=0.0,
+        payload={"holder": name},
+    )
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+@pytest.mark.parametrize("raw_evidence", [False, True])
+def test_emit_leaves_a_reserved_sequence_to_its_holder(
+    backend: str, raw_evidence: bool, tmp_path: Path
+) -> None:
+    store = _backend_store(backend, tmp_path)
+    recorder = ExecutionTraceRecorder(store, "execution-reserved")
+    (reserved,) = store.allocate("execution-reserved")
+    assert reserved == 1
+    for _ in range(2):
+        with pytest.raises(StorageConflict) as raised:
+            if raw_evidence:
+                recorder.emit(
+                    EventKind.DIAGNOSTIC,
+                    raw_evidence_content=b"raw",
+                    raw_evidence_media_type="text/plain",
+                )
+            else:
+                recorder.emit(EventKind.DIAGNOSTIC, payload={"name": "recorder"})
+        assert not isinstance(
+            raised.value, (SequenceConflict, TraceFinalizationConflict)
+        )
+    assert [event.sequence for event in store.events("execution-reserved")] == [0]
+    # The reservation survived: the next reservation steps over it.
+    (next_reserved,) = store.allocate("execution-reserved")
+    assert next_reserved == 2
+    store.release("execution-reserved", (next_reserved,))
+    store.append_events((_diagnostic("execution-reserved", reserved, "holder"),))
+    after = recorder.emit(EventKind.DIAGNOSTIC, payload={"name": "recorder"})
+    assert after.sequence == 2
+    assert [event.sequence for event in store.events("execution-reserved")] == [
+        0,
+        1,
+        2,
+    ]
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_record_still_commits_at_a_reserved_sequence(
+    backend: str, tmp_path: Path
+) -> None:
+    store = _backend_store(backend, tmp_path)
+    recorder = ExecutionTraceRecorder(store, "execution-record-reserved")
+    store.allocate("execution-record-reserved")
+    committed = recorder.record(_diagnostic("execution-record-reserved", 1, "direct"))
+    assert committed.sequence == 1
+
+
+class _ReservingStore:
+    """Expose only the public store protocol plus allocate and release."""
+
+    def __init__(self, store: InMemoryExecutionStore) -> None:
+        self._store = store
+        self.allocated: list[int] = []
+        self.released: list[int] = []
+
+    def __getattr__(self, name: str) -> object:
+        if name.startswith("_append"):
+            raise AttributeError(name)
+        return getattr(self._store, name)
+
+    def allocate_sequence(self, execution_id: str) -> int:
+        sequence = self._store.allocate_sequence(execution_id)
+        self.allocated.append(sequence)
+        return sequence
+
+    def release(self, execution_id: str, sequences: tuple[int, ...]) -> None:
+        self.released.extend(sequences)
+        self._store.release(execution_id, sequences)
+
+
+def test_store_without_reservation_check_keeps_the_reserve_then_append_protocol() -> (
+    None
+):
+    inner = InMemoryExecutionStore()
+    store = _ReservingStore(inner)
+    recorder = ExecutionTraceRecorder(store, "execution-third-party")  # type: ignore[arg-type]
+    first = recorder.emit(EventKind.DIAGNOSTIC, payload={"n": 1})
+    assert first.sequence == 1
+    (held,) = inner.allocate("execution-third-party")
+    assert held == 2
+    with pytest.raises(StorageConflict):
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"n": 2})
+    # The holder kept its slot and the recorder released only its own.
+    assert store.allocated[-1] == 3
+    assert store.released[-1] == 3
+    inner.append_events((_diagnostic("execution-third-party", held, "holder"),))
+    assert recorder.emit(EventKind.DIAGNOSTIC, payload={"n": 3}).sequence == 3
+
+
+def test_store_without_sequence_allocation_cannot_emit() -> None:
+    class Bare:
+        def __init__(self) -> None:
+            self._store = InMemoryExecutionStore()
+
+        def __getattr__(self, name: str) -> object:
+            if name.startswith(("_append", "allocate", "release")):
+                raise AttributeError(name)
+            return getattr(self._store, name)
+
+    with pytest.raises(TraceRecorderError, match="sequence allocation"):
+        ExecutionTraceRecorder(Bare(), "execution-bare")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+@pytest.mark.parametrize("already_added", [False, True])
+def test_add_limitation_reports_an_execution_another_writer_finished(
+    backend: str, already_added: bool, tmp_path: Path
+) -> None:
+    store = _backend_store(backend, tmp_path)
+    recorder = ExecutionTraceRecorder(store, "execution-limit-race")
+    if already_added:
+        recorder.add_limitation("capture_incomplete")
+    before = list(recorder._runtime_limitations)
+    other = ExecutionTraceRecorder(store, "execution-limit-race")
+    other.finalize(ExecutionOutcome.CANCELLED)
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.add_limitation(
+            "capture_incomplete" if already_added else "partial_trace"
+        )
+    assert recorder._runtime_limitations == before
+    events = store.events("execution-limit-race")
+    assert events[-1].kind is EventKind.EXECUTION_FINISHED
+    assert [event.sequence for event in events] == list(range(len(events)))
+
+
+def test_recorder_continues_after_a_conflicting_writer_without_losing_events(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "shared.sqlite"
+    first_store = SQLiteExecutionStore(database)
+    first = ExecutionTraceRecorder(first_store, "execution-two-writers")
+    second_store = SQLiteExecutionStore(database)
+    second = ExecutionTraceRecorder(second_store, "execution-two-writers")
+    emitted = [
+        first.emit(EventKind.DIAGNOSTIC, payload={"writer": "first", "n": 0}),
+        second.emit(EventKind.DIAGNOSTIC, payload={"writer": "second", "n": 0}),
+        first.emit(EventKind.DIAGNOSTIC, payload={"writer": "first", "n": 1}),
+        second.emit(EventKind.DIAGNOSTIC, payload={"writer": "second", "n": 1}),
+        first.emit(EventKind.DIAGNOSTIC, payload={"writer": "first", "n": 2}),
+    ]
+    assert [event.sequence for event in emitted] == [1, 2, 3, 4, 5]
+    committed = first_store.events("execution-two-writers")
+    assert [event.sequence for event in committed] == list(range(6))
+    assert [event.payload.get("writer") for event in committed[1:]] == [
+        "first",
+        "second",
+        "first",
+        "second",
+        "first",
+    ]
+
+
+def test_store_written_terminal_stops_emits_without_a_trailing_event(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "cancel.sqlite")
+    spy = _SpyStore(store)
+    recorder = ExecutionTraceRecorder(spy, "execution-store-terminal")  # type: ignore[arg-type]
+    recorder.emit(EventKind.DIAGNOSTIC, payload={"before": True})
+    assert store.request_cancel("execution-store-terminal", reason="stop")
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"after": True})
+    events = store.events("execution-store-terminal")
+    assert events[-1].kind is EventKind.EXECUTION_FINISHED
+    assert [event.sequence for event in events] == list(range(len(events)))
+    spy.calls.clear()
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"later": True})
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.add_limitation("capture_incomplete")
+    assert spy.calls == []
+    assert recorder.finalize(ExecutionOutcome.CANCELLED).events[-1].kind is (
+        EventKind.EXECUTION_FINISHED
+    )
+
+
+def _finish_elsewhere(
+    store: InMemoryExecutionStore | SQLiteExecutionStore, execution_id: str
+) -> None:
+    """Commit a terminal event the way a writer other than the recorder would."""
+    if isinstance(store, SQLiteExecutionStore):
+        assert store.request_cancel(execution_id, reason="stop")
+    else:
+        ExecutionTraceRecorder(store, execution_id).finalize(ExecutionOutcome.CANCELLED)
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_append_after_a_terminal_reports_it_at_a_stale_or_gap_sequence(
+    backend: str, tmp_path: Path
+) -> None:
+    store = _backend_store(backend, tmp_path)
+    ExecutionTraceRecorder(store, "execution-terminal-append")
+    _finish_elsewhere(store, "execution-terminal-append")
+    committed = store.events("execution-terminal-append")
+    used = committed[-1].sequence
+    for sequence in (used, used + 3):
+        with pytest.raises(TerminalConflict):
+            store.append_events(
+                (_diagnostic("execution-terminal-append", sequence, "late"),)
+            )
+    assert store.events("execution-terminal-append") == committed
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_record_at_a_stale_sequence_reports_a_store_written_terminal(
+    backend: str, tmp_path: Path
+) -> None:
+    store = _backend_store(backend, tmp_path)
+    recorder = ExecutionTraceRecorder(store, "execution-stale-terminal")
+    stale = recorder._next_sequence
+    _finish_elsewhere(store, "execution-stale-terminal")
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.record(_diagnostic("execution-stale-terminal", stale, "late"))
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"after": True})
+    events = store.events("execution-stale-terminal")
+    assert events[-1].kind is EventKind.EXECUTION_FINISHED
+    assert [event.sequence for event in events] == list(range(len(events)))
 
 
 def test_terminal_race_rejects_producer_after_finished_without_postterminal_event() -> (

@@ -42,6 +42,11 @@ def tool_call_count_after(
     return _mixed_request_count(requests)
 
 
+def has_tool_request(events: Sequence[Event]) -> bool:
+    """Report whether appending these events can change a stored count."""
+    return bool(_tool_requests(events))
+
+
 def _tool_requests(events: Sequence[Event]) -> list[Event]:
     return [
         event
@@ -131,4 +136,4 @@ def _mixed_request_count(events: Sequence[Event]) -> int:
     return len(descriptors) - merged
 
 
-__all__ = ["tool_call_count", "tool_call_count_after"]
+__all__ = ["has_tool_request", "tool_call_count", "tool_call_count_after"]

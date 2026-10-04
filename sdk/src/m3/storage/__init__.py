@@ -16,9 +16,11 @@ from .ephemeral import (
     InMemoryArtifactStore,
     InMemoryExecutionStore,
     ProfileResolver,
+    SequenceConflict,
     StorageConflict,
     StorageError,
     TemporaryArtifactStore,
+    TerminalConflict,
 )
 from .managed_input import (
     ManagedInputLease,
@@ -62,9 +64,11 @@ __all__ = [
     "SQLiteManagedInputStore",
     "SQLiteStore",
     "SQLiteStoreWorker",
+    "SequenceConflict",
     "StorageConflict",
     "StorageError",
     "TemporaryArtifactStore",
+    "TerminalConflict",
     "serialize_durable",
 ]
 

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import threading
 import uuid
 import warnings
@@ -48,7 +50,7 @@ from ..observability import (
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from ..suites import Suite, generated_suite_id, normalize_suite_name
-from ..trace.counts import tool_call_count, tool_call_count_after
+from ..trace.counts import has_tool_request, tool_call_count, tool_call_count_after
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -91,8 +93,10 @@ from .ephemeral import (
     BlobIntegrityError,
     EventCallback,
     ExecutionTransaction,
+    SequenceConflict,
     StorageConflict,
     StorageError,
+    TerminalConflict,
     _execution_key,
     _report_fields,
     run_sort_key,
@@ -127,12 +131,12 @@ def _sqlalchemy() -> Any:
     """Load SQLAlchemy only when the optional SQLite backend is selected."""
     try:
         from sqlalchemy import create_engine
-        from sqlalchemy.pool import NullPool
+        from sqlalchemy.pool import QueuePool
     except ImportError as exc:  # pragma: no cover - exercised in a minimal env
         raise ModuleNotFoundError(
             "SQLite storage requires the optional dependency; install sf-m3[storage]"
         ) from exc
-    return create_engine, NullPool
+    return create_engine, QueuePool
 
 
 def _is_database_error(exc: BaseException) -> bool:
@@ -177,6 +181,14 @@ class _CompatResult:
         return int(self._result.rowcount)
 
 
+# Key in a pooled connection's ``info`` marking per-connection settings
+# (busy timeout, foreign keys) that a caller changed and the pool must restore.
+_SETTINGS_DIRTY = "m3_settings_dirty"
+# Key holding the (device, inode) of the database file a connection opened.
+_DATABASE_IDENTITY = "m3_database_identity"
+_OWNER_PID = "m3_owner_pid"
+
+
 class _CompatConnection:
     """Keep the existing private SQL helpers while routing through SQLAlchemy."""
 
@@ -199,6 +211,10 @@ class _CompatConnection:
     @property
     def in_transaction(self) -> bool:
         return bool(self._connection.in_transaction())
+
+    def mark_settings_dirty(self) -> None:
+        """Flag the pooled connection so its settings are restored on return."""
+        self._connection.connection.info[_SETTINGS_DIRTY] = True
 
     def close(self) -> None:
         self._connection.close()
@@ -224,6 +240,9 @@ _QUEUE_LEASE_SECONDS = 30.0
 # Persisted tool-call counts are only valid for the trace projection that
 # produced them; a row stamped with another TraceView version is recomputed.
 _TRACE_VIEW_SCHEMA_VERSION = TraceView.model_fields["schema_version"].default
+
+# Keys of a complete stored execution snapshot.
+_SNAPSHOT_FIELDS = frozenset(ExecutionState.model_fields)
 
 
 def _cached_tool_call_counts(raw: str | None) -> tuple[int, int] | None:
@@ -512,12 +531,40 @@ CREATE TABLE IF NOT EXISTS v2_sequence_reservations (
 CREATE TABLE IF NOT EXISTS v2_judge_request_budgets (
   run_id TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS v2_schema_state (
+  id INTEGER PRIMARY KEY CHECK(id = 1), generation INTEGER NOT NULL
+);
 """
+
+
+# Recorded in the v2_schema_state row once a database has been through every
+# migration below. m3 never touches PRAGMA user_version: that value belongs to
+# the whole SQLite file, which another application may share. Bump it whenever SCHEMA, a column or index definition, or the
+# DDL of any migration in _SqliteBase._initialize changes, so databases marked
+# by an older SDK run the full initialization again. A marked database still
+# runs the read-only probes of the data migrations (the *_pending helpers next
+# to each migration), because an older SDK sharing the file never learns about
+# the mark and can keep writing rows those migrations exist for. A new data
+# migration needs a probe in _has_pending_backfill.
+_SCHEMA_GENERATION = 1
+# Fingerprint of SCHEMA and _SqliteBase._initialize as of _SCHEMA_GENERATION.
+# A unit test recomputes it, so a DDL change cannot ship without a new
+# generation.
+_SCHEMA_FINGERPRINT = "ad12d700b202e8bb8b8394b6ef1da468de90790dee0f0f98d52ba887ac95cd3c"
+
+
+_UNLABELED_RUNS = "run_label IS NULL"
+_UNPROJECTED_EVALUATIONS = "evaluator_name IS NULL OR status IS NULL"
 
 
 class _SqliteBase:
     _migrate_profiles_enabled = False
     _redaction_config: RedactionConfig
+    database: Path
+    busy_timeout_ms: int
+    wal_requested: bool
+    _init_lock: threading.Lock
+    _engine: Any
 
     def __init__(
         self,
@@ -525,7 +572,19 @@ class _SqliteBase:
         *,
         busy_timeout_ms: int = 5000,
         wal: bool = True,
+        _shared_from: _SqliteBase | None = None,
     ) -> None:
+        # A store built from another store uses that store's engine, so it
+        # shares the pool and listeners, and leaves schema setup and engine
+        # disposal to its owner.
+        self._shared_from = _shared_from
+        if _shared_from is not None:
+            self.database = _shared_from.database
+            self.busy_timeout_ms = _shared_from.busy_timeout_ms
+            self.wal_requested = _shared_from.wal_requested
+            self._init_lock = _shared_from._init_lock
+            self._engine = _shared_from._engine
+            return
         raw = str(database)
         if raw.startswith("sqlite:///"):
             raw = raw.removeprefix("sqlite:///")
@@ -541,7 +600,10 @@ class _SqliteBase:
         self.wal_requested = wal
         self.journal_mode = "delete"
         self._init_lock = threading.Lock()
-        create_engine, null_pool = _sqlalchemy()
+        # The optional dependency is checked first so a missing install does
+        # not leave an empty database file behind.
+        create_engine, queue_pool = _sqlalchemy()
+        self._create_database_file()
         # SQLAlchemy is the owner of the SQLite DBAPI connection. AUTOCOMMIT
         # keeps PRAGMA setup and our explicit BEGIN/COMMIT boundaries intact;
         # write transactions still use SQLite's native BEGIN IMMEDIATE below.
@@ -552,64 +614,162 @@ class _SqliteBase:
                 "check_same_thread": False,
             },
             isolation_level="AUTOCOMMIT",
-            pool_pre_ping=True,
-            # Store connections are short-lived and the application may
-            # construct several isolated stores during tests. Avoid retaining
-            # idle descriptors in per-store pools; SQLite still serializes
-            # writes through its normal locking semantics.
-            poolclass=null_pool,
+            # Opening a SQLite connection and applying its settings is far
+            # costlier than a query, so connections are pooled and configured
+            # once. The idle pool is capped, and close() disposes it so stores
+            # do not leave descriptors behind. Overflow is unlimited because a
+            # store method may hold a connection while a helper checks out a
+            # second one; a checkout must never wait on the pool.
+            poolclass=queue_pool,
+            pool_size=4,
+            max_overflow=-1,
+            pool_reset_on_return="rollback",
         )
         from sqlalchemy import event
 
-        event.listen(self._engine, "connect", _register_run_search)
+        event.listen(self._engine, "do_connect", self._refuse_symlinks)
+        event.listen(self._engine, "connect", self._configure_connection)
+        event.listen(self._engine, "checkout", self._verify_database_identity)
+        event.listen(self._engine, "reset", self._restore_settings)
         with _timing.span("store.open", key=type(self).__name__):
             self._initialize()
 
-    @_timing.counted("store.connect")
-    def _connect(self) -> _CompatConnection:
+    @property
+    def journal_mode(self) -> str:
+        if self._shared_from is not None:
+            return self._shared_from.journal_mode
+        return self._journal_mode
+
+    @journal_mode.setter
+    def journal_mode(self, value: str) -> None:
+        self._journal_mode = value
+
+    def _create_database_file(self) -> None:
+        # SQLite gives the WAL and SHM files the database file's permission
+        # bits, so the database must be created private before SQLite sees it.
+        if self.database.exists():
+            return
+        try:
+            fd = os.open(
+                self.database,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+        except FileExistsError:
+            return
+        os.close(fd)
+
+    def _refuse_symlinks(
+        self, _dialect: Any, _record: Any, _args: Any, _kwargs: Any
+    ) -> None:
         # SQLite follows a database symlink (and WAL/SHM symlinks) before this
-        # method gets a chance to write.  Refuse those paths before opening.
+        # store gets a chance to write.  Refuse those paths before opening.
         if _has_symlink_component(self.database) or any(
             Path(f"{self.database}{suffix}").is_symlink() for suffix in ("-wal", "-shm")
         ):
             raise StorageError("database or journal path must not contain symlinks")
-        connection: _CompatConnection | None = None
+
+    def _configure_connection(self, dbapi_connection: Any, record: Any) -> None:
+        """Apply per-connection settings once, when the driver connection opens."""
+        with _timing.count("store.dbapi_connect"):
+            try:
+                self._configure_new_connection(dbapi_connection, record)
+            except BaseException:
+                dbapi_connection.close()
+                raise
+
+    def _configure_new_connection(self, dbapi_connection: Any, record: Any) -> None:
+        _register_run_search(dbapi_connection, record)
+        cursor = dbapi_connection.cursor()
         try:
-            connection = _CompatConnection(self._engine.connect())
-            connection.execute("PRAGMA foreign_keys=ON")
-            connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-            if self.wal_requested:
-                result = connection.execute("PRAGMA journal_mode=WAL").fetchone()
-                if result:
-                    self.journal_mode = str(result[0]).lower()
-            else:
-                result = connection.execute("PRAGMA journal_mode").fetchone()
-                if result:
-                    self.journal_mode = str(result[0]).lower()
-            # Metadata and WAL/SHM files can contain sensitive redacted
-            # evidence.  Tighten modes on every open, including files created
-            # by SQLite after the connection was established.
-            for path in (
-                self.database,
-                Path(f"{self.database}-wal"),
-                Path(f"{self.database}-shm"),
-            ):
-                if path.is_symlink():
-                    raise StorageError("database or journal path must not be a symlink")
-                if path.exists():
-                    if not path.is_file():
-                        raise StorageError(
-                            "database or journal path must name a regular file"
-                        )
-                    path.chmod(0o600)
-            return connection
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+            # Request WAL on every new connection: a lost lock race silently
+            # leaves the previous mode in place and reports it here.
+            pragma = (
+                "PRAGMA journal_mode=WAL"
+                if self.wal_requested
+                else ("PRAGMA journal_mode")
+            )
+            result = cursor.execute(pragma).fetchone()
+            if result:
+                self.journal_mode = str(result[0]).lower()
+            if self.journal_mode == "wal":
+                # Commits skip the per-commit fsync. An application crash
+                # loses nothing; a power loss or OS crash can lose the most
+                # recent commits but never corrupts the database.
+                cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
+        # Metadata and WAL/SHM files can contain sensitive redacted
+        # evidence.  Tighten modes on every open, including files created
+        # by SQLite after the connection was established.
+        for path in (
+            self.database,
+            Path(f"{self.database}-wal"),
+            Path(f"{self.database}-shm"),
+        ):
+            if path.is_symlink():
+                raise StorageError("database or journal path must not be a symlink")
+            if path.exists():
+                if not path.is_file():
+                    raise StorageError(
+                        "database or journal path must name a regular file"
+                    )
+                path.chmod(0o600)
+        status = os.stat(self.database)
+        record.info[_DATABASE_IDENTITY] = (status.st_dev, status.st_ino)
+        record.info[_OWNER_PID] = os.getpid()
+
+    def _verify_database_identity(
+        self, _dbapi_connection: Any, record: Any, proxy: Any
+    ) -> None:
+        """Discard a pooled connection that is inherited or names another file."""
+        if record.info.get(_OWNER_PID) != os.getpid():
+            # A forked child inherits the parent's driver connections, which
+            # must not be used or closed from the child. Detaching them makes
+            # the pool open a fresh connection without touching the parent's.
+            from sqlalchemy.exc import DisconnectionError
+
+            record.dbapi_connection = proxy.dbapi_connection = None
+            raise DisconnectionError("connection belongs to another process")
+        try:
+            status = os.lstat(self.database)
+            current: tuple[int, int] | None = (status.st_dev, status.st_ino)
+            if stat.S_ISLNK(status.st_mode):
+                current = None
+        except OSError:
+            current = None
+        if current is None or current != record.info.get(_DATABASE_IDENTITY):
+            from sqlalchemy.exc import DisconnectionError
+
+            raise DisconnectionError("database file was replaced or removed")
+
+    def _restore_settings(
+        self, dbapi_connection: Any, record: Any, reset_state: Any
+    ) -> None:
+        """Undo per-connection settings a caller changed before pool reuse."""
+        if not record.info.pop(_SETTINGS_DIRTY, False) or getattr(
+            reset_state, "terminate_only", False
+        ):
+            return
+        # PRAGMA foreign_keys is a no-op inside a transaction, so end any
+        # transaction a caller left open first.
+        dbapi_connection.rollback()
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+        finally:
+            cursor.close()
+
+    @_timing.counted("store.connect")
+    def _connect(self) -> _CompatConnection:
+        try:
+            return _CompatConnection(self._engine.connect())
         except StorageError:
-            if connection is not None:
-                connection.close()
             raise
         except Exception as exc:
-            if connection is not None:
-                connection.close()
             if _is_database_error(exc):
                 raise StorageError("database is unavailable") from None
             raise
@@ -617,6 +777,14 @@ class _SqliteBase:
     def _initialize(self) -> None:
         try:
             with self._init_lock, self._connect() as connection:
+                # A database that has been through every migration is current
+                # unless an older SDK has since written rows that still need a
+                # data migration; skipping the rest also avoids the write lock
+                # the run-label backfill takes on every open.
+                if self._schema_generation(
+                    connection
+                ) >= _SCHEMA_GENERATION and not self._has_pending_backfill(connection):
+                    return
                 connection.executescript(SCHEMA)
                 self._migrate_suite_uniqueness(connection)
                 # CREATE TABLE IF NOT EXISTS deliberately does not evolve an
@@ -651,7 +819,7 @@ class _SqliteBase:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     rows = connection.execute(
-                        "SELECT run_id FROM v2_test_runs WHERE run_label IS NULL "
+                        f"SELECT run_id FROM v2_test_runs WHERE {_UNLABELED_RUNS} "
                         "ORDER BY created_at, run_id"
                     ).fetchall()
                     for row in rows:
@@ -706,12 +874,62 @@ class _SqliteBase:
                 profile_migrate = getattr(self, "_migrate_legacy_profiles", None)
                 if self._migrate_profiles_enabled and callable(profile_migrate):
                     profile_migrate(connection)
+                    # Only a store that ran every migration may mark the
+                    # database current; an artifact store skips the profile
+                    # migrations.
+                    connection.execute(
+                        "INSERT INTO v2_schema_state(id, generation) VALUES(1, ?) "
+                        "ON CONFLICT(id) DO UPDATE SET generation=excluded.generation",
+                        (_SCHEMA_GENERATION,),
+                    )
         except StorageError:
             raise
         except Exception as exc:
             if _is_database_error(exc):
                 raise StorageError("database initialization failed") from None
             raise
+
+    @staticmethod
+    def _schema_generation(connection: _CompatConnection) -> int:
+        """Return the recorded generation, or 0 for a database never marked."""
+        # Look the table up first: a failed SELECT would raise through the
+        # driver instead of reporting an unmarked database.
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='v2_schema_state'"
+            ).fetchone()
+            is None
+        ):
+            return 0
+        row = connection.execute(
+            "SELECT generation FROM v2_schema_state WHERE id=1"
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def _has_pending_backfill(self, connection: _CompatConnection) -> bool:
+        """Report, without writing, whether any data migration has work to do.
+
+        The probes over-approximate: a row a migration cannot import (a
+        malformed legacy evaluation, a legacy profile that conflicts with a v2
+        one) keeps reporting work, which only costs a full initialization.
+        """
+        return (
+            self._suite_uniqueness_pending(connection)
+            or self._test_result_suites_pending(connection)
+            or connection.execute(
+                f"SELECT 1 FROM v2_test_runs WHERE {_UNLABELED_RUNS} LIMIT 1"
+            ).fetchone()
+            is not None
+            or connection.execute(
+                f"SELECT 1 FROM v2_evaluations WHERE {_UNPROJECTED_EVALUATIONS} LIMIT 1"
+            ).fetchone()
+            is not None
+            or (
+                self._migrate_profiles_enabled
+                and self._legacy_profiles_pending(connection)
+            )
+        )
 
     @staticmethod
     def _assign_run_label(connection: _CompatConnection, run_id: str) -> str:
@@ -736,14 +954,19 @@ class _SqliteBase:
         raise StorageError("run label could not be assigned")
 
     @staticmethod
-    def _migrate_suite_uniqueness(connection: _CompatConnection) -> None:
-        """Remove the legacy database-wide suite-name constraint safely."""
+    def _suite_uniqueness_pending(connection: _CompatConnection) -> bool:
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='v2_suites'"
         ).fetchone()
         definition = "" if row is None else str(row[0] or "")
-        if "suite_name text not null unique" not in definition.lower():
+        return "suite_name text not null unique" in definition.lower()
+
+    @staticmethod
+    def _migrate_suite_uniqueness(connection: _CompatConnection) -> None:
+        """Remove the legacy database-wide suite-name constraint safely."""
+        if not _SqliteBase._suite_uniqueness_pending(connection):
             return
+        connection.mark_settings_dirty()
         connection.execute("PRAGMA foreign_keys=OFF")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -806,10 +1029,14 @@ class _SqliteBase:
         )
         return Suite(SuiteId(next_id), normalized, normalized, project)
 
+    @staticmethod
+    def _test_result_suites_pending(connection: _CompatConnection) -> bool:
+        columns = connection.execute("PRAGMA table_info(v2_test_results)").fetchall()
+        return not any(str(row[1]) == "suite_id" and int(row[3]) for row in columns)
+
     def _migrate_test_result_suites(self, connection: _CompatConnection) -> None:
         """Preserve old attempts while making every new attempt reference a suite."""
-        columns = connection.execute("PRAGMA table_info(v2_test_results)").fetchall()
-        if any(str(row[1]) == "suite_id" and int(row[3]) for row in columns):
+        if not self._test_result_suites_pending(connection):
             return
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -921,7 +1148,7 @@ class _SqliteBase:
         """Best-effort projection of pre-v2.1 evaluation JSON."""
         rows = connection.execute(
             "SELECT id,execution_id,result_json,created_at,evaluator_name,status,score,run_id "
-            "FROM v2_evaluations WHERE evaluator_name IS NULL OR status IS NULL"
+            f"FROM v2_evaluations WHERE {_UNPROJECTED_EVALUATIONS}"
         ).fetchall()
         for row in rows:
             try:
@@ -1013,6 +1240,31 @@ class _SqliteBase:
             except Exception:
                 # Malformed legacy input must not make the database unusable.
                 continue
+
+    @staticmethod
+    def _legacy_profiles_pending(connection: _CompatConnection) -> bool:
+        """Whether a legacy profile row has no v2 profile with the same ID."""
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        for kind, profile_table, revision_table in (
+            ("server", "mcp_profiles", "mcp_profile_revisions"),
+            ("harness", "harness_profiles", "harness_profile_revisions"),
+        ):
+            if profile_table not in tables or revision_table not in tables:
+                continue
+            if (
+                connection.execute(
+                    f"SELECT 1 FROM {profile_table} AS legacy WHERE NOT EXISTS "
+                    f"(SELECT 1 FROM v2_{kind}_profiles WHERE id=legacy.id) LIMIT 1"
+                ).fetchone()
+                is not None
+            ):
+                return True
+        return False
 
     def _migrate_legacy_profiles(self, connection: _CompatConnection) -> None:
         self._begin(connection, immediate=True)
@@ -1262,7 +1514,27 @@ class _SqliteBase:
 
     def close(self) -> None:
         """Dispose SQLAlchemy's pool and release all DBAPI connections."""
-        self._engine.dispose()
+        if self._shared_from is None:
+            self._checkpoint_wal()
+            self._engine.dispose()
+
+    def _checkpoint_wal(self) -> None:
+        """Fold the WAL into the database so the bare file holds every commit.
+
+        Pooled connections keep the WAL open, so without this the database
+        file alone would lack recent commits after the store closes. Other
+        processes may hold readers, so a busy or locked database is not an
+        error, and closing never waits for them.
+        """
+        if self.journal_mode != "wal":
+            return
+        try:
+            with self._connect() as connection:
+                connection.mark_settings_dirty()
+                connection.execute("PRAGMA busy_timeout=0")
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass
 
 
 class SQLiteArtifactStore(_SqliteBase):
@@ -1530,6 +1802,65 @@ class _SqliteBatch(AbstractContextManager["_SqliteBatch"]):
         return None
 
 
+def _fold_snapshot(
+    existing: ExecutionState,
+    events: Sequence[Event],
+    *,
+    sequence: int,
+    tool_calls: int,
+) -> ExecutionState:
+    """Apply events to a snapshot's lifecycle, timestamps and agent identity."""
+    lifecycle, outcome = existing.lifecycle, existing.outcome
+    created_at, finished_at = existing.created_at, existing.finished_at
+    for event in events:
+        if event.kind is EventKind.EXECUTION_CREATED:
+            if lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
+            created_at, lifecycle, outcome, finished_at = (
+                event.timestamp,
+                ExecutionStatus.CREATED,
+                None,
+                None,
+            )
+        elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
+            if lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
+            try:
+                next_lifecycle = ExecutionStatus(
+                    event.payload.get("lifecycle", event.payload.get("state"))
+                )
+            except (TypeError, ValueError):
+                raise StorageConflict("execution state payload is invalid") from None
+            if next_lifecycle is ExecutionStatus.FINISHED:
+                raise StorageConflict(
+                    "execution state event cannot finish an execution"
+                )
+            lifecycle = next_lifecycle
+        elif event.kind is EventKind.EXECUTION_FINISHED:
+            if lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
+            try:
+                outcome = ExecutionOutcome(event.payload["outcome"])
+            except (KeyError, TypeError, ValueError):
+                raise StorageConflict("execution terminal payload is invalid") from None
+            lifecycle, finished_at = ExecutionStatus.FINISHED, event.timestamp
+    return ExecutionState(
+        execution_id=existing.execution_id,
+        project_id=existing.project_id,
+        run_id=existing.run_id,
+        suite_id=existing.suite_id,
+        suite_name=existing.suite_name,
+        lifecycle=lifecycle,
+        outcome=outcome,
+        sequence=sequence,
+        tool_call_count=tool_calls,
+        created_at=created_at,
+        finished_at=finished_at,
+        provenance=existing.provenance,
+        agent=project_agent_identity(events, existing.agent),
+    )
+
+
 class SQLiteExecutionStore(_SqliteBase):
     """SQLite implementation of the public :class:`ExecutionStore` protocol."""
 
@@ -1578,8 +1909,7 @@ class SQLiteExecutionStore(_SqliteBase):
             self.database,
             blob_root,
             config=self._redaction_config,
-            busy_timeout_ms=self.busy_timeout_ms,
-            wal=False,
+            _shared_from=self,
         )
         self.payload_blob_threshold = payload_blob_threshold
         self._callbacks: dict[str, list[EventCallback]] = {}
@@ -2109,19 +2439,33 @@ class SQLiteExecutionStore(_SqliteBase):
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
         key = _execution_key(execution_id)
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
-                (key,),
-            ).fetchone()
+            return self._read_snapshot(connection, key)
+
+    def _read_snapshot(self, connection: Any, key: str) -> ExecutionState | None:
+        stored = self._read_stored_snapshot(connection, key)
+        return None if stored is None else stored[0]
+
+    def _read_stored_snapshot(
+        self, connection: Any, key: str
+    ) -> tuple[ExecutionState, Mapping[str, Any]] | None:
+        """Return the snapshot with the raw JSON object it was decoded from."""
+        row = connection.execute(
+            "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
+            (key,),
+        ).fetchone()
         if row is None:
             return None
         raw = _loads(row[0])
         snapshot = ExecutionState.model_validate(raw)
         if "tool_call_count" not in raw:
             snapshot = snapshot.model_copy(
-                update={"tool_call_count": tool_call_count(self._events(key))}
+                update={
+                    "tool_call_count": tool_call_count(
+                        self._events(key, connection=connection)
+                    )
+                }
             )
-        return snapshot
+        return snapshot, raw
 
     def get_execution_spec(
         self, execution_id: ExecutionId | str
@@ -2365,6 +2709,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     successful,
                 ):
                     return
+                connection.mark_settings_dirty()
                 connection.execute("PRAGMA busy_timeout=0")
                 connection.execute(
                     "UPDATE v2_executions SET tool_call_counts_json=? WHERE id=? "
@@ -2434,12 +2779,19 @@ class SQLiteExecutionStore(_SqliteBase):
     update_snapshot = save_snapshot
 
     @_timing.counted("store.load_events")
-    def _events(self, execution_id: str) -> tuple[Event, ...]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence",
-                (execution_id,),
-            ).fetchall()
+    def _events(
+        self, execution_id: str, *, connection: Any | None = None
+    ) -> tuple[Event, ...]:
+        if connection is not None:
+            return self._load_events(connection, execution_id)
+        with self._connect() as pooled:
+            return self._load_events(pooled, execution_id)
+
+    def _load_events(self, connection: Any, execution_id: str) -> tuple[Event, ...]:
+        rows = connection.execute(
+            "SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence",
+            (execution_id,),
+        ).fetchall()
         return tuple(self._restore_event(_loads(row[0])) for row in rows)
 
     def _restore_event(self, value: Mapping[str, Any]) -> Event:
@@ -2487,69 +2839,16 @@ class SQLiteExecutionStore(_SqliteBase):
         existing = self.get_snapshot(execution_id)
         if existing is None:
             raise StorageConflict("execution does not exist")
-        lifecycle, outcome = existing.lifecycle, existing.outcome
-        created_at, finished_at = existing.created_at, existing.finished_at
         values = tuple(events if events is not None else self._events(execution_id))
-        for event in values:
-            if event.kind is EventKind.EXECUTION_CREATED:
-                if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "terminal execution cannot receive more events"
-                    )
-                created_at, lifecycle, outcome, finished_at = (
-                    event.timestamp,
-                    ExecutionStatus.CREATED,
-                    None,
-                    None,
-                )
-            elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
-                if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "terminal execution cannot receive more events"
-                    )
-                try:
-                    next_lifecycle = ExecutionStatus(
-                        event.payload.get("lifecycle", event.payload.get("state"))
-                    )
-                except (TypeError, ValueError):
-                    raise StorageConflict(
-                        "execution state payload is invalid"
-                    ) from None
-                if next_lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "execution state event cannot finish an execution"
-                    )
-                lifecycle = next_lifecycle
-            elif event.kind is EventKind.EXECUTION_FINISHED:
-                if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "terminal execution cannot receive more events"
-                    )
-                try:
-                    outcome = ExecutionOutcome(event.payload["outcome"])
-                except (KeyError, TypeError, ValueError):
-                    raise StorageConflict(
-                        "execution terminal payload is invalid"
-                    ) from None
-                lifecycle, finished_at = ExecutionStatus.FINISHED, event.timestamp
-        return ExecutionState(
-            execution_id=ExecutionId(execution_id),
-            project_id=existing.project_id,
-            run_id=existing.run_id,
-            suite_id=existing.suite_id,
-            suite_name=existing.suite_name,
-            lifecycle=lifecycle,
-            outcome=outcome,
+        return _fold_snapshot(
+            existing,
+            values,
             sequence=values[-1].sequence if values else existing.sequence,
-            tool_call_count=(
+            tool_calls=(
                 tool_call_count(values)
                 if appended is None
                 else tool_call_count_after(existing.tool_call_count, values, appended)
             ),
-            created_at=created_at,
-            finished_at=finished_at,
-            provenance=existing.provenance,
-            agent=project_agent_identity(values, existing.agent),
         )
 
     def _safe_event(self, event: Event) -> Event:
@@ -2704,9 +3003,10 @@ class SQLiteExecutionStore(_SqliteBase):
         events: Sequence[Event],
         *,
         raw_evidence: tuple[EvidenceRef, bytes] | None = None,
-    ) -> None:
+        clear_of_reservations: bool = False,
+    ) -> tuple[Event, ...]:
         if not events:
-            return
+            return ()
         safe_events = tuple(self._safe_event(event) for event in events)
         if any(
             _execution_key(event.execution_id) != execution_id for event in safe_events
@@ -2714,8 +3014,23 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict(
                 "all events in an append must belong to one execution"
             )
+        # Encoding depends only on the redacted events, so it happens before
+        # the write lock is taken. Events whose payload moves to a blob are
+        # encoded once the blob is published.
+        encoded_payloads = tuple(
+            _json(event.model_dump(mode="json")["payload"]).encode("utf-8")
+            for event in safe_events
+        )
+        inline_json = {
+            str(event.event_id.root): _json(
+                event.model_dump(mode="json", by_alias=True)
+            )
+            for event, encoded in zip(safe_events, encoded_payloads, strict=True)
+            if len(encoded) <= self.payload_blob_threshold
+        }
         connection = self._connect()
         committed: tuple[Event, ...] = ()
+        stored: tuple[Event, ...] = ()
         try:
             self._begin(connection, immediate=True)
             # Keep the write lock from filesystem publication through the
@@ -2733,14 +3048,14 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
             # Large event payloads live in verified compressed blobs. A failed
             # transaction leaves only an explicitly collectable orphan.
-            persisted_events: list[Event] = []
+            event_json: dict[str, str] = dict(inline_json)
+            stored_events: list[Event] = []
             payload_blobs: list[tuple[Event, BlobRecord]] = []
-            for event in safe_events:
-                encoded_payload = _json(
-                    event.model_dump(mode="json")["payload"]
-                ).encode("utf-8")
+            for event, encoded_payload in zip(
+                safe_events, encoded_payloads, strict=True
+            ):
                 if len(encoded_payload) <= self.payload_blob_threshold:
-                    persisted_events.append(event)
+                    stored_events.append(event)
                     continue
                 blob = self.artifacts.blob_store.put(encoded_payload)
                 reference = PayloadRef(
@@ -2761,16 +3076,25 @@ class SQLiteExecutionStore(_SqliteBase):
                         "payload_ref": reference,
                     }
                 )
-                persisted_events.append(persisted)
+                event_json[str(event.event_id.root)] = _json(
+                    persisted.model_dump(mode="json", by_alias=True)
+                )
+                # Reads decode the blob back into the payload, so the returned
+                # event matches what a reload produces.
+                stored_events.append(
+                    persisted.model_copy(
+                        update={"payload": json.loads(encoded_payload)}
+                    )
+                )
                 payload_blobs.append((persisted, blob))
-            if (
-                connection.execute(
-                    "SELECT 1 FROM v2_executions WHERE id=? AND deleted_at IS NULL",
-                    (execution_id,),
-                ).fetchone()
-                is None
-            ):
+            stored_snapshot = self._read_stored_snapshot(connection, execution_id)
+            if stored_snapshot is None:
                 raise StorageConflict("execution does not exist")
+            existing, raw_snapshot = stored_snapshot
+            # A finished execution reports that before any sequence problem, so
+            # a writer racing a terminal commit is not told to retry.
+            if existing.lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
                 (execution_id,),
@@ -2778,10 +3102,56 @@ class SQLiteExecutionStore(_SqliteBase):
             expected = int(row[0]) + 1
             seen: set[str] = set()
             for event in safe_events:
-                if event.sequence != expected or str(event.event_id.root) in seen:
+                if event.sequence != expected:
+                    raise SequenceConflict("event sequence or id is invalid")
+                if str(event.event_id.root) in seen:
                     raise StorageConflict("event sequence or id is invalid")
                 expected += 1
                 seen.add(str(event.event_id.root))
+            # The recorder does not reserve before it appends, so it asks the
+            # commit itself to leave a sequence another producer holds alone.
+            if clear_of_reservations:
+                for event in safe_events:
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM v2_sequence_reservations "
+                            "WHERE execution_id=? AND sequence=?",
+                            (execution_id, event.sequence),
+                        ).fetchone()
+                        is not None
+                    ):
+                        raise StorageConflict("event sequence or id is invalid")
+            # A snapshot that is behind the stored events, or that an older SDK
+            # wrote without every current field, cannot be trusted to reflect
+            # earlier events, so the whole history is folded again.
+            if existing.sequence != max(int(row[0]), 0) or not (
+                _SNAPSHOT_FIELDS <= raw_snapshot.keys()
+            ):
+                history = self._events(execution_id, connection=connection)
+                derived = _fold_snapshot(
+                    existing,
+                    history + safe_events,
+                    sequence=safe_events[-1].sequence,
+                    tool_calls=tool_call_count(history + safe_events),
+                )
+            else:
+                # The stored snapshot already reflects every earlier event, so
+                # only the appended batch is folded. Prior history is needed
+                # solely to recount tool calls, and is read before this batch
+                # is inserted.
+                if has_tool_request(safe_events):
+                    history = self._events(execution_id, connection=connection)
+                    tool_calls = tool_call_count_after(
+                        existing.tool_call_count, history + safe_events, safe_events
+                    )
+                else:
+                    tool_calls = existing.tool_call_count
+                derived = _fold_snapshot(
+                    existing,
+                    safe_events,
+                    sequence=safe_events[-1].sequence,
+                    tool_calls=tool_calls,
+                )
             sessions = {
                 str(row[0])
                 for row in connection.execute(
@@ -2801,16 +3171,13 @@ class SQLiteExecutionStore(_SqliteBase):
                     or str(event.session_id.root) not in sessions
                 ):
                     raise StorageConflict("session does not exist")
-                persisted = next(
-                    item for item in persisted_events if item.event_id == event.event_id
-                )
                 connection.execute(
                     "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
                     (
                         str(event.event_id.root),
                         execution_id,
                         event.sequence,
-                        _json(persisted.model_dump(mode="json", by_alias=True)),
+                        event_json[str(event.event_id.root)],
                         _iso(event.timestamp),
                     ),
                 )
@@ -2908,20 +3275,20 @@ class SQLiteExecutionStore(_SqliteBase):
                                 str(event.session_id.root),
                             ),
                         )
-            derived = self._derive_snapshot(
-                execution_id,
-                self._events(execution_id) + safe_events,
-                appended=safe_events,
-            )
             connection.execute(
                 "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
                 (_json(derived.model_dump(mode="json")), execution_id),
             )
             self._commit(connection)
             committed = safe_events
+            stored = tuple(stored_events)
         except Exception as exc:
             self._rollback(connection)
             if _is_integrity_error(exc):
+                if "v2_events.sequence" in str(exc):
+                    raise SequenceConflict(
+                        "event identity or sequence conflicts"
+                    ) from exc
                 raise StorageConflict("event identity or sequence conflicts") from exc
             raise
         except BaseException:
@@ -2937,6 +3304,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     callback(event.model_copy())
                 except Exception:
                     pass
+        return stored
 
     def append_events(self, events: Sequence[Event]) -> None:
         batch = tuple(events)
@@ -2945,8 +3313,34 @@ class SQLiteExecutionStore(_SqliteBase):
 
     append = append_events
 
+    def _append_events_unreserved(self, events: Sequence[Event]) -> None:
+        batch = tuple(events)
+        if batch:
+            self._append(
+                _execution_key(batch[0].execution_id),
+                batch,
+                clear_of_reservations=True,
+            )
+
     def append_event(self, event: Event, content: bytes, *, media_type: str) -> Event:
         """Commit an event and its raw blob in one SQLite transaction."""
+        return self._append_event(event, content, media_type=media_type)
+
+    def _append_event_unreserved(
+        self, event: Event, content: bytes, *, media_type: str
+    ) -> Event:
+        return self._append_event(
+            event, content, media_type=media_type, clear_of_reservations=True
+        )
+
+    def _append_event(
+        self,
+        event: Event,
+        content: bytes,
+        *,
+        media_type: str,
+        clear_of_reservations: bool = False,
+    ) -> Event:
         if event.raw_evidence_ref is not None:
             raise StorageConflict("raw evidence reference must be store-owned")
         execution_id = _execution_key(event.execution_id)
@@ -2990,7 +3384,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 **dict(event.payload),
                 "raw_capture": capture.model_dump(mode="json"),
             }
-            self._append(
+            committed = self._append(
                 execution_id,
                 (
                     event.model_copy(
@@ -2998,6 +3392,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     ),
                 ),
                 raw_evidence=(ref, prepared.content),
+                clear_of_reservations=clear_of_reservations,
             )
         except BaseException:
             # A failed blob write or transaction may leave an unreferenced file.
@@ -3006,7 +3401,7 @@ class SQLiteExecutionStore(_SqliteBase):
             except Exception:
                 pass
             raise
-        return self._events(execution_id)[-1]
+        return committed[-1]
 
     def iter_events(
         self, execution_id: ExecutionId | str, *, after_sequence: int = -1

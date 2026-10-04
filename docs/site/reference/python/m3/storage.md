@@ -25,7 +25,9 @@ Managed-input contracts are `ManagedInputStore`, `ManagedInputRecord`,
 Profile and ACP probe records share the SQLite persistence boundary.
 
 Storage conflicts and operational failures raise `StorageConflict` and
-`StorageError`. `DurableSerializationError` reports a value that cannot cross
+`StorageError`. Appends that skip a sequence number raise `SequenceConflict`,
+and appends to a finished execution raise `TerminalConflict`; both are
+`StorageConflict` subclasses. `DurableSerializationError` reports a value that cannot cross
 the durable boundary; `serialize_durable` performs that checked conversion.
 
 SQLite imports remain lazy so users who do not install storage support can use

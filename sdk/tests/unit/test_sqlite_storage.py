@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import sqlite3
@@ -9,6 +10,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
@@ -29,17 +31,24 @@ from m3.storage import (
     BlobRecord,
     InMemoryArtifactStore,
     InMemoryExecutionStore,
+    SequenceConflict,
+    SQLiteArtifactStore,
     SQLiteExecutionStore,
     StorageConflict,
     StorageError,
+    TerminalConflict,
 )
+from m3.storage import sqlite as sqlite_storage
 from m3.trace.redaction import RedactionConfig
 from m3.types import (
     ArtifactRef,
+    ConnectionId,
     DirectSpec,
     EventDirection,
     EventId,
     EventKind,
+    EventOrigin,
+    EventSource,
     ExecutionId,
     ExecutionOutcome,
     ExecutionState,
@@ -53,6 +62,9 @@ from m3.types import (
     StdioServer,
     TurnId,
     TurnState,
+)
+from m3.types import (
+    Event as StoredEvent,
 )
 
 
@@ -188,6 +200,8 @@ try:
     SQLiteExecutionStore('optional-dependency-test.sqlite')
 except ModuleNotFoundError as error:
     assert str(error) == 'SQLite storage requires the optional dependency; install sf-m3[storage]'
+    import os
+    assert not os.path.exists('optional-dependency-test.sqlite')
 else:
     raise AssertionError('SQLite storage unexpectedly initialized without SQLAlchemy')
 """
@@ -539,13 +553,17 @@ def test_database_files_are_private_and_symlink_paths_fail_closed(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "private.sqlite"
-    store = SQLiteExecutionStore(database, blob_root=tmp_path / "blobs")
-    _created(store, "private")
+    previous = os.umask(0o022)
+    try:
+        store = SQLiteExecutionStore(database, blob_root=tmp_path / "blobs")
+        _created(store, "private")
+    finally:
+        os.umask(previous)
     assert stat.S_IMODE(database.stat().st_mode) == 0o600
     for suffix in ("-wal", "-shm"):
         sidecar = Path(f"{database}{suffix}")
-        if sidecar.exists():
-            assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+        assert sidecar.exists()
+        assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
     target = tmp_path / "target.sqlite"
     target.write_bytes(b"keep")
@@ -554,6 +572,356 @@ def test_database_files_are_private_and_symlink_paths_fail_closed(
     with pytest.raises(StorageError, match="symlink"):
         SQLiteExecutionStore(link)
     assert target.read_bytes() == b"keep"
+
+
+def _driver_connection_opens(store: SQLiteExecutionStore) -> list[int]:
+    """Record driver connections opened from now on, after pooling two."""
+    from sqlalchemy import event
+
+    with store._connect(), store._connect():
+        pass
+
+    opened: list[int] = []
+    event.listen(
+        store._engine,
+        "connect",
+        lambda dbapi_connection, _record: opened.append(id(dbapi_connection)),
+    )
+    return opened
+
+
+def _pragma(store: SQLiteExecutionStore, name: str) -> int:
+    with store._connect() as connection:
+        row = connection.execute(f"PRAGMA {name}").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_pooled_driver_connection_is_reused_across_operations(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    opened = _driver_connection_opens(store)
+    execution_id, factory = _created(store, "pooled")
+    for index in range(20):
+        store.append_events(
+            [factory.create(EventKind.DIAGNOSTIC, payload={"n": index})]
+        )
+        list(store.iter_events(execution_id))
+    # Nested checkouts get distinct connections and return to the pool.
+    with store._connect() as outer, store._connect() as inner:
+        assert outer._connection.connection.dbapi_connection is not (
+            inner._connection.connection.dbapi_connection
+        )
+    assert opened == []
+    store.close()
+
+
+def test_leaked_transaction_is_rolled_back_when_connection_returns(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    other = _store(tmp_path)
+    connection = store._connect()
+    connection.execute("BEGIN IMMEDIATE")
+    assert connection.in_transaction
+    connection.close()
+    _created(other, "after-leak")
+    with store._connect() as reused:
+        assert not reused.in_transaction
+    _created(store, "after-reuse")
+
+
+def test_changed_connection_settings_are_restored_on_reuse(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    opened = _driver_connection_opens(store)
+    assert _pragma(store, "busy_timeout") == store.busy_timeout_ms
+    with store._connect() as connection:
+        connection.mark_settings_dirty()
+        connection.execute("PRAGMA busy_timeout=0")
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("BEGIN IMMEDIATE")
+    assert _pragma(store, "busy_timeout") == store.busy_timeout_ms
+    assert _pragma(store, "foreign_keys") == 1
+    trace = _normalized(_corpus()[sorted(_corpus())[0]]())
+    execution_id = ExecutionId("corpus")
+    store.create(ExecutionState(execution_id=execution_id))
+    store.append_events(
+        [
+            event.model_copy(
+                update={
+                    "execution_id": execution_id,
+                    "event_id": EventId(f"corpus-{event.sequence}"),
+                }
+            )
+            for event in trace.events
+        ]
+    )
+    with sqlite3.connect(tmp_path / "m3.sqlite") as raw:
+        raw.execute("UPDATE v2_executions SET tool_call_counts_json=NULL")
+    assert store.tool_call_counts([execution_id])
+    assert _pragma(store, "busy_timeout") == store.busy_timeout_ms
+    assert opened == []
+
+
+def test_wal_connections_use_normal_synchronous(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    assert store.journal_mode == "wal"
+    assert _pragma(store, "synchronous") == 1
+
+
+def _schema_generation(database: Path) -> int | None:
+    with sqlite3.connect(database) as raw:
+        row = raw.execute(
+            "SELECT generation FROM v2_schema_state WHERE id=1"
+        ).fetchone()
+    return None if row is None else int(row[0])
+
+
+def _user_version(database: Path) -> int:
+    with sqlite3.connect(database) as raw:
+        return int(raw.execute("PRAGMA user_version").fetchone()[0])
+
+
+def _foreign_database(database: Path, user_version: int) -> None:
+    with sqlite3.connect(database) as raw:
+        raw.execute("CREATE TABLE app_data(id INTEGER PRIMARY KEY, note TEXT)")
+        raw.execute("INSERT INTO app_data(note) VALUES('keep')")
+        raw.execute(f"PRAGMA user_version={user_version}")
+
+
+def _index_names(database: Path) -> set[str]:
+    with sqlite3.connect(database) as raw:
+        return {
+            str(row[0])
+            for row in raw.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        }
+
+
+def test_open_of_current_database_skips_schema_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _store(tmp_path)
+    execution_id, factory = _created(first)
+    assert (
+        _schema_generation(tmp_path / "m3.sqlite") == sqlite_storage._SCHEMA_GENERATION
+    )
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("schema setup must be skipped")
+
+    monkeypatch.setattr(sqlite_storage._CompatConnection, "executescript", refuse)
+    monkeypatch.setattr(SQLiteExecutionStore, "_migrate_legacy_profiles", refuse)
+    second = _store(tmp_path)
+    assert second.get_snapshot(execution_id) == first.get_snapshot(execution_id)
+    second.append_events([factory.create(EventKind.DIAGNOSTIC, payload={})])
+    assert tuple(second.iter_events(execution_id))[-1].kind == EventKind.DIAGNOSTIC
+    other = ExecutionId("execution-2")
+    second.create(ExecutionState(execution_id=other))
+    assert second.get_snapshot(other).execution_id == other
+
+
+def test_database_without_schema_generation_is_fully_migrated_then_marked(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    with sqlite3.connect(database) as raw:
+        raw.execute("DROP INDEX v2_executions_created_at")
+        raw.execute("DELETE FROM v2_schema_state")
+    assert "v2_executions_created_at" not in _index_names(database)
+    store = _store(tmp_path)
+    assert "v2_executions_created_at" in _index_names(database)
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+    _created(store)
+
+
+def test_database_from_an_older_sdk_without_the_marker_table_is_migrated(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    with sqlite3.connect(database) as raw:
+        raw.execute("DROP INDEX v2_executions_created_at")
+        raw.execute("DROP TABLE v2_schema_state")
+    store = _store(tmp_path)
+    assert "v2_executions_created_at" in _index_names(database)
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+    _created(store)
+
+
+def test_unrelated_database_user_version_is_preserved(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    _foreign_database(database, 7)
+    store = _store(tmp_path)
+    assert _user_version(database) == 7
+    execution_id, _ = _created(store)
+    assert len(store.events(execution_id)) == 1
+    store.close()
+    assert _user_version(database) == 7
+    with sqlite3.connect(database) as raw:
+        assert raw.execute("SELECT note FROM app_data").fetchall() == [("keep",)]
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+
+
+def test_user_version_above_the_generation_does_not_skip_initialization(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    _foreign_database(database, 99)
+    store = _store(tmp_path)
+    assert "v2_executions_created_at" in _index_names(database)
+    execution_id, _ = _created(store)
+    assert store.get_snapshot(execution_id).execution_id == execution_id
+    store.close()
+    assert _user_version(database) == 99
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+
+
+def test_rows_from_an_older_writer_are_migrated_on_open(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+    # An SDK that predates run labels never updates the marker.
+    with sqlite3.connect(database) as raw:
+        raw.execute(
+            "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) "
+            "VALUES('run-old','{}','2026-01-01T00:00:00+00:00',"
+            "'2026-01-01T00:00:00+00:00')"
+        )
+    _store(tmp_path).close()
+    with sqlite3.connect(database) as raw:
+        label = raw.execute(
+            "SELECT run_label FROM v2_test_runs WHERE run_id='run-old'"
+        ).fetchone()[0]
+    assert label
+
+
+def test_open_of_current_database_without_pending_work_takes_no_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store(tmp_path).close()
+    blocker = sqlite3.connect(tmp_path / "m3.sqlite", isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("schema setup must be skipped")
+
+    monkeypatch.setattr(sqlite_storage._CompatConnection, "executescript", refuse)
+    try:
+        store = SQLiteExecutionStore(
+            tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", busy_timeout_ms=50
+        )
+        store.close()
+    finally:
+        blocker.execute("ROLLBACK")
+        blocker.close()
+
+
+def test_newer_schema_generation_is_left_alone(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    newer = sqlite_storage._SCHEMA_GENERATION + 5
+    with sqlite3.connect(database) as raw:
+        raw.execute("UPDATE v2_schema_state SET generation=?", (newer,))
+    _created(_store(tmp_path))
+    assert _schema_generation(database) == newer
+
+
+def test_standalone_artifact_store_does_not_mark_database_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    SQLiteArtifactStore(database, tmp_path / "blobs").close()
+    assert _schema_generation(database) is None
+    assert "v2_executions_created_at" in _index_names(database)
+    with sqlite3.connect(database) as raw:
+        raw.execute("DROP INDEX v2_executions_created_at")
+    ran: list[str] = []
+    original = sqlite_storage._SqliteBase._migrate_legacy_evaluations
+
+    def record(self: object, connection: object) -> None:
+        ran.append("evaluations")
+        original(self, connection)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        sqlite_storage._SqliteBase, "_migrate_legacy_evaluations", record
+    )
+    store = _store(tmp_path)
+    assert ran
+    assert "v2_executions_created_at" in _index_names(database)
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+    store.close()
+
+
+def test_internal_artifact_store_shares_engine_without_initializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    initialized: list[object] = []
+    monkeypatch.setattr(
+        sqlite_storage._SqliteBase, "_initialize", lambda self: initialized.append(self)
+    )
+    shared = SQLiteArtifactStore(
+        store.database, tmp_path / "other", config=None, _shared_from=store
+    )
+    assert initialized == []
+    assert shared._engine is store._engine
+    assert shared.database == store.database
+    assert shared.busy_timeout_ms == store.busy_timeout_ms
+    assert shared.journal_mode == store.journal_mode == "wal"
+    assert store.artifacts._engine is store._engine
+    assert store.artifacts.blob_root == (tmp_path / "blobs").resolve()
+    execution_id, _ = _created(store)
+    ref = store.artifacts.put(execution_id, "note.txt", b"hello")
+    assert store.artifacts.get(ref) == b"hello"
+
+
+def test_close_is_idempotent_and_shared_artifact_store_keeps_engine(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    ref = store.artifacts.put(execution_id, "note.txt", b"hello")
+    store.artifacts.close()
+    assert store.artifacts.get(ref) == b"hello"
+    store.close()
+    store.close()
+    reopened = _store(tmp_path)
+    assert reopened.artifacts.get(ref) == b"hello"
+
+
+def test_database_path_replaced_by_symlink_fails_closed(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    store = _store(tmp_path)
+    _created(store)
+    target = tmp_path / "target.sqlite"
+    target.write_bytes(b"keep")
+    database.unlink()
+    database.symlink_to(target)
+    with pytest.raises(StorageError, match="symlink"):
+        list(store.iter_events(ExecutionId("execution-1")))
+    assert target.read_bytes() == b"keep"
+
+
+def test_replaced_database_file_is_reopened_not_written_unlinked(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    store = _store(tmp_path)
+    opened = _driver_connection_opens(store)
+    _created(store, "before")
+    old_inode = database.stat().st_ino
+    database.rename(tmp_path / "moved.sqlite")
+    for suffix in ("-wal", "-shm"):
+        Path(f"{database}{suffix}").unlink(missing_ok=True)
+    replacement = tmp_path / "replacement.sqlite"
+    SQLiteExecutionStore(replacement, blob_root=tmp_path / "blobs").close()
+    os.replace(replacement, database)
+    assert database.stat().st_ino != old_inode
+    _created(store, "after")
+    assert opened
+    with sqlite3.connect(database) as raw:
+        ids = {row[0] for row in raw.execute("SELECT id FROM v2_executions")}
+    assert ids == {"after"}
 
 
 def test_corrupt_database_has_value_free_storage_error(tmp_path: Path) -> None:
@@ -1020,3 +1388,523 @@ def test_tool_call_counts_omit_unfinished_and_missing_and_fill_null_rows(
         "total": 3,
         "successful": 2,
     }
+
+
+def _event(
+    execution_id: str,
+    sequence: int,
+    kind: EventKind = EventKind.DIAGNOSTIC,
+    *,
+    payload: dict[str, object] | None = None,
+    origin: EventOrigin | None = None,
+    request_sequence: int | None = None,
+    server: str | None = None,
+) -> StoredEvent:
+    return StoredEvent(
+        event_id=EventId(f"{execution_id}-event-{sequence}"),
+        execution_id=ExecutionId(execution_id),
+        sequence=sequence,
+        kind=kind,
+        timestamp=datetime(2026, 1, 1, 0, 0, sequence % 60, tzinfo=timezone.utc),
+        monotonic_offset_ms=float(sequence),
+        server_binding=server,
+        connection_id=ConnectionId("connection-1") if server else None,
+        correlation=(
+            RequestLink(
+                jsonrpc_id=request_sequence,
+                direction=EventDirection.CLIENT_TO_SERVER,
+                request_sequence=request_sequence,
+            )
+            if request_sequence is not None
+            else None
+        ),
+        payload=payload if payload is not None else {"sequence": sequence},
+        **(
+            {"provenance": EventSource(origin=origin, source="fixture")}
+            if origin is not None
+            else {}
+        ),
+    )
+
+
+def _tool_request(
+    execution_id: str,
+    sequence: int,
+    *,
+    origin: EventOrigin = EventOrigin.HARNESS_REPORTED,
+    params: dict[str, object] | None = None,
+) -> StoredEvent:
+    return _event(
+        execution_id,
+        sequence,
+        EventKind.TOOL_CALL_REQUESTED,
+        payload={"params": params or {"name": "lookup", "arguments": {}}},
+        origin=origin,
+        request_sequence=sequence,
+        server="server-1",
+    )
+
+
+@pytest.mark.parametrize("threshold", [0, None])
+def test_append_event_returns_the_event_a_reload_produces(
+    tmp_path: Path, threshold: int | None
+) -> None:
+    options = {} if threshold is None else {"payload_blob_threshold": threshold}
+    store = SQLiteExecutionStore(
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", **options
+    )
+    execution_id, factory = _created(store)
+    event = factory.create(EventKind.DIAGNOSTIC, payload={"note": "x" * 64})
+    returned = store.append_event(event, b"raw bytes", media_type="text/plain")
+    assert returned == store.events(execution_id)[-1]
+    assert returned.raw_evidence_ref is not None
+    if threshold == 0:
+        assert returned.payload_ref is not None
+        assert returned.payload["note"] == "x" * 64
+
+
+def test_append_events_return_committed_events_in_stored_form(tmp_path: Path) -> None:
+    store = SQLiteExecutionStore(
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", payload_blob_threshold=0
+    )
+    _created(store, "stored-form")
+    batch = (
+        _event("stored-form", 1, payload={"a": [1, 2, 3]}),
+        _event("stored-form", 2, payload={}),
+    )
+    committed = store._append("stored-form", batch)
+    assert committed == store.events("stored-form")[1:]
+
+
+def test_append_after_store_written_terminal_event_is_rejected(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id = ExecutionId("cancelled-execution")
+    store.create(ExecutionState(execution_id=execution_id))
+    store.append_events(
+        [
+            _event(
+                execution_id.root,
+                0,
+                EventKind.EXECUTION_CREATED,
+                payload={"trace_id": "trace-1"},
+            )
+        ]
+    )
+    store.enqueue_command(execution_id)
+    assert store.claim_next("worker", lease_seconds=30) is not None
+    assert store.request_cancel(execution_id)
+    assert store.finalize_cancelled(execution_id)
+    snapshot = store.get_snapshot(execution_id)
+    assert snapshot is not None and snapshot.lifecycle is ExecutionStatus.FINISHED
+    next_sequence = store.events(execution_id)[-1].sequence + 1
+    with pytest.raises(TerminalConflict):
+        store.append_events([_event(execution_id.root, next_sequence)])
+    assert store.get_snapshot(execution_id) == snapshot
+
+
+def test_append_after_a_store_written_terminal_raises_terminal_conflict(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id = ExecutionId("execution-terminal-append")
+    store.create(ExecutionState(execution_id=execution_id))
+    store.append_events(
+        [
+            _event(
+                execution_id.root,
+                0,
+                EventKind.EXECUTION_CREATED,
+                payload={"trace_id": "trace-1"},
+            )
+        ]
+    )
+    assert store.request_cancel(execution_id)
+    committed = store.events(execution_id)
+    used = committed[-1].sequence
+    for sequence in (used, used + 3):
+        with pytest.raises(TerminalConflict):
+            store.append_events([_event(execution_id.root, sequence)])
+    assert store.events(execution_id) == committed
+
+
+def test_non_contiguous_append_raises_sequence_conflict(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    with pytest.raises(SequenceConflict):
+        store.append_events([_event(execution_id.root, 5)])
+    with pytest.raises(SequenceConflict):
+        store.append_events([_event(execution_id.root, 0)])
+    duplicate = _event(execution_id.root, 1)
+    with pytest.raises(StorageConflict) as raised:
+        store.append_events([duplicate, duplicate.model_copy(update={"sequence": 2})])
+    assert not isinstance(raised.value, SequenceConflict)
+
+
+def test_append_reads_no_history_unless_it_adds_a_tool_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    key = execution_id.root
+    store.append_events([_tool_request(key, 1)])
+    loads = 0
+    original = store._events
+
+    def counting(*args: object, **kwargs: object) -> tuple[StoredEvent, ...]:
+        nonlocal loads
+        loads += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store, "_events", counting)
+    store.append_events(
+        [
+            _event(
+                key, 2, EventKind.EXECUTION_STATE_CHANGED, payload={"state": "idle"}
+            ),
+            _event(key, 3),
+        ]
+    )
+    assert loads == 0
+    store.append_events(
+        [
+            _tool_request(
+                key,
+                4,
+                origin=EventOrigin.WIRE_OBSERVED,
+                params={"name": "other", "arguments": {}},
+            )
+        ]
+    )
+    assert loads == 1
+    snapshot = store.get_snapshot(key)
+    assert snapshot is not None and snapshot.tool_call_count == 2
+    assert snapshot == store._derive_snapshot(key)
+
+
+def test_snapshot_after_mixed_appends_matches_full_replay(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    key = execution_id.root
+    store.append_events(
+        [
+            _event(
+                key,
+                1,
+                EventKind.HARNESS_SELECTION,
+                payload={
+                    "harness": {"kind": "opencode", "runtime": "managed"},
+                    "model": {"requested_id": "openai/gpt-5"},
+                },
+            ),
+            _tool_request(key, 2),
+        ]
+    )
+    store.append_events(
+        [
+            _event(
+                key,
+                3,
+                EventKind.HARNESS_RUNTIME_RESOLVED,
+                payload={"resolved_version": "1.0.0"},
+            ),
+            _event(
+                key, 4, EventKind.EXECUTION_STATE_CHANGED, payload={"state": "idle"}
+            ),
+            _tool_request(key, 5, origin=EventOrigin.WIRE_OBSERVED),
+        ]
+    )
+    store.append_events(
+        [
+            _event(
+                key,
+                6,
+                EventKind.EXECUTION_FINISHED,
+                payload={"outcome": ExecutionOutcome.COMPLETED.value},
+            )
+        ]
+    )
+    snapshot = store.get_snapshot(key)
+    assert snapshot is not None
+    assert snapshot.sequence == 6
+    assert snapshot.lifecycle is ExecutionStatus.FINISHED
+    assert snapshot.agent is not None
+    assert snapshot.agent.harness.resolved_version == "1.0.0"
+    assert snapshot.tool_call_count is not None
+    full = sqlite_storage._fold_snapshot(
+        ExecutionState(execution_id=execution_id),
+        store.events(key),
+        sequence=6,
+        tool_calls=snapshot.tool_call_count,
+    )
+    assert full.model_dump() == snapshot.model_dump()
+
+
+def test_incremental_snapshot_matches_full_replay_for_random_histories(
+    tmp_path: Path,
+) -> None:
+    hypothesis = pytest.importorskip("hypothesis")
+    st = hypothesis.strategies
+    from m3.trace.counts import tool_call_count
+
+    kinds = st.sampled_from(
+        (
+            "state",
+            "selection",
+            "resolved",
+            "provider",
+            "reported_request",
+            "wire_request",
+            "retry_request",
+            "response",
+            "diagnostic",
+        )
+    )
+
+    def build(key: str, sequence: int, choice: str, number: int) -> StoredEvent:
+        if choice == "state":
+            state = ("running_turn", "idle", "waiting_for_input", "closing")[number % 4]
+            return _event(
+                key,
+                sequence,
+                EventKind.EXECUTION_STATE_CHANGED,
+                payload={"state": state},
+            )
+        if choice == "selection":
+            return _event(
+                key,
+                sequence,
+                EventKind.HARNESS_SELECTION,
+                payload={
+                    "harness": {"kind": f"harness-{number % 3}", "runtime": "managed"},
+                    "model": {"requested_id": f"model-{number % 3}"},
+                },
+            )
+        if choice == "resolved":
+            return _event(
+                key,
+                sequence,
+                EventKind.HARNESS_RUNTIME_RESOLVED,
+                payload={"resolved_version": f"1.{number % 4}.0"},
+            )
+        if choice == "provider":
+            return _event(
+                key,
+                sequence,
+                EventKind.PROVIDER_EVENT,
+                payload={"category": "model", "data": f"observed-{number % 3}"},
+            )
+        if choice in {"reported_request", "wire_request"}:
+            return _tool_request(
+                key,
+                sequence,
+                origin=(
+                    EventOrigin.HARNESS_REPORTED
+                    if choice == "reported_request"
+                    else EventOrigin.WIRE_OBSERVED
+                ),
+                params={"name": f"tool-{number % 2}", "arguments": {}},
+            )
+        if choice == "retry_request":
+            return _tool_request(
+                key,
+                sequence,
+                params={
+                    "name": "lookup",
+                    "arguments": {},
+                    "requestState": f"state-{number}",
+                },
+            )
+        if choice == "response":
+            return _event(
+                key,
+                sequence,
+                EventKind.MCP_RESPONSE,
+                payload={"result": {"content": []}},
+                request_sequence=max(sequence - 1, 1),
+                server="server-1",
+            )
+        return _event(key, sequence)
+
+    @hypothesis.settings(
+        max_examples=25,
+        deadline=None,
+        suppress_health_check=[hypothesis.HealthCheck.function_scoped_fixture],
+    )
+    @hypothesis.given(
+        steps=st.lists(st.tuples(kinds, st.integers(0, 9)), min_size=1, max_size=14),
+        batches=st.lists(st.integers(1, 4), min_size=1, max_size=14),
+        finish=st.booleans(),
+    )
+    def check(steps: list[tuple[str, int]], batches: list[int], finish: bool) -> None:
+        key = f"random-{len(list(tmp_path.iterdir()))}"
+        store = SQLiteExecutionStore(
+            tmp_path / f"{key}.sqlite", blob_root=tmp_path / f"{key}-blobs"
+        )
+        try:
+            store.create(ExecutionState(execution_id=ExecutionId(key)))
+            events = [
+                _event(key, 0, EventKind.EXECUTION_CREATED, payload={}),
+                *(
+                    build(key, index + 1, choice, number)
+                    for index, (choice, number) in enumerate(steps)
+                ),
+            ]
+            if finish:
+                events.append(
+                    _event(
+                        key,
+                        len(events),
+                        EventKind.EXECUTION_FINISHED,
+                        payload={"outcome": "completed"},
+                    )
+                )
+            position = 0
+            for size in itertools.cycle(batches):
+                if position >= len(events):
+                    break
+                batch = events[position : position + size]
+                position += len(batch)
+                store.append_events(batch)
+                snapshot = store.get_snapshot(key)
+                assert snapshot is not None
+                if snapshot.lifecycle is not ExecutionStatus.FINISHED:
+                    assert snapshot == store._derive_snapshot(key)
+                prefix = events[:position]
+                expected = sqlite_storage._fold_snapshot(
+                    ExecutionState(execution_id=ExecutionId(key)),
+                    prefix,
+                    sequence=prefix[-1].sequence,
+                    tool_calls=tool_call_count(prefix),
+                )
+                assert snapshot.model_dump() == expected.model_dump()
+        finally:
+            store.close()
+
+    check()
+
+
+def test_close_leaves_a_self_contained_database_file(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store, "checkpointed")
+    store.close()
+    copy = tmp_path / "copy.sqlite"
+    copy.write_bytes((tmp_path / "m3.sqlite").read_bytes())
+    with sqlite3.connect(copy) as connection:
+        rows = connection.execute(
+            "SELECT id FROM v2_executions WHERE id=?", (execution_id.root,)
+        ).fetchall()
+    assert rows == [(execution_id.root,)]
+    assert (
+        not (tmp_path / "m3.sqlite-wal").exists()
+        or not (tmp_path / "m3.sqlite-wal").stat().st_size
+    )
+
+
+def test_close_tolerates_a_reader_blocking_the_checkpoint(tmp_path: Path) -> None:
+    store = SQLiteExecutionStore(
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", busy_timeout_ms=5000
+    )
+    _created(store, "blocked")
+    reader = sqlite3.connect(tmp_path / "m3.sqlite")
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM v2_executions").fetchone()
+        started = time.monotonic()
+        store.close()
+        # Closing must not wait out the busy timeout for another reader.
+        assert time.monotonic() - started < 1.0
+    finally:
+        reader.close()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
+def test_forked_child_opens_its_own_connection_and_leaves_the_parents(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store, "forked")
+    opened = _driver_connection_opens(store)
+    pid = os.fork()
+    if pid == 0:
+        status = 1
+        try:
+            store.append_events(
+                [_event(execution_id.root, 1, payload={"who": "child"})]
+            )
+            status = 0 if len(opened) == 1 else 2
+        finally:
+            os._exit(status)
+    _, wait_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(wait_status) == 0
+    # The child never opened a connection in this process's counter.
+    assert opened == []
+    store.append_events([_event(execution_id.root, 2)])
+    assert len(store.events(execution_id)) == 3
+    assert opened == []
+    store.close()
+
+
+def test_schema_fingerprint_matches_the_recorded_generation() -> None:
+    """Fail when DDL changes without a new schema generation."""
+    import hashlib
+    import inspect
+
+    source = inspect.getsource(sqlite_storage._SqliteBase._initialize)
+    normalized = "".join((sqlite_storage.SCHEMA + source).split())
+    fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    assert fingerprint == sqlite_storage._SCHEMA_FINGERPRINT, (
+        "The SQLite schema or its migrations changed. Bump _SCHEMA_GENERATION "
+        "in m3/storage/sqlite.py and set _SCHEMA_FINGERPRINT to "
+        f"{fingerprint!r}."
+    )
+
+
+def _tamper_snapshot(
+    store: SQLiteExecutionStore, key: str, edit: Callable[[dict[str, object]], None]
+) -> None:
+    with store._connect() as connection:
+        row = connection.execute(
+            "SELECT snapshot_json FROM v2_executions WHERE id=?", (key,)
+        ).fetchone()
+        snapshot = json.loads(row[0])
+        edit(snapshot)
+        connection.execute(
+            "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+            (json.dumps(snapshot), key),
+        )
+
+
+@pytest.mark.parametrize("damage", ["missing-agent", "stale-sequence"])
+def test_append_repairs_a_stale_stored_snapshot_from_full_history(
+    tmp_path: Path, damage: str
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    key = execution_id.root
+    store.append_events(
+        [
+            _event(
+                key,
+                1,
+                EventKind.HARNESS_SELECTION,
+                payload={
+                    "harness": {"kind": "opencode", "runtime": "managed"},
+                    "model": {"requested_id": "openai/gpt-5"},
+                },
+            )
+        ]
+    )
+    if damage == "missing-agent":
+        _tamper_snapshot(store, key, lambda snapshot: snapshot.pop("agent"))
+    else:
+        _tamper_snapshot(store, key, lambda snapshot: snapshot.update(sequence=0))
+        _tamper_snapshot(store, key, lambda snapshot: snapshot.update(agent=None))
+    store.append_events([_event(key, 2)])
+    snapshot = store.get_snapshot(key)
+    assert snapshot is not None
+    assert snapshot.agent is not None
+    assert snapshot.sequence == 2
+    assert snapshot == store._derive_snapshot(key)
+    store.close()

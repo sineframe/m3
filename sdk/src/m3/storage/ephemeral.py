@@ -112,6 +112,14 @@ class StorageConflict(StorageError):
     code = "storage_conflict"
 
 
+class SequenceConflict(StorageConflict):
+    """An appended event does not continue the committed sequence."""
+
+
+class TerminalConflict(StorageConflict):
+    """The execution is finished and cannot receive more events."""
+
+
 class BlobIntegrityError(StorageError):
     """A compressed blob does not match its recorded hash or length."""
 
@@ -1192,8 +1200,34 @@ class InMemoryExecutionStore:
 
     append = append_events
 
+    def _append_events_unreserved(self, events: Sequence[Event]) -> None:
+        batch = tuple(events)
+        if batch:
+            self._commit_checked(
+                _execution_key(batch[0].execution_id),
+                batch,
+                clear_of_reservations=True,
+            )
+
     def append_event(self, event: Event, content: bytes, *, media_type: str) -> Event:
         """Commit an event and its raw blob as one in-memory operation."""
+        return self._append_event(event, content, media_type=media_type)
+
+    def _append_event_unreserved(
+        self, event: Event, content: bytes, *, media_type: str
+    ) -> Event:
+        return self._append_event(
+            event, content, media_type=media_type, clear_of_reservations=True
+        )
+
+    def _append_event(
+        self,
+        event: Event,
+        content: bytes,
+        *,
+        media_type: str,
+        clear_of_reservations: bool = False,
+    ) -> Event:
         execution_id = _execution_key(event.execution_id)
         with self._lock:
             if event.raw_evidence_ref is not None:
@@ -1260,10 +1294,15 @@ class InMemoryExecutionStore:
                 committed_event = event.model_copy(
                     update={"raw_evidence_ref": ref, "payload": event_payload}
                 )
-                self._commit_checked(execution_id, (committed_event,))
+                self._commit_checked(
+                    execution_id,
+                    (committed_event,),
+                    clear_of_reservations=clear_of_reservations,
+                )
                 return self._events[execution_id][-1].model_copy()
             except BaseException:
-                self._reserved_sequences[execution_id].discard(event.sequence)
+                if not clear_of_reservations:
+                    self._reserved_sequences[execution_id].discard(event.sequence)
                 if previous_ref is None:
                     self._raw_refs.pop(evidence_id, None)
                 else:
@@ -1291,7 +1330,13 @@ class InMemoryExecutionStore:
                     reserved.difference_update(failed_sequences)
             raise
 
-    def _commit_checked(self, execution_id: str, events: tuple[Event, ...]) -> None:
+    def _commit_checked(
+        self,
+        execution_id: str,
+        events: tuple[Event, ...],
+        *,
+        clear_of_reservations: bool = False,
+    ) -> None:
         if not events:
             return
         safe_events = tuple(self._redact_event(event) for event in events)
@@ -1301,6 +1346,8 @@ class InMemoryExecutionStore:
             if execution_id not in self._snapshots:
                 raise StorageConflict("execution does not exist")
             current = self._events[execution_id]
+            if self._snapshots[execution_id].lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
             expected = current[-1].sequence + 1 if current else 0
             seen_sequences: set[int] = set()
             seen_ids: set[str] = set()
@@ -1329,7 +1376,7 @@ class InMemoryExecutionStore:
                         "all events in an append must belong to one execution"
                     )
                 if event.sequence != expected:
-                    raise StorageConflict("event sequence must be contiguous")
+                    raise SequenceConflict("event sequence must be contiguous")
                 if event.sequence in seen_sequences:
                     raise StorageConflict("duplicate event sequence in append")
                 if str(event.event_id.root) in seen_ids:
@@ -1337,6 +1384,12 @@ class InMemoryExecutionStore:
                 seen_sequences.add(event.sequence)
                 seen_ids.add(str(event.event_id.root))
                 expected += 1
+            # The recorder does not reserve before it appends, so it asks the
+            # commit itself to leave a sequence another producer holds alone.
+            if clear_of_reservations and not self._reserved_sequences[
+                execution_id
+            ].isdisjoint(seen_sequences):
+                raise StorageConflict("event sequence must be contiguous")
             existing_ids = {str(item.event_id.root) for item in current}
             if existing_ids.intersection(seen_ids):
                 raise StorageConflict("event id is already committed")
@@ -1922,7 +1975,9 @@ __all__ = [
     "ExecutionTransaction",
     "InMemoryArtifactStore",
     "InMemoryExecutionStore",
+    "SequenceConflict",
     "StorageConflict",
     "StorageError",
     "TemporaryArtifactStore",
+    "TerminalConflict",
 ]

@@ -127,3 +127,7 @@ Run this as `tests/test_persistence.py` in the first-test project. A temporary
 database prevents tests from sharing history. Closing a kit does not remove
 records from an explicitly selected SQLite store; close the store after its
 last query.
+
+The results database uses SQLite's write-ahead log with `synchronous=NORMAL`.
+An application crash loses nothing. A power loss or operating-system crash can
+lose the most recent commits, but the database stays consistent.
