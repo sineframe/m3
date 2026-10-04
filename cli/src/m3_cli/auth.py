@@ -378,9 +378,7 @@ def _json_request(
             ) from None
         if code:
             raise RuntimeError(code) from None
-        raise RuntimeError(
-            f"server rejected the request (ref: {request_id})"
-        ) from None
+        raise RuntimeError(f"server rejected the request (ref: {request_id})") from None
     except RuntimeError as exc:
         raise RuntimeError(f"{exc} (ref: {request_id})") from None
     except (error.URLError, TimeoutError, OSError, json.JSONDecodeError):
