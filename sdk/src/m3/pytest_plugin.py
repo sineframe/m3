@@ -2304,15 +2304,21 @@ class _Progress:
         self.disable_native_progress()
         self.restyle_separators()
 
-    @_pytest.hookimpl(tryfirst=True, optionalhook=True)
-    def pytest_testnodedown(self, node: _Any, error: _Any) -> None:
-        # xdist prints a line when a worker goes down; clear the live block
-        # first so that line is not drawn into it. The block is redrawn
-        # below it on the next update.
-        if self.enabled and self._live_height and self._is_tty():
-            up = f"\x1b[{self._live_height - 1}A" if self._live_height > 1 else ""
-            self._live_height = 0
-            self._emit(f"\r{up}\x1b[J")
+    @_pytest.hookimpl(wrapper=True, optionalhook=True)
+    def pytest_testnodedown(self, node: _Any, error: _Any) -> _Any:
+        # xdist prints a line only when a worker crashes; idle workers shut
+        # down silently as the queue drains, and erasing the block for them
+        # left it blank until the next test reported. For a crash, clear the
+        # block so xdist's line lands above it, then redraw it straight away.
+        if not (error and self.enabled and self._live_height and self._is_tty()):
+            return (yield)
+        up = f"\x1b[{self._live_height - 1}A" if self._live_height > 1 else ""
+        self._live_height = 0
+        self._emit(f"\r{up}\x1b[J")
+        try:
+            return (yield)
+        finally:
+            self._write(force=True)
 
     @_pytest.hookimpl(trylast=True)
     def pytest_collection_finish(self, session: _Any) -> None:
