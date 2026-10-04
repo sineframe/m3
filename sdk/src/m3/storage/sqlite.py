@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import threading
 import uuid
 import warnings
@@ -127,12 +129,12 @@ def _sqlalchemy() -> Any:
     """Load SQLAlchemy only when the optional SQLite backend is selected."""
     try:
         from sqlalchemy import create_engine
-        from sqlalchemy.pool import NullPool
+        from sqlalchemy.pool import QueuePool
     except ImportError as exc:  # pragma: no cover - exercised in a minimal env
         raise ModuleNotFoundError(
             "SQLite storage requires the optional dependency; install sf-m3[storage]"
         ) from exc
-    return create_engine, NullPool
+    return create_engine, QueuePool
 
 
 def _is_database_error(exc: BaseException) -> bool:
@@ -177,6 +179,13 @@ class _CompatResult:
         return int(self._result.rowcount)
 
 
+# Key in a pooled connection's ``info`` marking per-connection settings
+# (busy timeout, foreign keys) that a caller changed and the pool must restore.
+_SETTINGS_DIRTY = "m3_settings_dirty"
+# Key holding the (device, inode) of the database file a connection opened.
+_DATABASE_IDENTITY = "m3_database_identity"
+
+
 class _CompatConnection:
     """Keep the existing private SQL helpers while routing through SQLAlchemy."""
 
@@ -199,6 +208,10 @@ class _CompatConnection:
     @property
     def in_transaction(self) -> bool:
         return bool(self._connection.in_transaction())
+
+    def mark_settings_dirty(self) -> None:
+        """Flag the pooled connection so its settings are restored on return."""
+        self._connection.connection.info[_SETTINGS_DIRTY] = True
 
     def close(self) -> None:
         self._connection.close()
@@ -541,7 +554,8 @@ class _SqliteBase:
         self.wal_requested = wal
         self.journal_mode = "delete"
         self._init_lock = threading.Lock()
-        create_engine, null_pool = _sqlalchemy()
+        self._create_database_file()
+        create_engine, queue_pool = _sqlalchemy()
         # SQLAlchemy is the owner of the SQLite DBAPI connection. AUTOCOMMIT
         # keeps PRAGMA setup and our explicit BEGIN/COMMIT boundaries intact;
         # write transactions still use SQLite's native BEGIN IMMEDIATE below.
@@ -552,64 +566,141 @@ class _SqliteBase:
                 "check_same_thread": False,
             },
             isolation_level="AUTOCOMMIT",
-            pool_pre_ping=True,
-            # Store connections are short-lived and the application may
-            # construct several isolated stores during tests. Avoid retaining
-            # idle descriptors in per-store pools; SQLite still serializes
-            # writes through its normal locking semantics.
-            poolclass=null_pool,
+            # Opening a SQLite connection and applying its settings is far
+            # costlier than a query, so connections are pooled and configured
+            # once. The idle pool is capped, and close() disposes it so stores
+            # do not leave descriptors behind. Overflow is unlimited because a
+            # store method may hold a connection while a helper checks out a
+            # second one; a checkout must never wait on the pool.
+            poolclass=queue_pool,
+            pool_size=4,
+            max_overflow=-1,
+            pool_reset_on_return="rollback",
         )
         from sqlalchemy import event
 
-        event.listen(self._engine, "connect", _register_run_search)
+        event.listen(self._engine, "do_connect", self._refuse_symlinks)
+        event.listen(self._engine, "connect", self._configure_connection)
+        event.listen(self._engine, "checkout", self._verify_database_identity)
+        event.listen(self._engine, "reset", self._restore_settings)
         with _timing.span("store.open", key=type(self).__name__):
             self._initialize()
 
-    @_timing.counted("store.connect")
-    def _connect(self) -> _CompatConnection:
+    def _create_database_file(self) -> None:
+        # SQLite gives the WAL and SHM files the database file's permission
+        # bits, so the database must be created private before SQLite sees it.
+        if self.database.exists():
+            return
+        try:
+            fd = os.open(
+                self.database,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+        except FileExistsError:
+            return
+        os.close(fd)
+
+    def _refuse_symlinks(
+        self, _dialect: Any, _record: Any, _args: Any, _kwargs: Any
+    ) -> None:
         # SQLite follows a database symlink (and WAL/SHM symlinks) before this
-        # method gets a chance to write.  Refuse those paths before opening.
+        # store gets a chance to write.  Refuse those paths before opening.
         if _has_symlink_component(self.database) or any(
             Path(f"{self.database}{suffix}").is_symlink() for suffix in ("-wal", "-shm")
         ):
             raise StorageError("database or journal path must not contain symlinks")
-        connection: _CompatConnection | None = None
+
+    def _configure_connection(self, dbapi_connection: Any, record: Any) -> None:
+        """Apply per-connection settings once, when the driver connection opens."""
+        with _timing.count("store.dbapi_connect"):
+            try:
+                self._configure_new_connection(dbapi_connection, record)
+            except BaseException:
+                dbapi_connection.close()
+                raise
+
+    def _configure_new_connection(self, dbapi_connection: Any, record: Any) -> None:
+        _register_run_search(dbapi_connection, record)
+        cursor = dbapi_connection.cursor()
         try:
-            connection = _CompatConnection(self._engine.connect())
-            connection.execute("PRAGMA foreign_keys=ON")
-            connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-            if self.wal_requested:
-                result = connection.execute("PRAGMA journal_mode=WAL").fetchone()
-                if result:
-                    self.journal_mode = str(result[0]).lower()
-            else:
-                result = connection.execute("PRAGMA journal_mode").fetchone()
-                if result:
-                    self.journal_mode = str(result[0]).lower()
-            # Metadata and WAL/SHM files can contain sensitive redacted
-            # evidence.  Tighten modes on every open, including files created
-            # by SQLite after the connection was established.
-            for path in (
-                self.database,
-                Path(f"{self.database}-wal"),
-                Path(f"{self.database}-shm"),
-            ):
-                if path.is_symlink():
-                    raise StorageError("database or journal path must not be a symlink")
-                if path.exists():
-                    if not path.is_file():
-                        raise StorageError(
-                            "database or journal path must name a regular file"
-                        )
-                    path.chmod(0o600)
-            return connection
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+            # Request WAL on every new connection: a lost lock race silently
+            # leaves the previous mode in place and reports it here.
+            pragma = (
+                "PRAGMA journal_mode=WAL"
+                if self.wal_requested
+                else ("PRAGMA journal_mode")
+            )
+            result = cursor.execute(pragma).fetchone()
+            if result:
+                self.journal_mode = str(result[0]).lower()
+            if self.journal_mode == "wal":
+                # Commits skip the per-commit fsync. An application crash
+                # loses nothing; a power loss or OS crash can lose the most
+                # recent commits but never corrupts the database.
+                cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
+        # Metadata and WAL/SHM files can contain sensitive redacted
+        # evidence.  Tighten modes on every open, including files created
+        # by SQLite after the connection was established.
+        for path in (
+            self.database,
+            Path(f"{self.database}-wal"),
+            Path(f"{self.database}-shm"),
+        ):
+            if path.is_symlink():
+                raise StorageError("database or journal path must not be a symlink")
+            if path.exists():
+                if not path.is_file():
+                    raise StorageError(
+                        "database or journal path must name a regular file"
+                    )
+                path.chmod(0o600)
+        status = os.stat(self.database)
+        record.info[_DATABASE_IDENTITY] = (status.st_dev, status.st_ino)
+
+    def _verify_database_identity(
+        self, _dbapi_connection: Any, record: Any, _proxy: Any
+    ) -> None:
+        """Discard a pooled connection whose database path now names another file."""
+        try:
+            status = os.lstat(self.database)
+            current: tuple[int, int] | None = (status.st_dev, status.st_ino)
+            if stat.S_ISLNK(status.st_mode):
+                current = None
+        except OSError:
+            current = None
+        if current is None or current != record.info.get(_DATABASE_IDENTITY):
+            from sqlalchemy.exc import DisconnectionError
+
+            raise DisconnectionError("database file was replaced or removed")
+
+    def _restore_settings(
+        self, dbapi_connection: Any, record: Any, reset_state: Any
+    ) -> None:
+        """Undo per-connection settings a caller changed before pool reuse."""
+        if not record.info.pop(_SETTINGS_DIRTY, False) or reset_state.terminate_only:
+            return
+        # PRAGMA foreign_keys is a no-op inside a transaction, so end any
+        # transaction a caller left open first.
+        dbapi_connection.rollback()
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+        finally:
+            cursor.close()
+
+    @_timing.counted("store.connect")
+    def _connect(self) -> _CompatConnection:
+        try:
+            return _CompatConnection(self._engine.connect())
         except StorageError:
-            if connection is not None:
-                connection.close()
             raise
         except Exception as exc:
-            if connection is not None:
-                connection.close()
             if _is_database_error(exc):
                 raise StorageError("database is unavailable") from None
             raise
@@ -744,6 +835,7 @@ class _SqliteBase:
         definition = "" if row is None else str(row[0] or "")
         if "suite_name text not null unique" not in definition.lower():
             return
+        connection.mark_settings_dirty()
         connection.execute("PRAGMA foreign_keys=OFF")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -2365,6 +2457,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     successful,
                 ):
                     return
+                connection.mark_settings_dirty()
                 connection.execute("PRAGMA busy_timeout=0")
                 connection.execute(
                     "UPDATE v2_executions SET tool_call_counts_json=? WHERE id=? "

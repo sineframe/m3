@@ -539,13 +539,17 @@ def test_database_files_are_private_and_symlink_paths_fail_closed(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "private.sqlite"
-    store = SQLiteExecutionStore(database, blob_root=tmp_path / "blobs")
-    _created(store, "private")
+    previous = os.umask(0o022)
+    try:
+        store = SQLiteExecutionStore(database, blob_root=tmp_path / "blobs")
+        _created(store, "private")
+    finally:
+        os.umask(previous)
     assert stat.S_IMODE(database.stat().st_mode) == 0o600
     for suffix in ("-wal", "-shm"):
         sidecar = Path(f"{database}{suffix}")
-        if sidecar.exists():
-            assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+        assert sidecar.exists()
+        assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
     target = tmp_path / "target.sqlite"
     target.write_bytes(b"keep")
@@ -554,6 +558,135 @@ def test_database_files_are_private_and_symlink_paths_fail_closed(
     with pytest.raises(StorageError, match="symlink"):
         SQLiteExecutionStore(link)
     assert target.read_bytes() == b"keep"
+
+
+def _driver_connection_opens(store: SQLiteExecutionStore) -> list[int]:
+    """Record driver connections opened from now on, after pooling two."""
+    from sqlalchemy import event
+
+    with store._connect(), store._connect():
+        pass
+
+    opened: list[int] = []
+    event.listen(
+        store._engine,
+        "connect",
+        lambda dbapi_connection, _record: opened.append(id(dbapi_connection)),
+    )
+    return opened
+
+
+def _pragma(store: SQLiteExecutionStore, name: str) -> int:
+    with store._connect() as connection:
+        row = connection.execute(f"PRAGMA {name}").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_pooled_driver_connection_is_reused_across_operations(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    opened = _driver_connection_opens(store)
+    execution_id, factory = _created(store, "pooled")
+    for index in range(20):
+        store.append_events(
+            [factory.create(EventKind.DIAGNOSTIC, payload={"n": index})]
+        )
+        list(store.iter_events(execution_id))
+    # Nested checkouts get distinct connections and return to the pool.
+    with store._connect() as outer, store._connect() as inner:
+        assert outer._connection.connection.dbapi_connection is not (
+            inner._connection.connection.dbapi_connection
+        )
+    assert opened == []
+    store.close()
+
+
+def test_leaked_transaction_is_rolled_back_when_connection_returns(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    other = _store(tmp_path)
+    connection = store._connect()
+    connection.execute("BEGIN IMMEDIATE")
+    assert connection.in_transaction
+    connection.close()
+    _created(other, "after-leak")
+    with store._connect() as reused:
+        assert not reused.in_transaction
+    _created(store, "after-reuse")
+
+
+def test_changed_connection_settings_are_restored_on_reuse(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    opened = _driver_connection_opens(store)
+    assert _pragma(store, "busy_timeout") == store.busy_timeout_ms
+    with store._connect() as connection:
+        connection.mark_settings_dirty()
+        connection.execute("PRAGMA busy_timeout=0")
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("BEGIN IMMEDIATE")
+    assert _pragma(store, "busy_timeout") == store.busy_timeout_ms
+    assert _pragma(store, "foreign_keys") == 1
+    trace = _normalized(_corpus()[sorted(_corpus())[0]]())
+    execution_id = ExecutionId("corpus")
+    store.create(ExecutionState(execution_id=execution_id))
+    store.append_events(
+        [
+            event.model_copy(
+                update={
+                    "execution_id": execution_id,
+                    "event_id": EventId(f"corpus-{event.sequence}"),
+                }
+            )
+            for event in trace.events
+        ]
+    )
+    with sqlite3.connect(tmp_path / "m3.sqlite") as raw:
+        raw.execute("UPDATE v2_executions SET tool_call_counts_json=NULL")
+    assert store.tool_call_counts([execution_id])
+    assert _pragma(store, "busy_timeout") == store.busy_timeout_ms
+    assert opened == []
+
+
+def test_wal_connections_use_normal_synchronous(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    assert store.journal_mode == "wal"
+    assert _pragma(store, "synchronous") == 1
+
+
+def test_database_path_replaced_by_symlink_fails_closed(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    store = _store(tmp_path)
+    _created(store)
+    target = tmp_path / "target.sqlite"
+    target.write_bytes(b"keep")
+    database.unlink()
+    database.symlink_to(target)
+    with pytest.raises(StorageError, match="symlink"):
+        list(store.iter_events(ExecutionId("execution-1")))
+    assert target.read_bytes() == b"keep"
+
+
+def test_replaced_database_file_is_reopened_not_written_unlinked(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    store = _store(tmp_path)
+    opened = _driver_connection_opens(store)
+    _created(store, "before")
+    old_inode = database.stat().st_ino
+    database.rename(tmp_path / "moved.sqlite")
+    for suffix in ("-wal", "-shm"):
+        Path(f"{database}{suffix}").unlink(missing_ok=True)
+    replacement = tmp_path / "replacement.sqlite"
+    SQLiteExecutionStore(replacement, blob_root=tmp_path / "blobs").close()
+    os.replace(replacement, database)
+    assert database.stat().st_ino != old_inode
+    _created(store, "after")
+    assert opened
+    with sqlite3.connect(database) as raw:
+        ids = {row[0] for row in raw.execute("SELECT id FROM v2_executions")}
+    assert ids == {"after"}
 
 
 def test_corrupt_database_has_value_free_storage_error(tmp_path: Path) -> None:
