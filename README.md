@@ -128,10 +128,6 @@ def test_last_weeks_orders(agent):
 
 </details>
 
-Run the tests with `m3 test`:
-
-<img src="docs/assets/cli/m3-test.png" alt="m3 test output: two tests pass and test_revenue_by_month fails with a tool calls mismatch." width="800">
-
 ## Install and start
 
 Install the CLI with uv:
