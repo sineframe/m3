@@ -66,7 +66,7 @@ import sys
 import pytest
 from m3 import StdioServer, expect
 
-pytestmark = pytest.mark.m3(agents=[{"harness": "claude-code", "models": ["sonnet"]}])
+pytestmark = pytest.mark.m3(agents=[{"harness": "claude-code", "models": ["claude-sonnet-5-5"]}])
 
 registry = StdioServer(name="registry", command=sys.executable, args=("registry_server.py",))
 
