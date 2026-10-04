@@ -1,5 +1,7 @@
 .env
 *.db
+*.db-wal
+*.db-shm
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -7,3 +9,4 @@ __pycache__/
 *.egg-info/
 .m3/
 .delta/
+worktrees/
