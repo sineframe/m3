@@ -704,7 +704,7 @@ def test_crashed_xdist_worker_counts_its_test_as_failed() -> None:
     )
     progress.pytest_runtest_logstart("t.py::a", ("", 1, ""))
     progress.pytest_runtest_logstart("t.py::b", ("", 1, ""))
-    progress.pytest_testnodedown(node=None, error="crashed")
+    _node_down(progress, error="crashed")
     progress.pytest_runtest_logreport(_report("t.py::a", "???", "failed"))
     _run(progress, "t.py::b", "passed")
     progress.pytest_runtest_logreport(_report("t.py::b", "teardown", "passed"))
@@ -715,6 +715,46 @@ def test_crashed_xdist_worker_counts_its_test_as_failed() -> None:
     screen = _screen(reporter.written)
     assert "  ✗ t.py::a" in screen
     assert screen[-1].startswith("  ✗ ") and "2/2" in screen[-1]
+
+
+def _node_down(progress: Any, *, error: Any, printed: str = "") -> None:
+    """Drive the pytest_testnodedown wrapper; ``printed`` stands in for xdist."""
+
+    hook = progress.pytest_testnodedown(node=None, error=error)
+    next(hook)
+    progress.reporter.written.append(printed)
+    with pytest.raises(StopIteration):
+        hook.send(None)
+
+
+def test_idle_xdist_worker_shutdown_leaves_live_block_in_place() -> None:
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter, numprocesses=2)
+    progress.pytest_collection_finish(_items())
+    progress.pytest_xdist_node_collection_finished(
+        node=None, ids=["t.py::a", "t.py::b"]
+    )
+    _run(progress, "t.py::a", "passed")
+    progress.pytest_runtest_logstart("t.py::b", ("", 1, ""))
+    before = _screen(reporter.written)
+    _node_down(progress, error=None)
+    assert _screen(reporter.written) == before
+    assert "1/2" in before[-1]
+
+
+def test_crashed_xdist_worker_line_lands_above_redrawn_live_block() -> None:
+    reporter = _colour_reporter(80)
+    progress = _progress(reporter, numprocesses=2)
+    progress.pytest_collection_finish(_items())
+    progress.pytest_xdist_node_collection_finished(
+        node=None, ids=["t.py::a", "t.py::b"]
+    )
+    _run(progress, "t.py::a", "passed")
+    progress.pytest_runtest_logstart("t.py::b", ("", 1, ""))
+    _node_down(progress, error="crashed", printed="[gw1] node down: crashed\n")
+    screen = _screen(reporter.written)
+    down = screen.index("[gw1] node down: crashed")
+    assert "1/2" in screen[-1] and len(screen) - 1 > down
 
 
 def test_rerun_attempts_are_not_counted() -> None:
