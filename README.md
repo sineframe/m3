@@ -55,6 +55,92 @@ tests, captures MCP evidence, and can save runs for inspection and comparison.
   </tr>
 </table>
 
+## What a test looks like
+
+A test gives an agent a prompt and your MCP server. M3 records every MCP call
+the agent makes, so the test can check the calls, not only the answer.
+
+```python
+import sys
+
+import pytest
+from m3 import StdioServer, expect
+
+pytestmark = pytest.mark.m3(agents=[{"harness": "claude-code", "models": ["claude-sonnet-5-5"]}])
+
+registry = StdioServer(name="registry", command=sys.executable, args=("registry_server.py",))
+
+
+def test_adds_current_tailwind(agent):
+    result = agent.run("Add Tailwind to this project.", server=registry)
+    expect(result).to_have_tool_call("get_latest_version", arguments={"package": "tailwindcss"})
+```
+
+If the agent answers from memory and never calls the server, the test fails.
+The fix is usually the tool description, not the test:
+
+```diff
+ @mcp.tool(
+-    description="Get package info",
++    description="Current published version of a package. Call before adding "
++    "or upgrading a dependency; your training data is out of date.",
+ )
+ def get_latest_version(package: str) -> str:
+```
+
+<details>
+<summary>Database: look up the schema before querying</summary>
+
+```python
+def test_revenue_by_month(agent):
+    result = agent.run("Show me revenue by month.", server=db)
+    expect(result).to_have_tool_calls(["describe_table", "query"])
+```
+
+```diff
+ @mcp.tool(
+-    description="Run a SQL query",
++    description="Run a read-only SQL query. Call describe_table first; "
++    "column names are specific to this database.",
+ )
+ def query(sql: str) -> list[list]:
+```
+
+</details>
+
+<details>
+<summary>Your API: find the endpoint instead of guessing it</summary>
+
+```python
+def test_last_weeks_orders(agent):
+    result = agent.run("Get last week's orders from our API.", server=api)
+    expect(result).to_have_tool_calls(["find_endpoint", "call_endpoint"])
+```
+
+```diff
+ @mcp.tool(
+-    description="Search the API spec",
++    description="Look up the real path before calling any endpoint. "
++    "Paths are specific to this API; don't guess them.",
+ )
+ def find_endpoint(query: str) -> str:
+```
+
+</details>
+
+Put `ANTHROPIC_API_KEY` in `.env` at the project root, then run the tests:
+
+```sh
+m3 test -- tests
+```
+
+Run the same tests with another agent, or several times to get a pass rate:
+
+```sh
+m3 test --harness codex=gpt-5.6-sol -- tests
+m3 test --trials 5 -- tests
+```
+
 ## Install and start
 
 Install the CLI with uv:
