@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import io
+import shutil
 from pathlib import Path
 
 import pytest
@@ -59,6 +61,37 @@ def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
         assert unknown_api.status_code == 404
         assert unknown_api.headers["content-type"].startswith("application/json")
         assert "<!doctype html>" not in unknown_api.text.lower()
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_brand_icon_is_served_as_png_or_404(tmp_path: Path, present: bool) -> None:
+    ui = tmp_path / "ui"
+    shutil.copytree(_FIXTURE_UI, ui)
+    # A complete 1x1 PNG, rather than an HTML response with an image media type.
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jX1kAAAAASUVORK5CYII="
+    )
+    if present:
+        (ui / "sineframe-icon.png").write_bytes(png)
+    application = create_web_app(
+        tmp_path / "shared.sqlite", auth_token=_AUTH_TOKEN, ui_dir=ui
+    )
+    with TestClient(
+        application,
+        base_url="http://127.0.0.1",
+        client=("127.0.0.1", 50000),
+    ) as client:
+        for method in ("GET", "HEAD"):
+            response = client.request(method, "/sineframe-icon.png")
+            assert response.status_code == (200 if present else 404)
+            if present:
+                assert response.headers["content-type"] == "image/png"
+                assert int(response.headers["content-length"]) == len(png)
+                assert response.content == (png if method == "GET" else b"")
+            else:
+                assert response.headers["content-type"] == "application/json"
+                if method == "GET":
+                    assert response.json() == {"detail": "Not Found"}
 
 
 def test_local_host_and_origin_protection(tmp_path: Path) -> None:

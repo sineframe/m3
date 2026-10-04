@@ -87,6 +87,15 @@ def create_web_app(
         "/assets", StaticFiles(directory=str(root / "assets")), name="assets"
     )
 
+    @application.api_route(
+        "/sineframe-icon.png", methods=["GET", "HEAD"], response_model=None
+    )
+    async def brand_icon() -> Response:
+        icon = root / "sineframe-icon.png"
+        if not icon.is_file():
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return FileResponse(icon, media_type="image/png")
+
     @application.api_route("/{path:path}", methods=["GET", "HEAD"], response_model=None)
     async def spa_fallback(request: Request, path: str) -> Response:
         if path == "api" or path.startswith("api/"):
