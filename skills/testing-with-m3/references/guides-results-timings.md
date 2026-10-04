@@ -258,7 +258,8 @@ brackets, such as `mcp.request[tools/call]`.
 | Step | Kind | Covers |
 | --- | --- | --- |
 | `store.open[<store>]` | span | Opening a store, such as `SQLiteExecutionStore`. |
-| `store.connect` | counter | Each SQLite connection. |
+| `store.connect` | counter | Each SQLite connection checked out of the store's pool. |
+| `store.dbapi_connect` | counter | Each new SQLite connection opened and configured. |
 | `store.append` | counter | Appending execution events. |
 | `store.load_events` | counter | Loading events. |
 | `store.allocate_seq` | counter | Allocating event sequence numbers. |

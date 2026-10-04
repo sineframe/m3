@@ -2171,6 +2171,7 @@ close(
     self,
 ) -> None
 ```
+- `journal_mode` (property)
 
 ## `ProfileRecord`
 
@@ -2279,6 +2280,7 @@ cleanup(
 ) -> None
 ```
 - `blob_store` (property): The app-owned content-addressed store used by metadata rows.
+- `journal_mode` (property)
 
 ## `SQLiteExecutionStore`
 
@@ -3107,6 +3109,7 @@ close(
     self,
 ) -> None
 ```
+- `journal_mode` (property)
 
 ## `SQLiteManagedInputStore`
 
@@ -4088,6 +4091,7 @@ close(
     self,
 ) -> None
 ```
+- `journal_mode` (property)
 
 ## `SQLiteStoreWorker`
 
@@ -4141,14 +4145,6 @@ m3.storage.StorageError
 
 Base class for expected ephemeral storage failures.
 
-## `TerminalConflict`
-
-```python
-m3.storage.TerminalConflict
-```
-
-The execution is finished and cannot receive more events.
-
 ## `TemporaryArtifactStore`
 
 ```python
@@ -4193,6 +4189,14 @@ cleanup(
     self,
 ) -> None
 ```
+
+## `TerminalConflict`
+
+```python
+m3.storage.TerminalConflict
+```
+
+The execution is finished and cannot receive more events.
 
 ## `serialize_durable`
 
