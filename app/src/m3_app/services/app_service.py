@@ -44,7 +44,11 @@ from m3_app.services.profile_service import (
     ProfileService,
     ProfileView,
 )
-from m3_app.services.readiness_service import ReadinessService, ReadinessView
+from m3_app.services.readiness_service import (
+    ReadinessService,
+    ReadinessView,
+    StorageHealthView,
+)
 from m3_app.services.spec_builder import ExecutionSpecBuilder, OneTurnRunDraft
 from m3_app.settings import Settings
 
@@ -141,6 +145,8 @@ class RuntimeKit(Protocol):
 
 class ReadinessProvider(Protocol):
     """Typed readiness seam for deterministic application-client tests."""
+
+    def storage(self) -> StorageHealthView: ...
 
     def capabilities(self, *, include_archived: bool = False) -> ReadinessView: ...
 
