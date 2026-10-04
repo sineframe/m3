@@ -668,9 +668,24 @@ def test_wal_connections_use_normal_synchronous(tmp_path: Path) -> None:
     assert _pragma(store, "synchronous") == 1
 
 
+def _schema_generation(database: Path) -> int | None:
+    with sqlite3.connect(database) as raw:
+        row = raw.execute(
+            "SELECT generation FROM v2_schema_state WHERE id=1"
+        ).fetchone()
+    return None if row is None else int(row[0])
+
+
 def _user_version(database: Path) -> int:
     with sqlite3.connect(database) as raw:
         return int(raw.execute("PRAGMA user_version").fetchone()[0])
+
+
+def _foreign_database(database: Path, user_version: int) -> None:
+    with sqlite3.connect(database) as raw:
+        raw.execute("CREATE TABLE app_data(id INTEGER PRIMARY KEY, note TEXT)")
+        raw.execute("INSERT INTO app_data(note) VALUES('keep')")
+        raw.execute(f"PRAGMA user_version={user_version}")
 
 
 def _index_names(database: Path) -> set[str]:
@@ -686,7 +701,9 @@ def test_open_of_current_database_skips_schema_setup(
 ) -> None:
     first = _store(tmp_path)
     execution_id, factory = _created(first)
-    assert _user_version(tmp_path / "m3.sqlite") == sqlite_storage._SCHEMA_GENERATION
+    assert (
+        _schema_generation(tmp_path / "m3.sqlite") == sqlite_storage._SCHEMA_GENERATION
+    )
 
     def refuse(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("schema setup must be skipped")
@@ -709,19 +726,61 @@ def test_database_without_schema_generation_is_fully_migrated_then_marked(
     _store(tmp_path).close()
     with sqlite3.connect(database) as raw:
         raw.execute("DROP INDEX v2_executions_created_at")
-        raw.execute("PRAGMA user_version=0")
+        raw.execute("DELETE FROM v2_schema_state")
     assert "v2_executions_created_at" not in _index_names(database)
     store = _store(tmp_path)
     assert "v2_executions_created_at" in _index_names(database)
-    assert _user_version(database) == sqlite_storage._SCHEMA_GENERATION
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
     _created(store)
+
+
+def test_database_from_an_older_sdk_without_the_marker_table_is_migrated(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    with sqlite3.connect(database) as raw:
+        raw.execute("DROP INDEX v2_executions_created_at")
+        raw.execute("DROP TABLE v2_schema_state")
+    store = _store(tmp_path)
+    assert "v2_executions_created_at" in _index_names(database)
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+    _created(store)
+
+
+def test_unrelated_database_user_version_is_preserved(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    _foreign_database(database, 7)
+    store = _store(tmp_path)
+    assert _user_version(database) == 7
+    execution_id, _ = _created(store)
+    assert len(store.events(execution_id)) == 1
+    store.close()
+    assert _user_version(database) == 7
+    with sqlite3.connect(database) as raw:
+        assert raw.execute("SELECT note FROM app_data").fetchall() == [("keep",)]
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+
+
+def test_user_version_above_the_generation_does_not_skip_initialization(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    _foreign_database(database, 99)
+    store = _store(tmp_path)
+    assert "v2_executions_created_at" in _index_names(database)
+    execution_id, _ = _created(store)
+    assert store.get_snapshot(execution_id).execution_id == execution_id
+    store.close()
+    assert _user_version(database) == 99
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
 
 
 def test_rows_from_an_older_writer_are_migrated_on_open(tmp_path: Path) -> None:
     database = tmp_path / "m3.sqlite"
     _store(tmp_path).close()
-    assert _user_version(database) == sqlite_storage._SCHEMA_GENERATION
-    # An SDK that predates run labels never updates user_version.
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
+    # An SDK that predates run labels never updates the marker.
     with sqlite3.connect(database) as raw:
         raw.execute(
             "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) "
@@ -762,9 +821,9 @@ def test_newer_schema_generation_is_left_alone(tmp_path: Path) -> None:
     _store(tmp_path).close()
     newer = sqlite_storage._SCHEMA_GENERATION + 5
     with sqlite3.connect(database) as raw:
-        raw.execute(f"PRAGMA user_version={newer}")
+        raw.execute("UPDATE v2_schema_state SET generation=?", (newer,))
     _created(_store(tmp_path))
-    assert _user_version(database) == newer
+    assert _schema_generation(database) == newer
 
 
 def test_standalone_artifact_store_does_not_mark_database_current(
@@ -772,7 +831,7 @@ def test_standalone_artifact_store_does_not_mark_database_current(
 ) -> None:
     database = tmp_path / "m3.sqlite"
     SQLiteArtifactStore(database, tmp_path / "blobs").close()
-    assert _user_version(database) == 0
+    assert _schema_generation(database) is None
     assert "v2_executions_created_at" in _index_names(database)
     with sqlite3.connect(database) as raw:
         raw.execute("DROP INDEX v2_executions_created_at")
@@ -789,7 +848,7 @@ def test_standalone_artifact_store_does_not_mark_database_current(
     store = _store(tmp_path)
     assert ran
     assert "v2_executions_created_at" in _index_names(database)
-    assert _user_version(database) == sqlite_storage._SCHEMA_GENERATION
+    assert _schema_generation(database) == sqlite_storage._SCHEMA_GENERATION
     store.close()
 
 

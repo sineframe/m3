@@ -531,11 +531,15 @@ CREATE TABLE IF NOT EXISTS v2_sequence_reservations (
 CREATE TABLE IF NOT EXISTS v2_judge_request_budgets (
   run_id TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS v2_schema_state (
+  id INTEGER PRIMARY KEY CHECK(id = 1), generation INTEGER NOT NULL
+);
 """
 
 
-# Recorded in PRAGMA user_version once a database has been through every
-# migration below. Bump it whenever SCHEMA, a column or index definition, or the
+# Recorded in the v2_schema_state row once a database has been through every
+# migration below. m3 never touches PRAGMA user_version: that value belongs to
+# the whole SQLite file, which another application may share. Bump it whenever SCHEMA, a column or index definition, or the
 # DDL of any migration in _SqliteBase._initialize changes, so databases marked
 # by an older SDK run the full initialization again. A marked database still
 # runs the read-only probes of the data migrations (the *_pending helpers next
@@ -546,7 +550,7 @@ _SCHEMA_GENERATION = 1
 # Fingerprint of SCHEMA and _SqliteBase._initialize as of _SCHEMA_GENERATION.
 # A unit test recomputes it, so a DDL change cannot ship without a new
 # generation.
-_SCHEMA_FINGERPRINT = "a65480afca625040ae80740783c5197cf0ef5e943017ee75e82bafe3ba0c7850"
+_SCHEMA_FINGERPRINT = "ad12d700b202e8bb8b8394b6ef1da468de90790dee0f0f98d52ba887ac95cd3c"
 
 
 _UNLABELED_RUNS = "run_label IS NULL"
@@ -777,7 +781,7 @@ class _SqliteBase:
                 # unless an older SDK has since written rows that still need a
                 # data migration; skipping the rest also avoids the write lock
                 # the run-label backfill takes on every open.
-                if self._schema_version(
+                if self._schema_generation(
                     connection
                 ) >= _SCHEMA_GENERATION and not self._has_pending_backfill(connection):
                     return
@@ -873,7 +877,11 @@ class _SqliteBase:
                     # Only a store that ran every migration may mark the
                     # database current; an artifact store skips the profile
                     # migrations.
-                    connection.execute(f"PRAGMA user_version={_SCHEMA_GENERATION}")
+                    connection.execute(
+                        "INSERT INTO v2_schema_state(id, generation) VALUES(1, ?) "
+                        "ON CONFLICT(id) DO UPDATE SET generation=excluded.generation",
+                        (_SCHEMA_GENERATION,),
+                    )
         except StorageError:
             raise
         except Exception as exc:
@@ -882,8 +890,21 @@ class _SqliteBase:
             raise
 
     @staticmethod
-    def _schema_version(connection: _CompatConnection) -> int:
-        row = connection.execute("PRAGMA user_version").fetchone()
+    def _schema_generation(connection: _CompatConnection) -> int:
+        """Return the recorded generation, or 0 for a database never marked."""
+        # Look the table up first: a failed SELECT would raise through the
+        # driver instead of reporting an unmarked database.
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='v2_schema_state'"
+            ).fetchone()
+            is None
+        ):
+            return 0
+        row = connection.execute(
+            "SELECT generation FROM v2_schema_state WHERE id=1"
+        ).fetchone()
         return int(row[0]) if row else 0
 
     def _has_pending_backfill(self, connection: _CompatConnection) -> bool:
