@@ -1131,7 +1131,8 @@ def install_v2(
     def health(
         runtime: AppRuntimeService = Depends(get_runtime),
     ) -> dict[str, JsonValue]:
-        storage = runtime.capabilities().storage
+        # Liveness only needs storage; harness probes spawn CLIs (~1s).
+        storage = runtime.readiness.storage()
         return cast(
             dict[str, JsonValue],
             {

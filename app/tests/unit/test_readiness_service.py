@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from _local_client import TestClient
 
 from m3.storage import (
     ProfileRecord,
@@ -10,6 +11,7 @@ from m3.storage import (
     SQLiteExecutionStore,
     StorageError,
 )
+from m3_app.api import create_app
 from m3_app.services.app_service import AppRuntimeService
 from m3_app.services.readiness_service import (
     REQUIRED_CLAUDE_FLAGS,
@@ -358,6 +360,9 @@ def test_runtime_uses_injected_readiness_provider(tmp_path: Path) -> None:
             self.calls = 0
             self.value = ReadinessView(StorageHealthView(True, "connected"), (), ())
 
+        def storage(self) -> StorageHealthView:
+            return self.value.storage
+
         def capabilities(self, *, include_archived: bool = False) -> ReadinessView:
             self.calls += 1
             return self.value
@@ -373,3 +378,37 @@ def test_runtime_uses_injected_readiness_provider(tmp_path: Path) -> None:
     assert fake.calls == 1
     runtime.close()
     store.close()
+
+
+def test_health_checks_storage_without_harness_probes(tmp_path: Path) -> None:
+    class StorageOnlyReadiness:
+        def __init__(self) -> None:
+            self.storage_calls = 0
+
+        def storage(self) -> StorageHealthView:
+            self.storage_calls += 1
+            return StorageHealthView(False, "degraded", "storage is unavailable")
+
+        def capabilities(self, *, include_archived: bool = False) -> ReadinessView:
+            raise AssertionError("health must not run harness probes")
+
+    fake = StorageOnlyReadiness()
+    runtime = AppRuntimeService(
+        _settings(tmp_path / "health.sqlite"),
+        readiness_service=fake,
+        embedded_worker=False,
+    )
+    try:
+        with TestClient(create_app(runtime=runtime)) as client:
+            response = client.get("/api/v2/health")
+        assert response.status_code == 200
+        assert response.json() == {
+            "version": "v2",
+            "status": "degraded",
+            "ready": False,
+            "checks": {"database": False},
+            "reason": "storage is unavailable",
+        }
+        assert fake.storage_calls == 1
+    finally:
+        runtime.close()
