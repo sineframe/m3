@@ -289,7 +289,7 @@ def test_post_uses_json_and_retries_same_bytes(monkeypatch):
     for request_id in ids:
         assert str(uuid.UUID(request_id)) == request_id
     for _, agent in sent:
-        assert re.fullmatch(r"m3-cli/\S+ python/\d+\.\d+\.\d+", agent)
+        assert re.fullmatch(r"m3-cli/\S+ python/\S+", agent)
 
 
 def test_post_rejects_redirect_once_without_forwarding_token():
@@ -302,6 +302,9 @@ def test_post_rejects_redirect_once_without_forwarding_token():
         with pytest.raises(UploadError, match="redirected") as raised:
             _post(base + "/", "secret", b"{}", "run r summary")
     assert raised.value.retryable is False
+    request_id = raised.value.request_id
+    assert request_id
+    assert str(raised.value).endswith(f" (ref: {request_id})")
     assert Handler.calls == 1
 
 

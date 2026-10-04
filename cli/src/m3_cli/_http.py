@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import platform
 import uuid
 from importlib.metadata import PackageNotFoundError, version
@@ -14,6 +15,7 @@ def new_request_id() -> str:
     return str(uuid.uuid4())
 
 
+@functools.cache
 def cli_version() -> str:
     try:
         return version("sf-m3-cli")
@@ -21,6 +23,7 @@ def cli_version() -> str:
         return "0+unknown"
 
 
+@functools.cache
 def user_agent() -> str:
     return f"m3-cli/{cli_version()} python/{platform.python_version()}"
 

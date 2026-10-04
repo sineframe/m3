@@ -365,8 +365,8 @@ def _json_request(
                 "invalid_grant",
             } and not (exc.code == 429 and code == "rate_limited"):
                 code = None
-        except RuntimeError:
-            raise
+        except RuntimeError as inner:
+            raise RuntimeError(f"{inner} (ref: {request_id})") from None
         except Exception:
             code = None
         if code == "rate_limited" and exc.code == 429:
@@ -378,15 +378,17 @@ def _json_request(
             ) from None
         if code:
             raise RuntimeError(code) from None
-        raise RuntimeError("server rejected the request") from None
-    except RuntimeError:
-        raise
+        raise RuntimeError(
+            f"server rejected the request (ref: {request_id})"
+        ) from None
+    except RuntimeError as exc:
+        raise RuntimeError(f"{exc} (ref: {request_id})") from None
     except (error.URLError, TimeoutError, OSError, json.JSONDecodeError):
         raise RuntimeError(
             f"could not contact the M3 control-plane (ref: {request_id})"
         ) from None
     if not isinstance(result, dict):
-        raise RuntimeError("server returned an invalid response")
+        raise RuntimeError(f"server returned an invalid response (ref: {request_id})")
     return result
 
 
