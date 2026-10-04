@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
+import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import ClassVar
 
 import pytest
 
@@ -237,9 +240,11 @@ def _replying(status, body=b""):
 
     class Handler(BaseHTTPRequestHandler):
         calls = 0
+        request_ids: ClassVar[list[str]] = []
 
         def do_POST(self):
             Handler.calls += 1
+            Handler.request_ids.append(self.headers["X-Request-ID"])
             self.rfile.read(int(self.headers["Content-Length"]))
             self.send_response(status)
             self.send_header("Content-Length", str(len(body)))
@@ -254,12 +259,14 @@ def test_post_uses_json_and_retries_same_bytes(monkeypatch):
 
     monkeypatch.setattr(control_plane.time, "sleep", lambda _seconds: None)
     received = []
+    sent = []
 
     class Handler(BaseHTTPRequestHandler):
         calls = 0
 
         def do_POST(self):
             Handler.calls += 1
+            sent.append((self.headers["X-Request-ID"], self.headers["User-Agent"]))
             received.append(
                 (
                     self.path,
@@ -277,6 +284,12 @@ def test_post_uses_json_and_retries_same_bytes(monkeypatch):
     assert {item[1] for item in received} == {"application/json"}
     assert {item[2] for item in received} == {"Bearer secret"}
     assert received[0][3] == received[1][3] == b'{"x":1}'
+    ids = [item[0] for item in sent]
+    assert len(set(ids)) == 2
+    for request_id in ids:
+        assert str(uuid.UUID(request_id)) == request_id
+    for _, agent in sent:
+        assert re.fullmatch(r"m3-cli/\S+ python/\S+", agent)
 
 
 def test_post_rejects_redirect_once_without_forwarding_token():
@@ -289,6 +302,9 @@ def test_post_rejects_redirect_once_without_forwarding_token():
         with pytest.raises(UploadError, match="redirected") as raised:
             _post(base + "/", "secret", b"{}", "run r summary")
     assert raised.value.retryable is False
+    request_id = raised.value.request_id
+    assert request_id
+    assert str(raised.value).endswith(f" (ref: {request_id})")
     assert Handler.calls == 1
 
 
@@ -301,7 +317,9 @@ def test_post_client_rejection_names_subject_and_server_code_without_retrying():
             _post(base + "/", "secret", b"{}", "execution exec-1 report")
     assert str(raised.value) == (
         "the M3 server rejected execution exec-1 report (HTTP 413 payload_too_large)"
+        f" (ref: {handler.request_ids[-1]})"
     )
+    assert raised.value.request_id == handler.request_ids[-1]
     assert (raised.value.retryable, raised.value.status, raised.value.code) == (
         False,
         413,
@@ -324,7 +342,9 @@ def test_post_drops_server_codes_that_are_not_plain_identifiers(body):
     with _serve(_replying(400, body)) as base:
         with pytest.raises(UploadError) as raised:
             _post(base + "/", "secret", b"{}", "run r summary")
-    assert str(raised.value) == "the M3 server rejected run r summary (HTTP 400)"
+    assert raised.value.message.startswith(
+        "the M3 server rejected run r summary (HTTP 400) (ref: "
+    )
     assert raised.value.code is None
 
 
@@ -338,10 +358,11 @@ def test_post_reports_retryable_server_failure_after_all_attempts(monkeypatch):
             _post(base + "/", "secret", b"{}", "run r publication")
     assert str(raised.value) == (
         "the M3 server did not accept run r publication after 3 attempts "
-        "(HTTP 503 unavailable)"
+        f"(HTTP 503 unavailable) (ref: {handler.request_ids[-1]})"
     )
     assert raised.value.retryable is True
     assert handler.calls == 3
+    assert raised.value.request_id == handler.request_ids[-1]
 
 
 def test_post_reports_unreachable_server_as_retryable(monkeypatch):
@@ -352,9 +373,12 @@ def test_post_reports_unreachable_server_as_retryable(monkeypatch):
         pass
     with pytest.raises(UploadError) as raised:
         _post(base + "/", "secret", b"{}", "run r summary")
-    assert str(raised.value) == (
-        "could not reach the M3 server to send run r summary after 3 attempts"
+    assert re.fullmatch(
+        r"could not reach the M3 server to send run r summary after 3 attempts "
+        r"\(ref: [0-9a-f-]{36}\)",
+        str(raised.value),
     )
+    assert raised.value.request_id in str(raised.value)
     assert (raised.value.retryable, raised.value.status) == (True, None)
 
 
@@ -374,8 +398,11 @@ def test_post_retries_malformed_response_as_unreachable(monkeypatch):
     with _serve(Handler) as base:
         with pytest.raises(UploadError) as raised:
             _post(base + "/", "secret", b"{}", "run r summary")
-    assert str(raised.value) == (
-        "could not reach the M3 server to send run r summary after 3 attempts"
+    assert re.fullmatch(
+        r"could not reach the M3 server to send run r summary after 3 attempts "
+        r"\(ref: [0-9a-f-]{36}\)",
+        str(raised.value),
     )
+    assert raised.value.request_id in str(raised.value)
     assert (raised.value.retryable, raised.value.status) == (True, None)
     assert Handler.calls == 3

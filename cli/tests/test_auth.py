@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -662,8 +664,17 @@ def test_logout_remote_failure_retains_local_and_no_local_does_not_delete(
 
 
 def test_json_request_caps_body_and_rejects_redirect() -> None:
+    seen: list[tuple[str, str | None, str | None]] = []
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            seen.append(
+                (
+                    self.path,
+                    self.headers.get("X-Request-ID"),
+                    self.headers.get("User-Agent"),
+                )
+            )
             extra_headers: dict[str, str] = {}
             if self.path == "/redirect":
                 self.send_response(302)
@@ -680,6 +691,15 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
             elif self.path == "/large":
                 self.send_response(200)
                 body = b"{" + b"x" * (auth._MAX_RESPONSE + 1)
+            elif self.path == "/unavailable":
+                self.send_response(503)
+                body = b'{"error":{"code":"unavailable"}}'
+            elif self.path == "/unauthorized":
+                self.send_response(401)
+                body = b'{"error":{"code":"unauthorized"}}'
+            elif self.path == "/pending":
+                self.send_response(400)
+                body = b'{"error":{"code":"authorization_pending"}}'
             elif self.path == "/json204":
                 self.send_response(204)
                 body = b""
@@ -724,11 +744,36 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
         assert (
             auth._json_request(base + "/empty", "DELETE", expect_no_content=True) == {}
         )
-        with pytest.raises(RuntimeError, match="invalid response"):
+        with pytest.raises(RuntimeError, match="invalid response") as invalid:
             auth._json_request(base + "/json204", "GET")
-        with pytest.raises(RuntimeError, match="too large"):
+        invalid_id = next(item[1] for item in seen if item[0] == "/json204")
+        assert str(invalid.value).endswith(f" (ref: {invalid_id})")
+        with pytest.raises(RuntimeError, match="too large") as too_large_error:
             auth._json_request(base + "/error", "GET")
+        error_id = next(item[1] for item in seen if item[0] == "/error")
+        assert str(too_large_error.value).endswith(f" (ref: {error_id})")
         assert auth._json_request(base + "/ok", "GET") == {"ok": True}
+        assert auth._json_request(base + "/ok", "GET") == {"ok": True}
+        ok_headers = [item for item in seen if item[0] == "/ok"]
+        assert len(ok_headers) == 2
+        first, second = ok_headers[0][1], ok_headers[1][1]
+        assert first and second and first != second
+        assert str(uuid.UUID(first)) == first
+        assert re.fullmatch(r"m3-cli/\S+ python/\S+", ok_headers[0][2] or "")
+        with pytest.raises(RuntimeError) as unavailable:
+            auth._json_request(base + "/unavailable", "GET")
+        sent_id = next(item[1] for item in seen if item[0] == "/unavailable")
+        assert str(unavailable.value) == f"server rejected the request (ref: {sent_id})"
+        with pytest.raises(RuntimeError) as pending:
+            auth._json_request(base + "/pending", "GET")
+        assert str(pending.value) == "authorization_pending"
+        with pytest.raises(RuntimeError) as unauthorized:
+            auth._json_request(base + "/unauthorized", "GET")
+        unauthorized_id = next(item[1] for item in seen if item[0] == "/unauthorized")
+        assert (
+            str(unauthorized.value)
+            == f"server rejected the request (ref: {unauthorized_id})"
+        )
         with pytest.raises(auth._RateLimited) as limited:
             auth._json_request(base + "/rate-limited", "GET")
         assert limited.value.retry_after == 7.0
@@ -740,13 +785,25 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
             with pytest.raises(RuntimeError, match="server rejected") as rejected:
                 auth._json_request(base + path, "GET")
             assert not isinstance(rejected.value, auth._RateLimited)
-        with pytest.raises(RuntimeError, match="redirect"):
+        with pytest.raises(RuntimeError, match="redirect") as redirected:
             auth._json_request(base + "/redirect", "GET")
-        with pytest.raises(RuntimeError, match="too large"):
+        redirect_id = next(item[1] for item in seen if item[0] == "/redirect")
+        assert str(redirected.value) == f"redirect rejected (ref: {redirect_id})"
+        with pytest.raises(RuntimeError, match="too large") as too_large:
             auth._json_request(base + "/large", "GET")
+        large_id = next(item[1] for item in seen if item[0] == "/large")
+        assert str(too_large.value) == (
+            f"server response is too large (ref: {large_id})"
+        )
     finally:
         server.shutdown()
         thread.join()
+    with pytest.raises(RuntimeError) as unreachable:
+        auth._json_request(base + "/ok", "GET")
+    assert re.fullmatch(
+        r"could not contact the M3 control-plane \(ref: [0-9a-f-]{36}\)",
+        str(unreachable.value),
+    )
 
 
 def test_login_retries_through_real_json_request_after_rate_limit(
