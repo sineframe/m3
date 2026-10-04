@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, repr=False, exclude=True)
     openrouter_api_key: str | None = Field(default=None, repr=False, exclude=True)
     claude_executable: str = "claude"
-    claude_model_ids: list[str] | str = ["claude-sonnet-4-20250514"]
+    claude_model_ids: list[str] | str = ["claude-sonnet-5-5"]
     opencode_api_key: str | None = Field(default=None, repr=False, exclude=True)
     opencode_executable: str = "opencode"
     opencode_model_ids: list[str] | str = ["opencode/big-pickle"]
