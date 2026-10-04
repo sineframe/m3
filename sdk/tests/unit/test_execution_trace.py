@@ -20,6 +20,7 @@ from m3.storage import (
     SequenceConflict,
     SQLiteExecutionStore,
     StorageConflict,
+    TerminalConflict,
 )
 from m3.trace.redaction import REDACTED, RedactionConfig, RedactionError
 from m3.types import (
@@ -683,6 +684,50 @@ def test_store_written_terminal_stops_emits_without_a_trailing_event(
     assert recorder.finalize(ExecutionOutcome.CANCELLED).events[-1].kind is (
         EventKind.EXECUTION_FINISHED
     )
+
+
+def _finish_elsewhere(
+    store: InMemoryExecutionStore | SQLiteExecutionStore, execution_id: str
+) -> None:
+    """Commit a terminal event the way a writer other than the recorder would."""
+    if isinstance(store, SQLiteExecutionStore):
+        assert store.request_cancel(execution_id, reason="stop")
+    else:
+        ExecutionTraceRecorder(store, execution_id).finalize(ExecutionOutcome.CANCELLED)
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_append_after_a_terminal_reports_it_at_a_stale_or_gap_sequence(
+    backend: str, tmp_path: Path
+) -> None:
+    store = _backend_store(backend, tmp_path)
+    ExecutionTraceRecorder(store, "execution-terminal-append")
+    _finish_elsewhere(store, "execution-terminal-append")
+    committed = store.events("execution-terminal-append")
+    used = committed[-1].sequence
+    for sequence in (used, used + 3):
+        with pytest.raises(TerminalConflict):
+            store.append_events(
+                (_diagnostic("execution-terminal-append", sequence, "late"),)
+            )
+    assert store.events("execution-terminal-append") == committed
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_record_at_a_stale_sequence_reports_a_store_written_terminal(
+    backend: str, tmp_path: Path
+) -> None:
+    store = _backend_store(backend, tmp_path)
+    recorder = ExecutionTraceRecorder(store, "execution-stale-terminal")
+    stale = recorder._next_sequence
+    _finish_elsewhere(store, "execution-stale-terminal")
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.record(_diagnostic("execution-stale-terminal", stale, "late"))
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"after": True})
+    events = store.events("execution-stale-terminal")
+    assert events[-1].kind is EventKind.EXECUTION_FINISHED
+    assert [event.sequence for event in events] == list(range(len(events)))
 
 
 def test_terminal_race_rejects_producer_after_finished_without_postterminal_event() -> (

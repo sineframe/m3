@@ -3070,6 +3070,10 @@ class SQLiteExecutionStore(_SqliteBase):
             if stored_snapshot is None:
                 raise StorageConflict("execution does not exist")
             existing, raw_snapshot = stored_snapshot
+            # A finished execution reports that before any sequence problem, so
+            # a writer racing a terminal commit is not told to retry.
+            if existing.lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
                 (execution_id,),
@@ -3083,8 +3087,6 @@ class SQLiteExecutionStore(_SqliteBase):
                     raise StorageConflict("event sequence or id is invalid")
                 expected += 1
                 seen.add(str(event.event_id.root))
-            if existing.lifecycle is ExecutionStatus.FINISHED:
-                raise TerminalConflict("terminal execution cannot receive more events")
             # The recorder does not reserve before it appends, so it asks the
             # commit itself to leave a sequence another producer holds alone.
             if clear_of_reservations:

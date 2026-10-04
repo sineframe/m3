@@ -1445,6 +1445,31 @@ def test_append_after_store_written_terminal_event_is_rejected(
     assert store.get_snapshot(execution_id) == snapshot
 
 
+def test_append_after_a_store_written_terminal_raises_terminal_conflict(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id = ExecutionId("execution-terminal-append")
+    store.create(ExecutionState(execution_id=execution_id))
+    store.append_events(
+        [
+            _event(
+                execution_id.root,
+                0,
+                EventKind.EXECUTION_CREATED,
+                payload={"trace_id": "trace-1"},
+            )
+        ]
+    )
+    assert store.request_cancel(execution_id)
+    committed = store.events(execution_id)
+    used = committed[-1].sequence
+    for sequence in (used, used + 3):
+        with pytest.raises(TerminalConflict):
+            store.append_events([_event(execution_id.root, sequence)])
+    assert store.events(execution_id) == committed
+
+
 def test_non_contiguous_append_raises_sequence_conflict(tmp_path: Path) -> None:
     store = _store(tmp_path)
     execution_id, _ = _created(store)
