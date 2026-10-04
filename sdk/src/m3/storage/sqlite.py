@@ -50,7 +50,7 @@ from ..observability import (
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from ..suites import Suite, generated_suite_id, normalize_suite_name
-from ..trace.counts import tool_call_count, tool_call_count_after
+from ..trace.counts import has_tool_request, tool_call_count, tool_call_count_after
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -93,8 +93,10 @@ from .ephemeral import (
     BlobIntegrityError,
     EventCallback,
     ExecutionTransaction,
+    SequenceConflict,
     StorageConflict,
     StorageError,
+    TerminalConflict,
     _execution_key,
     _report_fields,
     run_sort_key,
@@ -1739,6 +1741,65 @@ class _SqliteBatch(AbstractContextManager["_SqliteBatch"]):
         return None
 
 
+def _fold_snapshot(
+    existing: ExecutionState,
+    events: Sequence[Event],
+    *,
+    sequence: int,
+    tool_calls: int,
+) -> ExecutionState:
+    """Apply events to a snapshot's lifecycle, timestamps and agent identity."""
+    lifecycle, outcome = existing.lifecycle, existing.outcome
+    created_at, finished_at = existing.created_at, existing.finished_at
+    for event in events:
+        if event.kind is EventKind.EXECUTION_CREATED:
+            if lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
+            created_at, lifecycle, outcome, finished_at = (
+                event.timestamp,
+                ExecutionStatus.CREATED,
+                None,
+                None,
+            )
+        elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
+            if lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
+            try:
+                next_lifecycle = ExecutionStatus(
+                    event.payload.get("lifecycle", event.payload.get("state"))
+                )
+            except (TypeError, ValueError):
+                raise StorageConflict("execution state payload is invalid") from None
+            if next_lifecycle is ExecutionStatus.FINISHED:
+                raise StorageConflict(
+                    "execution state event cannot finish an execution"
+                )
+            lifecycle = next_lifecycle
+        elif event.kind is EventKind.EXECUTION_FINISHED:
+            if lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
+            try:
+                outcome = ExecutionOutcome(event.payload["outcome"])
+            except (KeyError, TypeError, ValueError):
+                raise StorageConflict("execution terminal payload is invalid") from None
+            lifecycle, finished_at = ExecutionStatus.FINISHED, event.timestamp
+    return ExecutionState(
+        execution_id=existing.execution_id,
+        project_id=existing.project_id,
+        run_id=existing.run_id,
+        suite_id=existing.suite_id,
+        suite_name=existing.suite_name,
+        lifecycle=lifecycle,
+        outcome=outcome,
+        sequence=sequence,
+        tool_call_count=tool_calls,
+        created_at=created_at,
+        finished_at=finished_at,
+        provenance=existing.provenance,
+        agent=project_agent_identity(events, existing.agent),
+    )
+
+
 class SQLiteExecutionStore(_SqliteBase):
     """SQLite implementation of the public :class:`ExecutionStore` protocol."""
 
@@ -2317,17 +2378,24 @@ class SQLiteExecutionStore(_SqliteBase):
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
         key = _execution_key(execution_id)
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
-                (key,),
-            ).fetchone()
+            return self._read_snapshot(connection, key)
+
+    def _read_snapshot(self, connection: Any, key: str) -> ExecutionState | None:
+        row = connection.execute(
+            "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
+            (key,),
+        ).fetchone()
         if row is None:
             return None
         raw = _loads(row[0])
         snapshot = ExecutionState.model_validate(raw)
         if "tool_call_count" not in raw:
             snapshot = snapshot.model_copy(
-                update={"tool_call_count": tool_call_count(self._events(key))}
+                update={
+                    "tool_call_count": tool_call_count(
+                        self._events(key, connection=connection)
+                    )
+                }
             )
         return snapshot
 
@@ -2643,12 +2711,19 @@ class SQLiteExecutionStore(_SqliteBase):
     update_snapshot = save_snapshot
 
     @_timing.counted("store.load_events")
-    def _events(self, execution_id: str) -> tuple[Event, ...]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence",
-                (execution_id,),
-            ).fetchall()
+    def _events(
+        self, execution_id: str, *, connection: Any | None = None
+    ) -> tuple[Event, ...]:
+        if connection is not None:
+            return self._load_events(connection, execution_id)
+        with self._connect() as pooled:
+            return self._load_events(pooled, execution_id)
+
+    def _load_events(self, connection: Any, execution_id: str) -> tuple[Event, ...]:
+        rows = connection.execute(
+            "SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence",
+            (execution_id,),
+        ).fetchall()
         return tuple(self._restore_event(_loads(row[0])) for row in rows)
 
     def _restore_event(self, value: Mapping[str, Any]) -> Event:
@@ -2696,69 +2771,16 @@ class SQLiteExecutionStore(_SqliteBase):
         existing = self.get_snapshot(execution_id)
         if existing is None:
             raise StorageConflict("execution does not exist")
-        lifecycle, outcome = existing.lifecycle, existing.outcome
-        created_at, finished_at = existing.created_at, existing.finished_at
         values = tuple(events if events is not None else self._events(execution_id))
-        for event in values:
-            if event.kind is EventKind.EXECUTION_CREATED:
-                if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "terminal execution cannot receive more events"
-                    )
-                created_at, lifecycle, outcome, finished_at = (
-                    event.timestamp,
-                    ExecutionStatus.CREATED,
-                    None,
-                    None,
-                )
-            elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
-                if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "terminal execution cannot receive more events"
-                    )
-                try:
-                    next_lifecycle = ExecutionStatus(
-                        event.payload.get("lifecycle", event.payload.get("state"))
-                    )
-                except (TypeError, ValueError):
-                    raise StorageConflict(
-                        "execution state payload is invalid"
-                    ) from None
-                if next_lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "execution state event cannot finish an execution"
-                    )
-                lifecycle = next_lifecycle
-            elif event.kind is EventKind.EXECUTION_FINISHED:
-                if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict(
-                        "terminal execution cannot receive more events"
-                    )
-                try:
-                    outcome = ExecutionOutcome(event.payload["outcome"])
-                except (KeyError, TypeError, ValueError):
-                    raise StorageConflict(
-                        "execution terminal payload is invalid"
-                    ) from None
-                lifecycle, finished_at = ExecutionStatus.FINISHED, event.timestamp
-        return ExecutionState(
-            execution_id=ExecutionId(execution_id),
-            project_id=existing.project_id,
-            run_id=existing.run_id,
-            suite_id=existing.suite_id,
-            suite_name=existing.suite_name,
-            lifecycle=lifecycle,
-            outcome=outcome,
+        return _fold_snapshot(
+            existing,
+            values,
             sequence=values[-1].sequence if values else existing.sequence,
-            tool_call_count=(
+            tool_calls=(
                 tool_call_count(values)
                 if appended is None
                 else tool_call_count_after(existing.tool_call_count, values, appended)
             ),
-            created_at=created_at,
-            finished_at=finished_at,
-            provenance=existing.provenance,
-            agent=project_agent_identity(values, existing.agent),
         )
 
     def _safe_event(self, event: Event) -> Event:
@@ -2913,9 +2935,9 @@ class SQLiteExecutionStore(_SqliteBase):
         events: Sequence[Event],
         *,
         raw_evidence: tuple[EvidenceRef, bytes] | None = None,
-    ) -> None:
+    ) -> tuple[Event, ...]:
         if not events:
-            return
+            return ()
         safe_events = tuple(self._safe_event(event) for event in events)
         if any(
             _execution_key(event.execution_id) != execution_id for event in safe_events
@@ -2923,8 +2945,23 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict(
                 "all events in an append must belong to one execution"
             )
+        # Encoding depends only on the redacted events, so it happens before
+        # the write lock is taken. Events whose payload moves to a blob are
+        # encoded once the blob is published.
+        encoded_payloads = tuple(
+            _json(event.model_dump(mode="json")["payload"]).encode("utf-8")
+            for event in safe_events
+        )
+        inline_json = {
+            str(event.event_id.root): _json(
+                event.model_dump(mode="json", by_alias=True)
+            )
+            for event, encoded in zip(safe_events, encoded_payloads, strict=True)
+            if len(encoded) <= self.payload_blob_threshold
+        }
         connection = self._connect()
         committed: tuple[Event, ...] = ()
+        stored: tuple[Event, ...] = ()
         try:
             self._begin(connection, immediate=True)
             # Keep the write lock from filesystem publication through the
@@ -2942,14 +2979,14 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
             # Large event payloads live in verified compressed blobs. A failed
             # transaction leaves only an explicitly collectable orphan.
-            persisted_events: list[Event] = []
+            event_json: dict[str, str] = dict(inline_json)
+            stored_events: list[Event] = []
             payload_blobs: list[tuple[Event, BlobRecord]] = []
-            for event in safe_events:
-                encoded_payload = _json(
-                    event.model_dump(mode="json")["payload"]
-                ).encode("utf-8")
+            for event, encoded_payload in zip(
+                safe_events, encoded_payloads, strict=True
+            ):
                 if len(encoded_payload) <= self.payload_blob_threshold:
-                    persisted_events.append(event)
+                    stored_events.append(event)
                     continue
                 blob = self.artifacts.blob_store.put(encoded_payload)
                 reference = PayloadRef(
@@ -2970,15 +3007,19 @@ class SQLiteExecutionStore(_SqliteBase):
                         "payload_ref": reference,
                     }
                 )
-                persisted_events.append(persisted)
+                event_json[str(event.event_id.root)] = _json(
+                    persisted.model_dump(mode="json", by_alias=True)
+                )
+                # Reads decode the blob back into the payload, so the returned
+                # event matches what a reload produces.
+                stored_events.append(
+                    persisted.model_copy(
+                        update={"payload": json.loads(encoded_payload)}
+                    )
+                )
                 payload_blobs.append((persisted, blob))
-            if (
-                connection.execute(
-                    "SELECT 1 FROM v2_executions WHERE id=? AND deleted_at IS NULL",
-                    (execution_id,),
-                ).fetchone()
-                is None
-            ):
+            existing = self._read_snapshot(connection, execution_id)
+            if existing is None:
                 raise StorageConflict("execution does not exist")
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
@@ -2987,10 +3028,30 @@ class SQLiteExecutionStore(_SqliteBase):
             expected = int(row[0]) + 1
             seen: set[str] = set()
             for event in safe_events:
-                if event.sequence != expected or str(event.event_id.root) in seen:
+                if event.sequence != expected:
+                    raise SequenceConflict("event sequence or id is invalid")
+                if str(event.event_id.root) in seen:
                     raise StorageConflict("event sequence or id is invalid")
                 expected += 1
                 seen.add(str(event.event_id.root))
+            if existing.lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
+            # The stored snapshot already reflects every earlier event, so only
+            # the appended batch is folded. Prior history is needed solely to
+            # recount tool calls, and is read before this batch is inserted.
+            if has_tool_request(safe_events):
+                history = self._events(execution_id, connection=connection)
+                tool_calls = tool_call_count_after(
+                    existing.tool_call_count, history + safe_events, safe_events
+                )
+            else:
+                tool_calls = existing.tool_call_count
+            derived = _fold_snapshot(
+                existing,
+                safe_events,
+                sequence=safe_events[-1].sequence,
+                tool_calls=tool_calls,
+            )
             sessions = {
                 str(row[0])
                 for row in connection.execute(
@@ -3010,16 +3071,13 @@ class SQLiteExecutionStore(_SqliteBase):
                     or str(event.session_id.root) not in sessions
                 ):
                     raise StorageConflict("session does not exist")
-                persisted = next(
-                    item for item in persisted_events if item.event_id == event.event_id
-                )
                 connection.execute(
                     "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
                     (
                         str(event.event_id.root),
                         execution_id,
                         event.sequence,
-                        _json(persisted.model_dump(mode="json", by_alias=True)),
+                        event_json[str(event.event_id.root)],
                         _iso(event.timestamp),
                     ),
                 )
@@ -3117,20 +3175,20 @@ class SQLiteExecutionStore(_SqliteBase):
                                 str(event.session_id.root),
                             ),
                         )
-            derived = self._derive_snapshot(
-                execution_id,
-                self._events(execution_id) + safe_events,
-                appended=safe_events,
-            )
             connection.execute(
                 "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
                 (_json(derived.model_dump(mode="json")), execution_id),
             )
             self._commit(connection)
             committed = safe_events
+            stored = tuple(stored_events)
         except Exception as exc:
             self._rollback(connection)
             if _is_integrity_error(exc):
+                if "v2_events.sequence" in str(exc):
+                    raise SequenceConflict(
+                        "event identity or sequence conflicts"
+                    ) from exc
                 raise StorageConflict("event identity or sequence conflicts") from exc
             raise
         except BaseException:
@@ -3146,6 +3204,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     callback(event.model_copy())
                 except Exception:
                     pass
+        return stored
 
     def append_events(self, events: Sequence[Event]) -> None:
         batch = tuple(events)
@@ -3199,7 +3258,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 **dict(event.payload),
                 "raw_capture": capture.model_dump(mode="json"),
             }
-            self._append(
+            committed = self._append(
                 execution_id,
                 (
                     event.model_copy(
@@ -3215,7 +3274,7 @@ class SQLiteExecutionStore(_SqliteBase):
             except Exception:
                 pass
             raise
-        return self._events(execution_id)[-1]
+        return committed[-1]
 
     def iter_events(
         self, execution_id: ExecutionId | str, *, after_sequence: int = -1

@@ -4117,6 +4117,14 @@ stop(
 ) -> None
 ```
 
+## `SequenceConflict`
+
+```python
+m3.storage.SequenceConflict
+```
+
+An appended event does not continue the committed sequence.
+
 ## `StorageConflict`
 
 ```python
@@ -4132,6 +4140,14 @@ m3.storage.StorageError
 ```
 
 Base class for expected ephemeral storage failures.
+
+## `TerminalConflict`
+
+```python
+m3.storage.TerminalConflict
+```
+
+The execution is finished and cannot receive more events.
 
 ## `TemporaryArtifactStore`
 

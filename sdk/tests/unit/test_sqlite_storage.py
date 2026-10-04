@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import sqlite3
@@ -29,19 +30,24 @@ from m3.storage import (
     BlobRecord,
     InMemoryArtifactStore,
     InMemoryExecutionStore,
+    SequenceConflict,
     SQLiteArtifactStore,
     SQLiteExecutionStore,
     StorageConflict,
     StorageError,
+    TerminalConflict,
 )
 from m3.storage import sqlite as sqlite_storage
 from m3.trace.redaction import RedactionConfig
 from m3.types import (
     ArtifactRef,
+    ConnectionId,
     DirectSpec,
     EventDirection,
     EventId,
     EventKind,
+    EventOrigin,
+    EventSource,
     ExecutionId,
     ExecutionOutcome,
     ExecutionState,
@@ -55,6 +61,9 @@ from m3.types import (
     StdioServer,
     TurnId,
     TurnState,
+)
+from m3.types import (
+    Event as StoredEvent,
 )
 
 
@@ -1317,3 +1326,373 @@ def test_tool_call_counts_omit_unfinished_and_missing_and_fill_null_rows(
         "total": 3,
         "successful": 2,
     }
+
+
+def _event(
+    execution_id: str,
+    sequence: int,
+    kind: EventKind = EventKind.DIAGNOSTIC,
+    *,
+    payload: dict[str, object] | None = None,
+    origin: EventOrigin | None = None,
+    request_sequence: int | None = None,
+    server: str | None = None,
+) -> StoredEvent:
+    return StoredEvent(
+        event_id=EventId(f"{execution_id}-event-{sequence}"),
+        execution_id=ExecutionId(execution_id),
+        sequence=sequence,
+        kind=kind,
+        timestamp=datetime(2026, 1, 1, 0, 0, sequence % 60, tzinfo=timezone.utc),
+        monotonic_offset_ms=float(sequence),
+        server_binding=server,
+        connection_id=ConnectionId("connection-1") if server else None,
+        correlation=(
+            RequestLink(
+                jsonrpc_id=request_sequence,
+                direction=EventDirection.CLIENT_TO_SERVER,
+                request_sequence=request_sequence,
+            )
+            if request_sequence is not None
+            else None
+        ),
+        payload=payload if payload is not None else {"sequence": sequence},
+        **(
+            {"provenance": EventSource(origin=origin, source="fixture")}
+            if origin is not None
+            else {}
+        ),
+    )
+
+
+def _tool_request(
+    execution_id: str,
+    sequence: int,
+    *,
+    origin: EventOrigin = EventOrigin.HARNESS_REPORTED,
+    params: dict[str, object] | None = None,
+) -> StoredEvent:
+    return _event(
+        execution_id,
+        sequence,
+        EventKind.TOOL_CALL_REQUESTED,
+        payload={"params": params or {"name": "lookup", "arguments": {}}},
+        origin=origin,
+        request_sequence=sequence,
+        server="server-1",
+    )
+
+
+@pytest.mark.parametrize("threshold", [0, None])
+def test_append_event_returns_the_event_a_reload_produces(
+    tmp_path: Path, threshold: int | None
+) -> None:
+    options = {} if threshold is None else {"payload_blob_threshold": threshold}
+    store = SQLiteExecutionStore(
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", **options
+    )
+    execution_id, factory = _created(store)
+    event = factory.create(EventKind.DIAGNOSTIC, payload={"note": "x" * 64})
+    returned = store.append_event(event, b"raw bytes", media_type="text/plain")
+    assert returned == store.events(execution_id)[-1]
+    assert returned.raw_evidence_ref is not None
+    if threshold == 0:
+        assert returned.payload_ref is not None
+        assert returned.payload["note"] == "x" * 64
+
+
+def test_append_events_return_committed_events_in_stored_form(tmp_path: Path) -> None:
+    store = SQLiteExecutionStore(
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", payload_blob_threshold=0
+    )
+    _created(store, "stored-form")
+    batch = (
+        _event("stored-form", 1, payload={"a": [1, 2, 3]}),
+        _event("stored-form", 2, payload={}),
+    )
+    committed = store._append("stored-form", batch)
+    assert committed == store.events("stored-form")[1:]
+
+
+def test_append_after_store_written_terminal_event_is_rejected(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id = ExecutionId("cancelled-execution")
+    store.create(ExecutionState(execution_id=execution_id))
+    store.append_events(
+        [
+            _event(
+                execution_id.root,
+                0,
+                EventKind.EXECUTION_CREATED,
+                payload={"trace_id": "trace-1"},
+            )
+        ]
+    )
+    store.enqueue_command(execution_id)
+    assert store.claim_next("worker", lease_seconds=30) is not None
+    assert store.request_cancel(execution_id)
+    assert store.finalize_cancelled(execution_id)
+    snapshot = store.get_snapshot(execution_id)
+    assert snapshot is not None and snapshot.lifecycle is ExecutionStatus.FINISHED
+    next_sequence = store.events(execution_id)[-1].sequence + 1
+    with pytest.raises(TerminalConflict):
+        store.append_events([_event(execution_id.root, next_sequence)])
+    assert store.get_snapshot(execution_id) == snapshot
+
+
+def test_non_contiguous_append_raises_sequence_conflict(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    with pytest.raises(SequenceConflict):
+        store.append_events([_event(execution_id.root, 5)])
+    with pytest.raises(SequenceConflict):
+        store.append_events([_event(execution_id.root, 0)])
+    duplicate = _event(execution_id.root, 1)
+    with pytest.raises(StorageConflict) as raised:
+        store.append_events([duplicate, duplicate.model_copy(update={"sequence": 2})])
+    assert not isinstance(raised.value, SequenceConflict)
+
+
+def test_append_reads_no_history_unless_it_adds_a_tool_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    key = execution_id.root
+    store.append_events([_tool_request(key, 1)])
+    loads = 0
+    original = store._events
+
+    def counting(*args: object, **kwargs: object) -> tuple[StoredEvent, ...]:
+        nonlocal loads
+        loads += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store, "_events", counting)
+    store.append_events(
+        [
+            _event(
+                key, 2, EventKind.EXECUTION_STATE_CHANGED, payload={"state": "idle"}
+            ),
+            _event(key, 3),
+        ]
+    )
+    assert loads == 0
+    store.append_events(
+        [
+            _tool_request(
+                key,
+                4,
+                origin=EventOrigin.WIRE_OBSERVED,
+                params={"name": "other", "arguments": {}},
+            )
+        ]
+    )
+    assert loads == 1
+    snapshot = store.get_snapshot(key)
+    assert snapshot is not None and snapshot.tool_call_count == 2
+    assert snapshot == store._derive_snapshot(key)
+
+
+def test_snapshot_after_mixed_appends_matches_full_replay(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    key = execution_id.root
+    store.append_events(
+        [
+            _event(
+                key,
+                1,
+                EventKind.HARNESS_SELECTION,
+                payload={
+                    "harness": {"kind": "opencode", "runtime": "managed"},
+                    "model": {"requested_id": "openai/gpt-5"},
+                },
+            ),
+            _tool_request(key, 2),
+        ]
+    )
+    store.append_events(
+        [
+            _event(
+                key,
+                3,
+                EventKind.HARNESS_RUNTIME_RESOLVED,
+                payload={"resolved_version": "1.0.0"},
+            ),
+            _event(
+                key, 4, EventKind.EXECUTION_STATE_CHANGED, payload={"state": "idle"}
+            ),
+            _tool_request(key, 5, origin=EventOrigin.WIRE_OBSERVED),
+        ]
+    )
+    store.append_events(
+        [
+            _event(
+                key,
+                6,
+                EventKind.EXECUTION_FINISHED,
+                payload={"outcome": ExecutionOutcome.COMPLETED.value},
+            )
+        ]
+    )
+    snapshot = store.get_snapshot(key)
+    assert snapshot is not None
+    assert snapshot.sequence == 6
+    assert snapshot.lifecycle is ExecutionStatus.FINISHED
+    assert snapshot.agent is not None
+    assert snapshot.agent.harness.resolved_version == "1.0.0"
+    assert snapshot.tool_call_count is not None
+    full = sqlite_storage._fold_snapshot(
+        ExecutionState(execution_id=execution_id),
+        store.events(key),
+        sequence=6,
+        tool_calls=snapshot.tool_call_count,
+    )
+    assert full.model_dump() == snapshot.model_dump()
+
+
+def test_incremental_snapshot_matches_full_replay_for_random_histories(
+    tmp_path: Path,
+) -> None:
+    hypothesis = pytest.importorskip("hypothesis")
+    st = hypothesis.strategies
+    from m3.trace.counts import tool_call_count
+
+    kinds = st.sampled_from(
+        (
+            "state",
+            "selection",
+            "resolved",
+            "provider",
+            "reported_request",
+            "wire_request",
+            "retry_request",
+            "response",
+            "diagnostic",
+        )
+    )
+
+    def build(key: str, sequence: int, choice: str, number: int) -> StoredEvent:
+        if choice == "state":
+            state = ("running_turn", "idle", "waiting_for_input", "closing")[number % 4]
+            return _event(
+                key,
+                sequence,
+                EventKind.EXECUTION_STATE_CHANGED,
+                payload={"state": state},
+            )
+        if choice == "selection":
+            return _event(
+                key,
+                sequence,
+                EventKind.HARNESS_SELECTION,
+                payload={
+                    "harness": {"kind": f"harness-{number % 3}", "runtime": "managed"},
+                    "model": {"requested_id": f"model-{number % 3}"},
+                },
+            )
+        if choice == "resolved":
+            return _event(
+                key,
+                sequence,
+                EventKind.HARNESS_RUNTIME_RESOLVED,
+                payload={"resolved_version": f"1.{number % 4}.0"},
+            )
+        if choice == "provider":
+            return _event(
+                key,
+                sequence,
+                EventKind.PROVIDER_EVENT,
+                payload={"category": "model", "data": f"observed-{number % 3}"},
+            )
+        if choice in {"reported_request", "wire_request"}:
+            return _tool_request(
+                key,
+                sequence,
+                origin=(
+                    EventOrigin.HARNESS_REPORTED
+                    if choice == "reported_request"
+                    else EventOrigin.WIRE_OBSERVED
+                ),
+                params={"name": f"tool-{number % 2}", "arguments": {}},
+            )
+        if choice == "retry_request":
+            return _tool_request(
+                key,
+                sequence,
+                params={
+                    "name": "lookup",
+                    "arguments": {},
+                    "requestState": f"state-{number}",
+                },
+            )
+        if choice == "response":
+            return _event(
+                key,
+                sequence,
+                EventKind.MCP_RESPONSE,
+                payload={"result": {"content": []}},
+                request_sequence=max(sequence - 1, 1),
+                server="server-1",
+            )
+        return _event(key, sequence)
+
+    @hypothesis.settings(
+        max_examples=25,
+        deadline=None,
+        suppress_health_check=[hypothesis.HealthCheck.function_scoped_fixture],
+    )
+    @hypothesis.given(
+        steps=st.lists(st.tuples(kinds, st.integers(0, 9)), min_size=1, max_size=14),
+        batches=st.lists(st.integers(1, 4), min_size=1, max_size=14),
+        finish=st.booleans(),
+    )
+    def check(steps: list[tuple[str, int]], batches: list[int], finish: bool) -> None:
+        key = f"random-{len(list(tmp_path.iterdir()))}"
+        store = SQLiteExecutionStore(
+            tmp_path / f"{key}.sqlite", blob_root=tmp_path / f"{key}-blobs"
+        )
+        try:
+            store.create(ExecutionState(execution_id=ExecutionId(key)))
+            events = [
+                _event(key, 0, EventKind.EXECUTION_CREATED, payload={}),
+                *(
+                    build(key, index + 1, choice, number)
+                    for index, (choice, number) in enumerate(steps)
+                ),
+            ]
+            if finish:
+                events.append(
+                    _event(
+                        key,
+                        len(events),
+                        EventKind.EXECUTION_FINISHED,
+                        payload={"outcome": "completed"},
+                    )
+                )
+            position = 0
+            for size in itertools.cycle(batches):
+                if position >= len(events):
+                    break
+                batch = events[position : position + size]
+                position += len(batch)
+                store.append_events(batch)
+                snapshot = store.get_snapshot(key)
+                assert snapshot is not None
+                if snapshot.lifecycle is not ExecutionStatus.FINISHED:
+                    assert snapshot == store._derive_snapshot(key)
+                prefix = events[:position]
+                expected = sqlite_storage._fold_snapshot(
+                    ExecutionState(execution_id=ExecutionId(key)),
+                    prefix,
+                    sequence=prefix[-1].sequence,
+                    tool_calls=tool_call_count(prefix),
+                )
+                assert snapshot.model_dump() == expected.model_dump()
+        finally:
+            store.close()
+
+    check()

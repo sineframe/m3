@@ -112,6 +112,14 @@ class StorageConflict(StorageError):
     code = "storage_conflict"
 
 
+class SequenceConflict(StorageConflict):
+    """An appended event does not continue the committed sequence."""
+
+
+class TerminalConflict(StorageConflict):
+    """The execution is finished and cannot receive more events."""
+
+
 class BlobIntegrityError(StorageError):
     """A compressed blob does not match its recorded hash or length."""
 
@@ -1301,6 +1309,8 @@ class InMemoryExecutionStore:
             if execution_id not in self._snapshots:
                 raise StorageConflict("execution does not exist")
             current = self._events[execution_id]
+            if self._snapshots[execution_id].lifecycle is ExecutionStatus.FINISHED:
+                raise TerminalConflict("terminal execution cannot receive more events")
             expected = current[-1].sequence + 1 if current else 0
             seen_sequences: set[int] = set()
             seen_ids: set[str] = set()
@@ -1329,7 +1339,7 @@ class InMemoryExecutionStore:
                         "all events in an append must belong to one execution"
                     )
                 if event.sequence != expected:
-                    raise StorageConflict("event sequence must be contiguous")
+                    raise SequenceConflict("event sequence must be contiguous")
                 if event.sequence in seen_sequences:
                     raise StorageConflict("duplicate event sequence in append")
                 if str(event.event_id.root) in seen_ids:
@@ -1922,7 +1932,9 @@ __all__ = [
     "ExecutionTransaction",
     "InMemoryArtifactStore",
     "InMemoryExecutionStore",
+    "SequenceConflict",
     "StorageConflict",
     "StorageError",
     "TemporaryArtifactStore",
+    "TerminalConflict",
 ]

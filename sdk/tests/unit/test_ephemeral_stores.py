@@ -12,8 +12,10 @@ from m3.storage import (
     BlobIntegrityError,
     InMemoryArtifactStore,
     InMemoryExecutionStore,
+    SequenceConflict,
     StorageConflict,
     TemporaryArtifactStore,
+    TerminalConflict,
 )
 from m3.trace.redaction import RedactionConfig, RedactionError
 from m3.types import (
@@ -50,6 +52,35 @@ def test_append_is_contiguous_and_rejects_duplicate_or_out_of_order_sequences() 
         store.append_events((_event(1),))
     with pytest.raises(StorageConflict):
         store.append_events((_event(3),))
+    assert [event.sequence for event in store.events("execution-1")] == [0, 1]
+
+
+def test_sequence_gap_raises_sequence_conflict() -> None:
+    store = InMemoryExecutionStore()
+    store.create(_snapshot())
+    store.append_events((_event(0),))
+    with pytest.raises(SequenceConflict):
+        store.append_events((_event(2),))
+
+
+def test_finished_execution_rejects_later_events() -> None:
+    store = InMemoryExecutionStore()
+    store.create(_snapshot())
+    store.append_events(
+        (
+            _event(0),
+            Event(
+                event_id=EventId("event-finished"),
+                execution_id=ExecutionId("execution-1"),
+                sequence=1,
+                kind=EventKind.EXECUTION_FINISHED,
+                monotonic_offset_ms=1.0,
+                payload={"outcome": "completed"},
+            ),
+        )
+    )
+    with pytest.raises(TerminalConflict):
+        store.append_events((_event(2),))
     assert [event.sequence for event in store.events("execution-1")] == [0, 1]
 
 
