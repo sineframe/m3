@@ -128,6 +128,19 @@ def test_last_weeks_orders(agent):
 
 </details>
 
+Put `ANTHROPIC_API_KEY` in `.env` at the project root, then run the tests:
+
+```sh
+m3 test -- tests
+```
+
+Run the same tests with another agent, or several times to get a pass rate:
+
+```sh
+m3 test --harness codex=gpt-5.6-sol -- tests
+m3 test --trials 5 -- tests
+```
+
 ## Install and start
 
 Install the CLI with uv:
