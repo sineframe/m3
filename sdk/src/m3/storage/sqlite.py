@@ -2982,6 +2982,7 @@ class SQLiteExecutionStore(_SqliteBase):
         events: Sequence[Event],
         *,
         raw_evidence: tuple[EvidenceRef, bytes] | None = None,
+        clear_of_reservations: bool = False,
     ) -> tuple[Event, ...]:
         if not events:
             return ()
@@ -3084,6 +3085,19 @@ class SQLiteExecutionStore(_SqliteBase):
                 seen.add(str(event.event_id.root))
             if existing.lifecycle is ExecutionStatus.FINISHED:
                 raise TerminalConflict("terminal execution cannot receive more events")
+            # The recorder does not reserve before it appends, so it asks the
+            # commit itself to leave a sequence another producer holds alone.
+            if clear_of_reservations:
+                for event in safe_events:
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM v2_sequence_reservations "
+                            "WHERE execution_id=? AND sequence=?",
+                            (execution_id, event.sequence),
+                        ).fetchone()
+                        is not None
+                    ):
+                        raise StorageConflict("event sequence or id is invalid")
             # A snapshot that is behind the stored events, or that an older SDK
             # wrote without every current field, cannot be trusted to reflect
             # earlier events, so the whole history is folded again.
@@ -3276,8 +3290,34 @@ class SQLiteExecutionStore(_SqliteBase):
 
     append = append_events
 
+    def _append_events_unreserved(self, events: Sequence[Event]) -> None:
+        batch = tuple(events)
+        if batch:
+            self._append(
+                _execution_key(batch[0].execution_id),
+                batch,
+                clear_of_reservations=True,
+            )
+
     def append_event(self, event: Event, content: bytes, *, media_type: str) -> Event:
         """Commit an event and its raw blob in one SQLite transaction."""
+        return self._append_event(event, content, media_type=media_type)
+
+    def _append_event_unreserved(
+        self, event: Event, content: bytes, *, media_type: str
+    ) -> Event:
+        return self._append_event(
+            event, content, media_type=media_type, clear_of_reservations=True
+        )
+
+    def _append_event(
+        self,
+        event: Event,
+        content: bytes,
+        *,
+        media_type: str,
+        clear_of_reservations: bool = False,
+    ) -> Event:
         if event.raw_evidence_ref is not None:
             raise StorageConflict("raw evidence reference must be store-owned")
         execution_id = _execution_key(event.execution_id)
@@ -3329,6 +3369,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     ),
                 ),
                 raw_evidence=(ref, prepared.content),
+                clear_of_reservations=clear_of_reservations,
             )
         except BaseException:
             # A failed blob write or transaction may leave an unreferenced file.
