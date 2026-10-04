@@ -15,12 +15,12 @@ import webbrowser
 from contextlib import contextmanager
 from datetime import timezone
 from email.utils import parsedate_to_datetime
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
 from urllib import error, request
 from urllib.parse import parse_qsl, urlparse
 
+from . import _http
 from .ci_credentials import (
     control_plane_url as _validated_control_plane_url,
 )
@@ -329,7 +329,12 @@ def _json_request(
     *,
     expect_no_content: bool = False,
 ) -> dict[str, Any]:
-    headers = {"Accept": "application/json", "Cache-Control": "no-store"}
+    request_id = _http.new_request_id()
+    headers = {
+        "Accept": "application/json",
+        "Cache-Control": "no-store",
+        **_http.base_headers(request_id),
+    }
     data = None
     if body is not None:
         data = json.dumps(body, separators=(",", ":")).encode()
@@ -367,13 +372,19 @@ def _json_request(
         if code == "rate_limited" and exc.code == 429:
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
             raise _RateLimited(_retry_after_seconds(retry_after)) from None
+        if exc.code >= 500:
+            raise RuntimeError(
+                f"server rejected the request (ref: {request_id})"
+            ) from None
         if code:
             raise RuntimeError(code) from None
         raise RuntimeError("server rejected the request") from None
     except RuntimeError:
         raise
     except (error.URLError, TimeoutError, OSError, json.JSONDecodeError):
-        raise RuntimeError("could not contact the M3 control-plane") from None
+        raise RuntimeError(
+            f"could not contact the M3 control-plane (ref: {request_id})"
+        ) from None
     if not isinstance(result, dict):
         raise RuntimeError("server returned an invalid response")
     return result
@@ -502,10 +513,7 @@ def _validate_verification_url(
 
 
 def _cli_version() -> str:
-    try:
-        return version("sf-m3-cli")
-    except PackageNotFoundError:
-        return "0+unknown"
+    return _http.cli_version()
 
 
 def login() -> int:

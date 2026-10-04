@@ -31,6 +31,7 @@ from m3_app.api.report_payloads import (
 from m3_app.api.wire import neutralize_response
 from m3_app.services.execution_service import project_test_results
 
+from . import _http
 from .errors import UploadError
 
 _RETRIES = 3
@@ -98,9 +99,11 @@ def _post(url: str, token: str, body: bytes, subject: str) -> dict[str, Any] | N
     """
     status: int | None = None
     code: str | None = None
+    last_request_id: str | None = None
     for attempt in range(_RETRIES):
         if attempt:
             time.sleep(0.25 * (2 ** (attempt - 1)))
+        last_request_id = _http.new_request_id()
         req = request.Request(
             url,
             data=body,
@@ -109,6 +112,7 @@ def _post(url: str, token: str, body: bytes, subject: str) -> dict[str, Any] | N
                 "Authorization": "Bearer " + token,
                 "Content-Type": "application/json",
                 "Content-Length": str(len(body)),
+                **_http.base_headers(last_request_id),
             },
         )
         try:
@@ -119,25 +123,38 @@ def _post(url: str, token: str, body: bytes, subject: str) -> dict[str, Any] | N
             status, code = exc.code, _error_code(exc)
             if status < 500 and status != 429:
                 raise UploadError(
-                    f"the M3 server rejected {subject} ({_http_detail(status, code)})",
+                    f"the M3 server rejected {subject} ({_http_detail(status, code)})"
+                    f" (ref: {last_request_id})",
                     retryable=False,
                     status=status,
                     code=code,
+                    request_id=last_request_id,
                 ) from None
+        except UploadError as exc:
+            # Raised by _NoRedirect, which cannot see the request's ID.
+            raise UploadError(
+                f"{exc.message} (ref: {last_request_id})",
+                retryable=exc.retryable,
+                status=exc.status,
+                code=exc.code,
+                request_id=last_request_id,
+            ) from None
         except (OSError, http.client.HTTPException):
             status = code = None
     if status is None:
         raise UploadError(
             f"could not reach the M3 server to send {subject} "
-            f"after {_RETRIES} attempts",
+            f"after {_RETRIES} attempts (ref: {last_request_id})",
             retryable=True,
+            request_id=last_request_id,
         )
     raise UploadError(
         f"the M3 server did not accept {subject} after {_RETRIES} attempts "
-        f"({_http_detail(status, code)})",
+        f"({_http_detail(status, code)}) (ref: {last_request_id})",
         retryable=True,
         status=status,
         code=code,
+        request_id=last_request_id,
     )
 
 
