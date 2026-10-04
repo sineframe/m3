@@ -528,9 +528,29 @@ CREATE TABLE IF NOT EXISTS v2_judge_request_budgets (
 """
 
 
+# Recorded in PRAGMA user_version once a database has been through every
+# migration below. Bump it whenever SCHEMA, a column or index definition, or the
+# DDL of any migration in _SqliteBase._initialize changes, so databases marked
+# by an older SDK run the full initialization again. A marked database still
+# runs the read-only probes of the data migrations (the *_pending helpers next
+# to each migration), because an older SDK sharing the file never learns about
+# the mark and can keep writing rows those migrations exist for. A new data
+# migration needs a probe in _has_pending_backfill.
+_SCHEMA_GENERATION = 1
+
+
+_UNLABELED_RUNS = "run_label IS NULL"
+_UNPROJECTED_EVALUATIONS = "evaluator_name IS NULL OR status IS NULL"
+
+
 class _SqliteBase:
     _migrate_profiles_enabled = False
     _redaction_config: RedactionConfig
+    database: Path
+    busy_timeout_ms: int
+    wal_requested: bool
+    _init_lock: threading.Lock
+    _engine: Any
 
     def __init__(
         self,
@@ -538,7 +558,19 @@ class _SqliteBase:
         *,
         busy_timeout_ms: int = 5000,
         wal: bool = True,
+        _shared_from: _SqliteBase | None = None,
     ) -> None:
+        # A store built from another store uses that store's engine, so it
+        # shares the pool and listeners, and leaves schema setup and engine
+        # disposal to its owner.
+        self._shared_from = _shared_from
+        if _shared_from is not None:
+            self.database = _shared_from.database
+            self.busy_timeout_ms = _shared_from.busy_timeout_ms
+            self.wal_requested = _shared_from.wal_requested
+            self._init_lock = _shared_from._init_lock
+            self._engine = _shared_from._engine
+            return
         raw = str(database)
         if raw.startswith("sqlite:///"):
             raw = raw.removeprefix("sqlite:///")
@@ -585,6 +617,16 @@ class _SqliteBase:
         event.listen(self._engine, "reset", self._restore_settings)
         with _timing.span("store.open", key=type(self).__name__):
             self._initialize()
+
+    @property
+    def journal_mode(self) -> str:
+        if self._shared_from is not None:
+            return self._shared_from.journal_mode
+        return self._journal_mode
+
+    @journal_mode.setter
+    def journal_mode(self, value: str) -> None:
+        self._journal_mode = value
 
     def _create_database_file(self) -> None:
         # SQLite gives the WAL and SHM files the database file's permission
@@ -708,6 +750,14 @@ class _SqliteBase:
     def _initialize(self) -> None:
         try:
             with self._init_lock, self._connect() as connection:
+                # A database that has been through every migration is current
+                # unless an older SDK has since written rows that still need a
+                # data migration; skipping the rest also avoids the write lock
+                # the run-label backfill takes on every open.
+                if self._schema_version(
+                    connection
+                ) >= _SCHEMA_GENERATION and not self._has_pending_backfill(connection):
+                    return
                 connection.executescript(SCHEMA)
                 self._migrate_suite_uniqueness(connection)
                 # CREATE TABLE IF NOT EXISTS deliberately does not evolve an
@@ -742,7 +792,7 @@ class _SqliteBase:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     rows = connection.execute(
-                        "SELECT run_id FROM v2_test_runs WHERE run_label IS NULL "
+                        f"SELECT run_id FROM v2_test_runs WHERE {_UNLABELED_RUNS} "
                         "ORDER BY created_at, run_id"
                     ).fetchall()
                     for row in rows:
@@ -797,12 +847,45 @@ class _SqliteBase:
                 profile_migrate = getattr(self, "_migrate_legacy_profiles", None)
                 if self._migrate_profiles_enabled and callable(profile_migrate):
                     profile_migrate(connection)
+                    # Only a store that ran every migration may mark the
+                    # database current; an artifact store skips the profile
+                    # migrations.
+                    connection.execute(f"PRAGMA user_version={_SCHEMA_GENERATION}")
         except StorageError:
             raise
         except Exception as exc:
             if _is_database_error(exc):
                 raise StorageError("database initialization failed") from None
             raise
+
+    @staticmethod
+    def _schema_version(connection: _CompatConnection) -> int:
+        row = connection.execute("PRAGMA user_version").fetchone()
+        return int(row[0]) if row else 0
+
+    def _has_pending_backfill(self, connection: _CompatConnection) -> bool:
+        """Report, without writing, whether any data migration has work to do.
+
+        The probes over-approximate: a row a migration cannot import (a
+        malformed legacy evaluation, a legacy profile that conflicts with a v2
+        one) keeps reporting work, which only costs a full initialization.
+        """
+        return (
+            self._suite_uniqueness_pending(connection)
+            or self._test_result_suites_pending(connection)
+            or connection.execute(
+                f"SELECT 1 FROM v2_test_runs WHERE {_UNLABELED_RUNS} LIMIT 1"
+            ).fetchone()
+            is not None
+            or connection.execute(
+                f"SELECT 1 FROM v2_evaluations WHERE {_UNPROJECTED_EVALUATIONS} LIMIT 1"
+            ).fetchone()
+            is not None
+            or (
+                self._migrate_profiles_enabled
+                and self._legacy_profiles_pending(connection)
+            )
+        )
 
     @staticmethod
     def _assign_run_label(connection: _CompatConnection, run_id: str) -> str:
@@ -827,13 +910,17 @@ class _SqliteBase:
         raise StorageError("run label could not be assigned")
 
     @staticmethod
-    def _migrate_suite_uniqueness(connection: _CompatConnection) -> None:
-        """Remove the legacy database-wide suite-name constraint safely."""
+    def _suite_uniqueness_pending(connection: _CompatConnection) -> bool:
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='v2_suites'"
         ).fetchone()
         definition = "" if row is None else str(row[0] or "")
-        if "suite_name text not null unique" not in definition.lower():
+        return "suite_name text not null unique" in definition.lower()
+
+    @staticmethod
+    def _migrate_suite_uniqueness(connection: _CompatConnection) -> None:
+        """Remove the legacy database-wide suite-name constraint safely."""
+        if not _SqliteBase._suite_uniqueness_pending(connection):
             return
         connection.mark_settings_dirty()
         connection.execute("PRAGMA foreign_keys=OFF")
@@ -898,10 +985,14 @@ class _SqliteBase:
         )
         return Suite(SuiteId(next_id), normalized, normalized, project)
 
+    @staticmethod
+    def _test_result_suites_pending(connection: _CompatConnection) -> bool:
+        columns = connection.execute("PRAGMA table_info(v2_test_results)").fetchall()
+        return not any(str(row[1]) == "suite_id" and int(row[3]) for row in columns)
+
     def _migrate_test_result_suites(self, connection: _CompatConnection) -> None:
         """Preserve old attempts while making every new attempt reference a suite."""
-        columns = connection.execute("PRAGMA table_info(v2_test_results)").fetchall()
-        if any(str(row[1]) == "suite_id" and int(row[3]) for row in columns):
+        if not self._test_result_suites_pending(connection):
             return
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -1013,7 +1104,7 @@ class _SqliteBase:
         """Best-effort projection of pre-v2.1 evaluation JSON."""
         rows = connection.execute(
             "SELECT id,execution_id,result_json,created_at,evaluator_name,status,score,run_id "
-            "FROM v2_evaluations WHERE evaluator_name IS NULL OR status IS NULL"
+            f"FROM v2_evaluations WHERE {_UNPROJECTED_EVALUATIONS}"
         ).fetchall()
         for row in rows:
             try:
@@ -1105,6 +1196,31 @@ class _SqliteBase:
             except Exception:
                 # Malformed legacy input must not make the database unusable.
                 continue
+
+    @staticmethod
+    def _legacy_profiles_pending(connection: _CompatConnection) -> bool:
+        """Whether a legacy profile row has no v2 profile with the same ID."""
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        for kind, profile_table, revision_table in (
+            ("server", "mcp_profiles", "mcp_profile_revisions"),
+            ("harness", "harness_profiles", "harness_profile_revisions"),
+        ):
+            if profile_table not in tables or revision_table not in tables:
+                continue
+            if (
+                connection.execute(
+                    f"SELECT 1 FROM {profile_table} AS legacy WHERE NOT EXISTS "
+                    f"(SELECT 1 FROM v2_{kind}_profiles WHERE id=legacy.id) LIMIT 1"
+                ).fetchone()
+                is not None
+            ):
+                return True
+        return False
 
     def _migrate_legacy_profiles(self, connection: _CompatConnection) -> None:
         self._begin(connection, immediate=True)
@@ -1354,7 +1470,8 @@ class _SqliteBase:
 
     def close(self) -> None:
         """Dispose SQLAlchemy's pool and release all DBAPI connections."""
-        self._engine.dispose()
+        if self._shared_from is None:
+            self._engine.dispose()
 
 
 class SQLiteArtifactStore(_SqliteBase):
@@ -1670,8 +1787,7 @@ class SQLiteExecutionStore(_SqliteBase):
             self.database,
             blob_root,
             config=self._redaction_config,
-            busy_timeout_ms=self.busy_timeout_ms,
-            wal=False,
+            _shared_from=self,
         )
         self.payload_blob_threshold = payload_blob_threshold
         self._callbacks: dict[str, list[EventCallback]] = {}

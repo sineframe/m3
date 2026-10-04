@@ -29,10 +29,12 @@ from m3.storage import (
     BlobRecord,
     InMemoryArtifactStore,
     InMemoryExecutionStore,
+    SQLiteArtifactStore,
     SQLiteExecutionStore,
     StorageConflict,
     StorageError,
 )
+from m3.storage import sqlite as sqlite_storage
 from m3.trace.redaction import RedactionConfig
 from m3.types import (
     ArtifactRef,
@@ -652,6 +654,168 @@ def test_wal_connections_use_normal_synchronous(tmp_path: Path) -> None:
     store = _store(tmp_path)
     assert store.journal_mode == "wal"
     assert _pragma(store, "synchronous") == 1
+
+
+def _user_version(database: Path) -> int:
+    with sqlite3.connect(database) as raw:
+        return int(raw.execute("PRAGMA user_version").fetchone()[0])
+
+
+def _index_names(database: Path) -> set[str]:
+    with sqlite3.connect(database) as raw:
+        return {
+            str(row[0])
+            for row in raw.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        }
+
+
+def test_open_of_current_database_skips_schema_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _store(tmp_path)
+    execution_id, factory = _created(first)
+    assert _user_version(tmp_path / "m3.sqlite") == sqlite_storage._SCHEMA_GENERATION
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("schema setup must be skipped")
+
+    monkeypatch.setattr(sqlite_storage._CompatConnection, "executescript", refuse)
+    monkeypatch.setattr(SQLiteExecutionStore, "_migrate_legacy_profiles", refuse)
+    second = _store(tmp_path)
+    assert second.get_snapshot(execution_id) == first.get_snapshot(execution_id)
+    second.append_events([factory.create(EventKind.DIAGNOSTIC, payload={})])
+    assert tuple(second.iter_events(execution_id))[-1].kind == EventKind.DIAGNOSTIC
+    other = ExecutionId("execution-2")
+    second.create(ExecutionState(execution_id=other))
+    assert second.get_snapshot(other).execution_id == other
+
+
+def test_database_without_schema_generation_is_fully_migrated_then_marked(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    with sqlite3.connect(database) as raw:
+        raw.execute("DROP INDEX v2_executions_created_at")
+        raw.execute("PRAGMA user_version=0")
+    assert "v2_executions_created_at" not in _index_names(database)
+    store = _store(tmp_path)
+    assert "v2_executions_created_at" in _index_names(database)
+    assert _user_version(database) == sqlite_storage._SCHEMA_GENERATION
+    _created(store)
+
+
+def test_rows_from_an_older_writer_are_migrated_on_open(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    assert _user_version(database) == sqlite_storage._SCHEMA_GENERATION
+    # An SDK that predates run labels never updates user_version.
+    with sqlite3.connect(database) as raw:
+        raw.execute(
+            "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) "
+            "VALUES('run-old','{}','2026-01-01T00:00:00+00:00',"
+            "'2026-01-01T00:00:00+00:00')"
+        )
+    _store(tmp_path).close()
+    with sqlite3.connect(database) as raw:
+        label = raw.execute(
+            "SELECT run_label FROM v2_test_runs WHERE run_id='run-old'"
+        ).fetchone()[0]
+    assert label
+
+
+def test_open_of_current_database_without_pending_work_takes_no_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store(tmp_path).close()
+    blocker = sqlite3.connect(tmp_path / "m3.sqlite", isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("schema setup must be skipped")
+
+    monkeypatch.setattr(sqlite_storage._CompatConnection, "executescript", refuse)
+    try:
+        store = SQLiteExecutionStore(
+            tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", busy_timeout_ms=50
+        )
+        store.close()
+    finally:
+        blocker.execute("ROLLBACK")
+        blocker.close()
+
+
+def test_newer_schema_generation_is_left_alone(tmp_path: Path) -> None:
+    database = tmp_path / "m3.sqlite"
+    _store(tmp_path).close()
+    newer = sqlite_storage._SCHEMA_GENERATION + 5
+    with sqlite3.connect(database) as raw:
+        raw.execute(f"PRAGMA user_version={newer}")
+    _created(_store(tmp_path))
+    assert _user_version(database) == newer
+
+
+def test_standalone_artifact_store_does_not_mark_database_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "m3.sqlite"
+    SQLiteArtifactStore(database, tmp_path / "blobs").close()
+    assert _user_version(database) == 0
+    assert "v2_executions_created_at" in _index_names(database)
+    with sqlite3.connect(database) as raw:
+        raw.execute("DROP INDEX v2_executions_created_at")
+    ran: list[str] = []
+    original = sqlite_storage._SqliteBase._migrate_legacy_evaluations
+
+    def record(self: object, connection: object) -> None:
+        ran.append("evaluations")
+        original(self, connection)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        sqlite_storage._SqliteBase, "_migrate_legacy_evaluations", record
+    )
+    store = _store(tmp_path)
+    assert ran
+    assert "v2_executions_created_at" in _index_names(database)
+    assert _user_version(database) == sqlite_storage._SCHEMA_GENERATION
+    store.close()
+
+
+def test_internal_artifact_store_shares_engine_without_initializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    initialized: list[object] = []
+    monkeypatch.setattr(
+        sqlite_storage._SqliteBase, "_initialize", lambda self: initialized.append(self)
+    )
+    shared = SQLiteArtifactStore(
+        store.database, tmp_path / "other", config=None, _shared_from=store
+    )
+    assert initialized == []
+    assert shared._engine is store._engine
+    assert shared.database == store.database
+    assert shared.busy_timeout_ms == store.busy_timeout_ms
+    assert shared.journal_mode == store.journal_mode == "wal"
+    assert store.artifacts._engine is store._engine
+    assert store.artifacts.blob_root == (tmp_path / "blobs").resolve()
+    execution_id, _ = _created(store)
+    ref = store.artifacts.put(execution_id, "note.txt", b"hello")
+    assert store.artifacts.get(ref) == b"hello"
+
+
+def test_close_is_idempotent_and_shared_artifact_store_keeps_engine(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    ref = store.artifacts.put(execution_id, "note.txt", b"hello")
+    store.artifacts.close()
+    assert store.artifacts.get(ref) == b"hello"
+    store.close()
+    store.close()
+    reopened = _store(tmp_path)
+    assert reopened.artifacts.get(ref) == b"hello"
 
 
 def test_database_path_replaced_by_symlink_fails_closed(tmp_path: Path) -> None:
