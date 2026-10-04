@@ -423,7 +423,7 @@ def test_concurrent_emits_are_serialized_into_one_contiguous_trace() -> None:
     assert [event.sequence for event in recorder.events()] == list(range(13))
 
 
-def test_failed_emit_releases_its_reservation_for_the_next_producer() -> None:
+def test_failed_emit_does_not_consume_a_sequence() -> None:
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-release")
     with pytest.raises(TraceRecorderError):
         recorder.emit(
@@ -433,6 +433,110 @@ def test_failed_emit_releases_its_reservation_for_the_next_producer() -> None:
     event = recorder.emit(EventKind.DIAGNOSTIC, payload={"after": "failure"})
     assert event.sequence == 1
     assert [item.sequence for item in recorder.events()] == [0, 1]
+
+
+class _SpyStore:
+    """Delegate to a real store and count the calls a hot path must not make."""
+
+    _WATCHED = frozenset(
+        {
+            "allocate",
+            "allocate_sequence",
+            "allocate_sequences",
+            "release",
+            "iter_events",
+            "events",
+            "get_snapshot",
+        }
+    )
+
+    def __init__(self, store: InMemoryExecutionStore | SQLiteExecutionStore) -> None:
+        self._store = store
+        self.calls: list[str] = []
+
+    def __getattr__(self, name: str) -> object:
+        attribute = getattr(self._store, name)
+        if name not in self._WATCHED:
+            return attribute
+
+        def spy(*args: object, **kwargs: object) -> object:
+            self.calls.append(name)
+            return attribute(*args, **kwargs)
+
+        return spy
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_emit_does_not_reserve_sequences_or_reload_history(
+    backend: str, tmp_path: Path
+) -> None:
+    store = (
+        InMemoryExecutionStore()
+        if backend == "memory"
+        else SQLiteExecutionStore(tmp_path / "spy.sqlite")
+    )
+    spy = _SpyStore(store)
+    recorder = ExecutionTraceRecorder(spy, "execution-spy")  # type: ignore[arg-type]
+    spy.calls.clear()
+    events = [
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"index": index})
+        for index in range(5)
+    ]
+    recorder.add_limitation("capture_incomplete")
+    assert [event.sequence for event in events] == [1, 2, 3, 4, 5]
+    assert spy.calls == []
+    assert [event.sequence for event in store.events("execution-spy")] == list(range(7))
+
+
+def test_recorder_continues_after_a_conflicting_writer_without_losing_events(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "shared.sqlite"
+    first_store = SQLiteExecutionStore(database)
+    first = ExecutionTraceRecorder(first_store, "execution-two-writers")
+    second_store = SQLiteExecutionStore(database)
+    second = ExecutionTraceRecorder(second_store, "execution-two-writers")
+    emitted = [
+        first.emit(EventKind.DIAGNOSTIC, payload={"writer": "first", "n": 0}),
+        second.emit(EventKind.DIAGNOSTIC, payload={"writer": "second", "n": 0}),
+        first.emit(EventKind.DIAGNOSTIC, payload={"writer": "first", "n": 1}),
+        second.emit(EventKind.DIAGNOSTIC, payload={"writer": "second", "n": 1}),
+        first.emit(EventKind.DIAGNOSTIC, payload={"writer": "first", "n": 2}),
+    ]
+    assert [event.sequence for event in emitted] == [1, 2, 3, 4, 5]
+    committed = first_store.events("execution-two-writers")
+    assert [event.sequence for event in committed] == list(range(6))
+    assert [event.payload.get("writer") for event in committed[1:]] == [
+        "first",
+        "second",
+        "first",
+        "second",
+        "first",
+    ]
+
+
+def test_store_written_terminal_stops_emits_without_a_trailing_event(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "cancel.sqlite")
+    spy = _SpyStore(store)
+    recorder = ExecutionTraceRecorder(spy, "execution-store-terminal")  # type: ignore[arg-type]
+    recorder.emit(EventKind.DIAGNOSTIC, payload={"before": True})
+    assert store.request_cancel("execution-store-terminal", reason="stop")
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"after": True})
+    events = store.events("execution-store-terminal")
+    assert events[-1].kind is EventKind.EXECUTION_FINISHED
+    assert [event.sequence for event in events] == list(range(len(events)))
+    spy.calls.clear()
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"later": True})
+    with pytest.raises(TraceFinalizationConflict):
+        recorder.add_limitation("capture_incomplete")
+    assert spy.calls == []
+    assert recorder.finalize(ExecutionOutcome.CANCELLED).events[-1].kind is (
+        EventKind.EXECUTION_FINISHED
+    )
 
 
 def test_terminal_race_rejects_producer_after_finished_without_postterminal_event() -> (

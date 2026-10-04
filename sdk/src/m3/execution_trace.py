@@ -8,7 +8,7 @@ never retained by the recorder.
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from time import perf_counter_ns
 from typing import Any, Final, Literal, cast
@@ -16,7 +16,12 @@ from uuid import uuid4
 
 from . import _timing
 from ._types.agent_identity import project_agent_identity
-from .storage import ExecutionStore, StorageConflict
+from .storage import (
+    ExecutionStore,
+    SequenceConflict,
+    StorageConflict,
+    TerminalConflict,
+)
 from .trace.counts import tool_call_count
 from .trace.redaction import (
     RedactionConfig,
@@ -164,15 +169,18 @@ class ExecutionTraceRecorder:
             if redaction_config is not None
             else RedactionConfig.from_environment()
         )
-        # One recorder lock covers reservation, validation, commit, and
-        # terminal projection. Storage remains the commit authority, while
-        # this lock prevents this recorder's producers from reserving or
-        # attempting to append out of order.
+        # One recorder lock covers sequencing, validation, commit, and
+        # terminal projection. Storage remains the commit authority: it
+        # rejects non-contiguous sequences and appends after a terminal event.
+        # The cached next sequence and terminal flag only spare each emit a
+        # history reload, and are refreshed from the store when it disagrees.
         self._record_lock = threading.RLock()
         self._clock_lock = threading.RLock()
         self._started_monotonic_ns = perf_counter_ns()
         self._last_offset_ms = 0.0
         self._final: TraceResult | None = None
+        self._next_sequence = 0
+        self._terminal = False
         self._runtime_limitations: list[str] = []
         if store.get_snapshot(self._execution_id) is None:
             self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
@@ -295,7 +303,8 @@ class ExecutionTraceRecorder:
                 self._started_monotonic_ns = perf_counter_ns() - round(
                     self._last_offset_ms * 1_000_000
                 )
-            if self._has_committed_terminal():
+            self._sync_from_events(existing_events)
+            if self._terminal:
                 existing = self._project_trace()
                 existing.view()
                 self._final = existing
@@ -313,7 +322,7 @@ class ExecutionTraceRecorder:
         if limitation not in self._ALLOWED_LIMITATIONS:
             raise TraceRecorderError("execution limitation is invalid")
         with self._record_lock:
-            if self._final is not None or self._has_committed_terminal():
+            if self._final is not None or self._terminal:
                 raise TraceFinalizationConflict("execution is already terminal")
             if limitation not in self._runtime_limitations:
                 self._runtime_limitations.append(limitation)
@@ -410,7 +419,7 @@ class ExecutionTraceRecorder:
         with self._record_lock:
             if event.execution_id != self._execution_id:
                 raise StorageConflict("event belongs to another execution")
-            if self._final is not None or self._has_committed_terminal():
+            if self._final is not None or self._terminal:
                 raise TraceFinalizationConflict("execution is already terminal")
             self._validate_event(event)
             safe_event = self._redacted_event(event)
@@ -422,8 +431,16 @@ class ExecutionTraceRecorder:
                     "monotonic_offset_ms": offset,
                 }
             )
-            self._store.append_events((safe_event,))
+            self._commit(self._store.append_events, (safe_event,))
+            self._next_sequence = max(self._next_sequence, safe_event.sequence + 1)
             return safe_event
+
+    def _commit(self, append: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return append(*args, **kwargs)
+        except TerminalConflict:
+            self._terminal = True
+            raise TraceFinalizationConflict("execution is already terminal") from None
 
     @_timing.counted("trace.emit")
     def emit(
@@ -443,22 +460,24 @@ class ExecutionTraceRecorder:
         raw_evidence_content: bytes | None = None,
         raw_evidence_media_type: str | None = None,
     ) -> Event:
-        """Allocate, build, and commit a stable event."""
+        """Build and commit a stable event at the next sequence."""
         with self._record_lock:
-            if self._final is not None or self._has_committed_terminal():
+            if self._final is not None or self._terminal:
                 raise TraceFinalizationConflict("execution is already terminal")
+            if raw_evidence_content is not None and raw_evidence_media_type is None:
+                raise TraceRecorderError("raw evidence media type is required")
             safe_payload = redact_for_persistence(
                 dict(payload or {}),
                 config=self._redaction_config,
                 path="$.payload",
             )
-            sequence = self._allocate_sequence()
-            try:
-                event_id = EventId(f"event-{uuid4().hex}")
+            event_id = EventId(f"event-{uuid4().hex}")
+            attempts = 3
+            for attempt in range(attempts):
                 event = Event(
                     event_id=event_id,
                     execution_id=self._execution_id,
-                    sequence=sequence,
+                    sequence=self._next_sequence,
                     kind=kind,
                     session_id=_session_id(session_id),
                     turn_id=_turn_id(turn_id),
@@ -479,9 +498,9 @@ class ExecutionTraceRecorder:
                     provenance=provenance
                     or EventSource(origin=EventOrigin.NORMALIZED, source="m3"),
                 )
-                if raw_evidence_content is not None:
-                    if raw_evidence_media_type is None:
-                        raise TraceRecorderError("raw evidence media type is required")
+                try:
+                    if raw_evidence_content is None:
+                        return self.record(event)
                     self._validate_event(event)
                     timestamp, offset = self._clock()
                     event = event.model_copy(
@@ -492,21 +511,27 @@ class ExecutionTraceRecorder:
                         raise TraceRecorderError(
                             "execution store does not support atomic raw evidence"
                         )
-                    return cast(
+                    committed = cast(
                         Event,
-                        append_atomic(
+                        self._commit(
+                            append_atomic,
                             event,
                             raw_evidence_content,
                             media_type=raw_evidence_media_type,
                         ),
                     )
-                return self.record(event)
-            except Exception:
-                try:
-                    self._store.release(self._execution_id, (sequence,))
-                except Exception:
-                    pass
-                raise
+                    self._next_sequence = committed.sequence + 1
+                    return committed
+                except SequenceConflict:
+                    # Another writer appended since this recorder last looked.
+                    self._sync_from_events(self._committed_events())
+                    if self._terminal:
+                        raise TraceFinalizationConflict(
+                            "execution is already terminal"
+                        ) from None
+                    if attempt == attempts - 1:
+                        raise
+            raise AssertionError("unreachable")  # pragma: no cover
 
     def snapshot(self) -> ExecutionState:
         """Return a fresh snapshot derived solely from committed events."""
@@ -579,27 +604,22 @@ class ExecutionTraceRecorder:
             # The execution store's snapshot is metadata for ownership/lifecycle;
             # this recorder projection is derived solely from committed events.
             self._final = trace
+            self._terminal = True
             return self._fresh_trace(trace)
 
-    def _allocate_sequence(self) -> int:
-        allocator = getattr(self._store, "allocate_sequence", None)
-        if not callable(allocator):
-            raise TraceRecorderError(
-                "execution store does not support sequence allocation"
-            )
-        return int(allocator(self._execution_id))
+    def _sync_from_events(self, events: Sequence[Event]) -> None:
+        self._next_sequence = events[-1].sequence + 1 if events else 0
+        self._terminal = any(
+            event.kind is EventKind.EXECUTION_FINISHED for event in events
+        )
 
     def _committed_events(self) -> tuple[Event, ...]:
         return tuple(self._store.iter_events(self._execution_id))
 
-    def _has_committed_terminal(self) -> bool:
-        return any(
-            event.kind is EventKind.EXECUTION_FINISHED
-            for event in self._committed_events()
-        )
-
     def _terminal_trace(self) -> TraceResult | None:
-        if not self._has_committed_terminal():
+        events = self._committed_events()
+        self._sync_from_events(events)
+        if not self._terminal:
             return None
         return self._project_trace()
 
