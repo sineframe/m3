@@ -542,3 +542,7 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
             ci_upload.publish_run("run-test", **kwargs)
     finally:
         store.close()
+
+
+def test_control_plane_origin_defaults_to_api_domain():
+    assert control_plane_url({}) == "https://api.m3.sineframe.com"
