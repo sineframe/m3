@@ -472,7 +472,7 @@ class ExecutionTraceRecorder:
                 path="$.payload",
             )
             event_id = EventId(f"event-{uuid4().hex}")
-            attempts = 3
+            attempts = 10
             for attempt in range(attempts):
                 event = Event(
                     event_id=event_id,

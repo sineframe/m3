@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
@@ -199,6 +200,8 @@ try:
     SQLiteExecutionStore('optional-dependency-test.sqlite')
 except ModuleNotFoundError as error:
     assert str(error) == 'SQLite storage requires the optional dependency; install sf-m3[storage]'
+    import os
+    assert not os.path.exists('optional-dependency-test.sqlite')
 else:
     raise AssertionError('SQLite storage unexpectedly initialized without SQLAlchemy')
 """
@@ -1696,3 +1699,125 @@ def test_incremental_snapshot_matches_full_replay_for_random_histories(
             store.close()
 
     check()
+
+
+def test_close_leaves_a_self_contained_database_file(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store, "checkpointed")
+    store.close()
+    copy = tmp_path / "copy.sqlite"
+    copy.write_bytes((tmp_path / "m3.sqlite").read_bytes())
+    with sqlite3.connect(copy) as connection:
+        rows = connection.execute(
+            "SELECT id FROM v2_executions WHERE id=?", (execution_id.root,)
+        ).fetchall()
+    assert rows == [(execution_id.root,)]
+    assert (
+        not (tmp_path / "m3.sqlite-wal").exists()
+        or not (tmp_path / "m3.sqlite-wal").stat().st_size
+    )
+
+
+def test_close_tolerates_a_reader_blocking_the_checkpoint(tmp_path: Path) -> None:
+    store = SQLiteExecutionStore(
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs", busy_timeout_ms=50
+    )
+    _created(store, "blocked")
+    reader = sqlite3.connect(tmp_path / "m3.sqlite")
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM v2_executions").fetchone()
+        store.close()
+    finally:
+        reader.close()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
+def test_forked_child_opens_its_own_connection_and_leaves_the_parents(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store, "forked")
+    opened = _driver_connection_opens(store)
+    pid = os.fork()
+    if pid == 0:
+        status = 1
+        try:
+            store.append_events(
+                [_event(execution_id.root, 1, payload={"who": "child"})]
+            )
+            status = 0 if len(opened) == 1 else 2
+        finally:
+            os._exit(status)
+    _, wait_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(wait_status) == 0
+    # The child never opened a connection in this process's counter.
+    assert opened == []
+    store.append_events([_event(execution_id.root, 2)])
+    assert len(store.events(execution_id)) == 3
+    assert opened == []
+    store.close()
+
+
+def test_schema_fingerprint_matches_the_recorded_generation() -> None:
+    """Fail when DDL changes without a new schema generation."""
+    import hashlib
+    import inspect
+
+    source = inspect.getsource(sqlite_storage._SqliteBase._initialize)
+    normalized = "".join((sqlite_storage.SCHEMA + source).split())
+    fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    assert fingerprint == sqlite_storage._SCHEMA_FINGERPRINT, (
+        "The SQLite schema or its migrations changed. Bump _SCHEMA_GENERATION "
+        "in m3/storage/sqlite.py and set _SCHEMA_FINGERPRINT to "
+        f"{fingerprint!r}."
+    )
+
+
+def _tamper_snapshot(
+    store: SQLiteExecutionStore, key: str, edit: Callable[[dict[str, object]], None]
+) -> None:
+    with store._connect() as connection:
+        row = connection.execute(
+            "SELECT snapshot_json FROM v2_executions WHERE id=?", (key,)
+        ).fetchone()
+        snapshot = json.loads(row[0])
+        edit(snapshot)
+        connection.execute(
+            "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+            (json.dumps(snapshot), key),
+        )
+
+
+@pytest.mark.parametrize("damage", ["missing-agent", "stale-sequence"])
+def test_append_repairs_a_stale_stored_snapshot_from_full_history(
+    tmp_path: Path, damage: str
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    key = execution_id.root
+    store.append_events(
+        [
+            _event(
+                key,
+                1,
+                EventKind.HARNESS_SELECTION,
+                payload={
+                    "harness": {"kind": "opencode", "runtime": "managed"},
+                    "model": {"requested_id": "openai/gpt-5"},
+                },
+            )
+        ]
+    )
+    if damage == "missing-agent":
+        _tamper_snapshot(store, key, lambda snapshot: snapshot.pop("agent"))
+    else:
+        _tamper_snapshot(store, key, lambda snapshot: snapshot.update(sequence=0))
+        _tamper_snapshot(store, key, lambda snapshot: snapshot.update(agent=None))
+    store.append_events([_event(key, 2)])
+    snapshot = store.get_snapshot(key)
+    assert snapshot is not None
+    assert snapshot.agent is not None
+    assert snapshot.sequence == 2
+    assert snapshot == store._derive_snapshot(key)
+    store.close()

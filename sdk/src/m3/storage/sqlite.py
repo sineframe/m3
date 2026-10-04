@@ -186,6 +186,7 @@ class _CompatResult:
 _SETTINGS_DIRTY = "m3_settings_dirty"
 # Key holding the (device, inode) of the database file a connection opened.
 _DATABASE_IDENTITY = "m3_database_identity"
+_OWNER_PID = "m3_owner_pid"
 
 
 class _CompatConnection:
@@ -239,6 +240,9 @@ _QUEUE_LEASE_SECONDS = 30.0
 # Persisted tool-call counts are only valid for the trace projection that
 # produced them; a row stamped with another TraceView version is recomputed.
 _TRACE_VIEW_SCHEMA_VERSION = TraceView.model_fields["schema_version"].default
+
+# Keys of a complete stored execution snapshot.
+_SNAPSHOT_FIELDS = frozenset(ExecutionState.model_fields)
 
 
 def _cached_tool_call_counts(raw: str | None) -> tuple[int, int] | None:
@@ -539,6 +543,10 @@ CREATE TABLE IF NOT EXISTS v2_judge_request_budgets (
 # the mark and can keep writing rows those migrations exist for. A new data
 # migration needs a probe in _has_pending_backfill.
 _SCHEMA_GENERATION = 1
+# Fingerprint of SCHEMA and _SqliteBase._initialize as of _SCHEMA_GENERATION.
+# A unit test recomputes it, so a DDL change cannot ship without a new
+# generation.
+_SCHEMA_FINGERPRINT = "a65480afca625040ae80740783c5197cf0ef5e943017ee75e82bafe3ba0c7850"
 
 
 _UNLABELED_RUNS = "run_label IS NULL"
@@ -588,8 +596,10 @@ class _SqliteBase:
         self.wal_requested = wal
         self.journal_mode = "delete"
         self._init_lock = threading.Lock()
-        self._create_database_file()
+        # The optional dependency is checked first so a missing install does
+        # not leave an empty database file behind.
         create_engine, queue_pool = _sqlalchemy()
+        self._create_database_file()
         # SQLAlchemy is the owner of the SQLite DBAPI connection. AUTOCOMMIT
         # keeps PRAGMA setup and our explicit BEGIN/COMMIT boundaries intact;
         # write transactions still use SQLite's native BEGIN IMMEDIATE below.
@@ -705,11 +715,20 @@ class _SqliteBase:
                 path.chmod(0o600)
         status = os.stat(self.database)
         record.info[_DATABASE_IDENTITY] = (status.st_dev, status.st_ino)
+        record.info[_OWNER_PID] = os.getpid()
 
     def _verify_database_identity(
-        self, _dbapi_connection: Any, record: Any, _proxy: Any
+        self, _dbapi_connection: Any, record: Any, proxy: Any
     ) -> None:
-        """Discard a pooled connection whose database path now names another file."""
+        """Discard a pooled connection that is inherited or names another file."""
+        if record.info.get(_OWNER_PID) != os.getpid():
+            # A forked child inherits the parent's driver connections, which
+            # must not be used or closed from the child. Detaching them makes
+            # the pool open a fresh connection without touching the parent's.
+            from sqlalchemy.exc import DisconnectionError
+
+            record.dbapi_connection = proxy.dbapi_connection = None
+            raise DisconnectionError("connection belongs to another process")
         try:
             status = os.lstat(self.database)
             current: tuple[int, int] | None = (status.st_dev, status.st_ino)
@@ -726,7 +745,9 @@ class _SqliteBase:
         self, dbapi_connection: Any, record: Any, reset_state: Any
     ) -> None:
         """Undo per-connection settings a caller changed before pool reuse."""
-        if not record.info.pop(_SETTINGS_DIRTY, False) or reset_state.terminate_only:
+        if not record.info.pop(_SETTINGS_DIRTY, False) or getattr(
+            reset_state, "terminate_only", False
+        ):
             return
         # PRAGMA foreign_keys is a no-op inside a transaction, so end any
         # transaction a caller left open first.
@@ -1473,7 +1494,24 @@ class _SqliteBase:
     def close(self) -> None:
         """Dispose SQLAlchemy's pool and release all DBAPI connections."""
         if self._shared_from is None:
+            self._checkpoint_wal()
             self._engine.dispose()
+
+    def _checkpoint_wal(self) -> None:
+        """Fold the WAL into the database so the bare file holds every commit.
+
+        Pooled connections keep the WAL open, so without this the database
+        file alone would lack recent commits after the store closes. Other
+        processes may hold readers, so a busy or locked database is not an
+        error.
+        """
+        if self.journal_mode != "wal":
+            return
+        try:
+            with self._engine.connect() as connection:
+                connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass
 
 
 class SQLiteArtifactStore(_SqliteBase):
@@ -2381,6 +2419,13 @@ class SQLiteExecutionStore(_SqliteBase):
             return self._read_snapshot(connection, key)
 
     def _read_snapshot(self, connection: Any, key: str) -> ExecutionState | None:
+        stored = self._read_stored_snapshot(connection, key)
+        return None if stored is None else stored[0]
+
+    def _read_stored_snapshot(
+        self, connection: Any, key: str
+    ) -> tuple[ExecutionState, Mapping[str, Any]] | None:
+        """Return the snapshot with the raw JSON object it was decoded from."""
         row = connection.execute(
             "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
             (key,),
@@ -2397,7 +2442,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     )
                 }
             )
-        return snapshot
+        return snapshot, raw
 
     def get_execution_spec(
         self, execution_id: ExecutionId | str
@@ -3018,9 +3063,10 @@ class SQLiteExecutionStore(_SqliteBase):
                     )
                 )
                 payload_blobs.append((persisted, blob))
-            existing = self._read_snapshot(connection, execution_id)
-            if existing is None:
+            stored_snapshot = self._read_stored_snapshot(connection, execution_id)
+            if stored_snapshot is None:
                 raise StorageConflict("execution does not exist")
+            existing, raw_snapshot = stored_snapshot
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
                 (execution_id,),
@@ -3036,22 +3082,37 @@ class SQLiteExecutionStore(_SqliteBase):
                 seen.add(str(event.event_id.root))
             if existing.lifecycle is ExecutionStatus.FINISHED:
                 raise TerminalConflict("terminal execution cannot receive more events")
-            # The stored snapshot already reflects every earlier event, so only
-            # the appended batch is folded. Prior history is needed solely to
-            # recount tool calls, and is read before this batch is inserted.
-            if has_tool_request(safe_events):
+            # A snapshot that is behind the stored events, or that an older SDK
+            # wrote without every current field, cannot be trusted to reflect
+            # earlier events, so the whole history is folded again.
+            if existing.sequence != max(int(row[0]), 0) or not (
+                _SNAPSHOT_FIELDS <= raw_snapshot.keys()
+            ):
                 history = self._events(execution_id, connection=connection)
-                tool_calls = tool_call_count_after(
-                    existing.tool_call_count, history + safe_events, safe_events
+                derived = _fold_snapshot(
+                    existing,
+                    history + safe_events,
+                    sequence=safe_events[-1].sequence,
+                    tool_calls=tool_call_count(history + safe_events),
                 )
             else:
-                tool_calls = existing.tool_call_count
-            derived = _fold_snapshot(
-                existing,
-                safe_events,
-                sequence=safe_events[-1].sequence,
-                tool_calls=tool_calls,
-            )
+                # The stored snapshot already reflects every earlier event, so
+                # only the appended batch is folded. Prior history is needed
+                # solely to recount tool calls, and is read before this batch
+                # is inserted.
+                if has_tool_request(safe_events):
+                    history = self._events(execution_id, connection=connection)
+                    tool_calls = tool_call_count_after(
+                        existing.tool_call_count, history + safe_events, safe_events
+                    )
+                else:
+                    tool_calls = existing.tool_call_count
+                derived = _fold_snapshot(
+                    existing,
+                    safe_events,
+                    sequence=safe_events[-1].sequence,
+                    tool_calls=tool_calls,
+                )
             sessions = {
                 str(row[0])
                 for row in connection.execute(
