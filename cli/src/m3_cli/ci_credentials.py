@@ -17,7 +17,7 @@ from .errors import CLIError
 
 ACCESS_TOKEN_ENV = "M3_ACCESS_TOKEN"
 CONTROL_PLANE_URL_ENV = "M3_CONTROL_PLANE_URL"
-DEFAULT_CONTROL_PLANE_URL = "https://control-plane-ulwh0w.fly.dev"
+DEFAULT_CONTROL_PLANE_URL = "https://api.m3.sineframe.com"
 _PAT = re.compile(r"m3pat_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")
 
 
