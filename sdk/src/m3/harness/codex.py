@@ -46,6 +46,9 @@ from .observations import (
     UsageObservedObservation,
 )
 
+# Covers Codex's own per-server MCP startup timeout (10 seconds by default).
+_THREAD_START_TIMEOUT_SECONDS = 30.0
+
 
 @dataclass(frozen=True, slots=True)
 class _NativeMcpToolItem:
@@ -588,8 +591,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 "params": params,
             },
         )
+        # thread/start replies only after Codex has started the thread's MCP
+        # servers, which regularly takes several seconds for a stdio server.
         while True:
-            frame = await process.next(5.0)
+            frame = await process.next(_THREAD_START_TIMEOUT_SECONDS)
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex thread could not be started")
             if frame.get("id") == self._request_id:
