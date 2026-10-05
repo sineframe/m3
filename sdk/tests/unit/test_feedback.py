@@ -11,9 +11,14 @@ from typing import ClassVar
 
 import pytest
 from mcp import types as mcp_types
-from test_sqlite_storage import _run_execution
+from test_sqlite_storage import (
+    _conflict_snapshot_outcome,
+    _corpus,
+    _persist_corpus_trace,
+    _run_execution,
+)
 
-from m3.errors import TraceUnavailable
+from m3.errors import TraceNotFinalized, TraceUnavailable
 from m3.events import EventFactory, EventSequence
 from m3.feedback import (
     build_feedback,
@@ -2109,6 +2114,60 @@ def _sqlite_tool_call_run(tmp_path, *, unfinished=False):
         },
     )
     return store
+
+
+def _mixed_trace_run(tmp_path):
+    store = SQLiteExecutionStore(tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs")
+    _run_execution(store, "mixed", "run", [True, False, True])
+    _run_execution(store, "empty", "run", [])
+    _run_execution(store, "live", "run", [True], finished=False)
+    conflicting = _run_execution(store, "conflict", "run", [True])
+    _conflict_snapshot_outcome(tmp_path, conflicting)
+    for name in sorted(_corpus()):
+        _persist_corpus_trace(store, name, f"corpus-{name}", run_id="run")
+    return store
+
+
+def test_load_run_entries_match_store_reports_and_trace_views(tmp_path):
+    store = _mixed_trace_run(tmp_path)
+
+    entries = load_run_entries(store, "run")
+
+    assert len(entries) == 4 + len(_corpus())
+    unavailable = set()
+    for entry in entries:
+        execution_id = entry.report.snapshot.execution_id
+        assert entry.report.model_dump(mode="json") == store.get_report(
+            execution_id
+        ).model_dump(mode="json")
+        try:
+            expected = store.get_trace_view(execution_id).model_dump(mode="json")
+        except (TraceNotFinalized, TraceUnavailable):
+            assert entry.trace is None
+            unavailable.add(execution_id.root)
+        else:
+            assert entry.trace.model_dump(mode="json") == expected
+    assert unavailable == {"live", "conflict"}
+
+    out = tmp_path / "bundle"
+    export_feedback(
+        build_feedback(store, "run", entries=entries), store, out, entries=entries
+    )
+    payload = json.loads((out / "feedback.json").read_text())
+    for entry in entries:
+        execution_id = entry.report.snapshot.execution_id.root
+        if execution_id in unavailable:
+            assert execution_id not in payload["trace_files"]
+            continue
+        exported = json.loads((out / payload["trace_files"][execution_id]).read_text())
+        assert exported == json.loads(
+            json.dumps(store.get_trace_view(execution_id).model_dump(mode="json"))
+        )
+    assert {
+        item["execution_id"]
+        for item in payload["unavailable_references"]
+        if item["kind"] == "trace"
+    } == unavailable
 
 
 @pytest.mark.parametrize("unfinished", [False, True])
