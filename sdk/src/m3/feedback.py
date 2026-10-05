@@ -229,10 +229,13 @@ def _entries(
                 store, [snapshot.execution_id for snapshot in page.items]
             )
         )
-        for snapshot in page.items:
-            entry = _load_entry(store, snapshot.execution_id, counts=counts)
-            if entry is not None:
-                result.append(entry)
+        if counts is None:
+            result.extend(_load_traced_entries(store, page.items))
+        else:
+            for snapshot in page.items:
+                entry = _load_entry(store, snapshot.execution_id, counts=counts)
+                if entry is not None:
+                    result.append(entry)
         offset += len(page.items)
         if offset >= page.total:
             break
@@ -261,9 +264,11 @@ def _load_entry(
     *,
     run_id: str | None = None,
     counts: Mapping[str, tuple[int, int]] | None = None,
+    with_trace: bool = True,
 ) -> _Entry | None:
     """Load one entry; with ``counts`` the trace view is skipped and the
-    execution's counts (if any) are attached instead."""
+    execution's counts (if any) are attached instead, as it is with
+    ``with_trace=False``."""
     report = store.get_report(execution_id)
     if report is None:
         return None
@@ -273,12 +278,50 @@ def _load_entry(
     spec = get_spec(execution_id) if callable(get_spec) else None
     if counts is not None:
         return _Entry(report, spec, tool_call_counts=counts.get(_id(execution_id)))
+    entry = _Entry(report, spec)
+    return _with_trace(store, entry) if with_trace else entry
+
+
+def _load_traced_entries(
+    store: ExecutionStore, snapshots: Sequence[Any]
+) -> list[_Entry]:
+    """Load a page's entries with traces, built in one pass when the store can
+    derive them from the loaded reports."""
+    entries = [
+        entry
+        for snapshot in snapshots
+        if (entry := _load_entry(store, snapshot.execution_id, with_trace=False))
+        is not None
+    ]
+    build_views = getattr(store, "trace_views_for_reports", None)
+    if callable(build_views):
+        try:
+            views = build_views([entry.report for entry in entries])
+        except Exception:
+            views = None
+        if views is not None:
+            return [
+                _Entry(
+                    entry.report,
+                    entry.spec,
+                    views.get(_id(entry.report.snapshot.execution_id)),
+                )
+                for entry in entries
+            ]
+    return [_with_trace(store, entry) for entry in entries]
+
+
+def _with_trace(store: ExecutionStore, entry: _Entry) -> _Entry:
     get_trace = getattr(store, "get_trace_view", None)
     try:
-        trace = get_trace(execution_id) if callable(get_trace) else None
+        trace = (
+            get_trace(entry.report.snapshot.execution_id)
+            if callable(get_trace)
+            else None
+        )
     except Exception:
         trace = None
-    return _Entry(report, spec, trace)
+    return _Entry(entry.report, entry.spec, trace)
 
 
 def _sorted_entries(entries: list[_Entry]) -> tuple[_Entry, ...]:

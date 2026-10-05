@@ -25,6 +25,7 @@ from m3.elicitation import (
     FormElicitationRequest,
     PendingElicitationRound,
 )
+from m3.errors import TraceUnavailable
 from m3.events import EventFactory, EventSequence
 from m3.storage import (
     ArtifactNotFound,
@@ -1316,25 +1317,48 @@ def test_writer_waits_for_cleanup_before_reusing_orphan(
     assert other.artifacts.get(reference) == content
 
 
-@pytest.mark.parametrize("name", sorted(_corpus()))
-def test_tool_call_counts_match_trace_view_before_and_after_persisting(
-    tmp_path: Path, name: str
-) -> None:
-    store = _store(tmp_path)
+def _persist_corpus_trace(
+    store: SQLiteExecutionStore, name: str, execution_id: str = "corpus", run_id=None
+) -> ExecutionId:
     trace = _normalized(_corpus()[name]())
-    execution_id = ExecutionId("corpus")
-    store.create(ExecutionState(execution_id=execution_id))
+    typed_id = ExecutionId(execution_id)
+    store.create(ExecutionState(execution_id=typed_id, run_id=run_id))
     store.append_events(
         [
             event.model_copy(
                 update={
-                    "execution_id": execution_id,
-                    "event_id": EventId(f"corpus-{event.sequence}"),
+                    "execution_id": typed_id,
+                    "event_id": EventId(f"{execution_id}-{event.sequence}"),
                 }
             )
             for event in trace.events
         ]
     )
+    return typed_id
+
+
+def _conflict_snapshot_outcome(tmp_path: Path, execution_id: ExecutionId) -> None:
+    """Make the snapshot outcome disagree with the terminal event."""
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        raw = json.loads(
+            connection.execute(
+                "SELECT snapshot_json FROM v2_executions WHERE id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+        )
+        raw["outcome"] = ExecutionOutcome.FAILED.value
+        connection.execute(
+            "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+            (json.dumps(raw), execution_id.root),
+        )
+
+
+@pytest.mark.parametrize("name", sorted(_corpus()))
+def test_tool_call_counts_match_trace_view_before_and_after_persisting(
+    tmp_path: Path, name: str
+) -> None:
+    store = _store(tmp_path)
+    execution_id = _persist_corpus_trace(store, name)
     summary = store.get_trace_view(execution_id).summary
     expected = (summary.tool_call_count, summary.successful_tool_call_count)
     with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
@@ -1347,6 +1371,86 @@ def test_tool_call_counts_match_trace_view_before_and_after_persisting(
         "successful": expected[1],
     }
     assert store.tool_call_counts([execution_id]) == {"corpus": expected}
+
+
+def test_conflicting_snapshot_outcome_has_no_trace_view(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id = _run_execution(store, "conflict", "run", [True])
+    _conflict_snapshot_outcome(tmp_path, execution_id)
+
+    with pytest.raises(TraceUnavailable, match="conflicts with terminal evidence"):
+        store.get_trace_view(execution_id)
+
+
+@pytest.mark.parametrize("name", sorted(_corpus()))
+def test_trace_views_for_reports_match_get_trace_view(
+    tmp_path: Path, name: str
+) -> None:
+    store = _store(tmp_path)
+    execution_id = _persist_corpus_trace(store, name)
+    expected = store.get_trace_view(execution_id).model_dump(mode="json")
+
+    views = store.trace_views_for_reports([store.get_report(execution_id)])
+
+    assert views[execution_id.root].model_dump(mode="json") == expected
+
+
+def test_trace_views_for_reports_omit_unfinished_and_conflicting(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    finished = _run_execution(store, "finished", "run", [True, False])
+    empty = _run_execution(store, "empty", "run", [])
+    unfinished = _run_execution(store, "unfinished", "run", [True], finished=False)
+    conflicting = _run_execution(store, "conflicting", "run", [True])
+    _conflict_snapshot_outcome(tmp_path, conflicting)
+    ids = [finished, empty, unfinished, conflicting]
+
+    views = store.trace_views_for_reports([store.get_report(i) for i in ids])
+
+    assert set(views) == {"finished", "empty"}
+
+
+def test_trace_views_for_reports_persist_counts_in_one_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    finished = _run_execution(store, "finished", "run", [True, False, True])
+    empty = _run_execution(store, "empty", "run", [])
+    single = _run_execution(store, "single", "run", [True])
+    unfinished = _run_execution(store, "unfinished", "run", [True], finished=False)
+    reports = [store.get_report(i) for i in (finished, empty, single, unfinished)]
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        connection.execute("UPDATE v2_executions SET tool_call_counts_json=NULL")
+    bulk_calls = []
+    original = SQLiteExecutionStore._remember_tool_call_counts_bulk
+
+    def spy_bulk(self, counts):
+        bulk_calls.append(dict(counts))
+        return original(self, counts)
+
+    def fail_single(*args, **kwargs):
+        raise AssertionError("single-row count write")
+
+    monkeypatch.setattr(
+        SQLiteExecutionStore, "_remember_tool_call_counts_bulk", spy_bulk
+    )
+    monkeypatch.setattr(SQLiteExecutionStore, "_remember_tool_call_counts", fail_single)
+
+    store.trace_views_for_reports(reports)
+
+    assert len(bulk_calls) == 1
+    for execution_id, (total, successful) in (
+        (finished, (3, 2)),
+        (empty, (0, 0)),
+        (single, (1, 1)),
+    ):
+        assert json.loads(_stored_counts(tmp_path, execution_id)) == {
+            "schema_version": "2.0",
+            "total": total,
+            "successful": successful,
+        }
+    assert _stored_counts(tmp_path, unfinished) is None
 
 
 def test_tool_call_counts_omit_unfinished_and_missing_and_fill_null_rows(

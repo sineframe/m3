@@ -261,6 +261,71 @@ def _cached_tool_call_counts(raw: str | None) -> tuple[int, int] | None:
     return None
 
 
+def _trace_result(snapshot: ExecutionState, events: tuple[Event, ...]) -> TraceResult:
+    """Validate a finished execution's evidence and build its trace result."""
+    created_events = [
+        event for event in events if event.kind is EventKind.EXECUTION_CREATED
+    ]
+    if (
+        not events
+        or events[0].sequence != 0
+        or events[0].kind is not EventKind.EXECUTION_CREATED
+        or len(created_events) != 1
+    ):
+        raise TraceUnavailable("persisted execution.created evidence is malformed")
+    trace_id = events[0].payload.get("trace_id")
+    if not isinstance(trace_id, str) or not trace_id:
+        raise TraceUnavailable("trace identity evidence is unavailable")
+    try:
+        typed_trace_id = TraceId(trace_id)
+    except ValueError:
+        raise TraceUnavailable("trace identity evidence is invalid") from None
+    if typed_trace_id.root != trace_id:
+        raise TraceUnavailable("trace identity evidence is not stable")
+    terminal = [event for event in events if event.kind is EventKind.EXECUTION_FINISHED]
+    if not terminal:
+        raise TraceNotFinalized("execution has not been finalized")
+    if len(terminal) != 1 or terminal[0] is not events[-1]:
+        raise TraceUnavailable("persisted trace terminal evidence is malformed")
+    final = terminal[-1]
+    outcome = final.payload.get("outcome")
+    completeness = final.payload.get("completeness")
+    raw_limitations = final.payload.get("limitations")
+    if (
+        not isinstance(outcome, str)
+        or outcome not in {item.value for item in ExecutionOutcome}
+        or completeness not in {"complete", "partial"}
+        or not isinstance(raw_limitations, (list, tuple))
+        or any(
+            not isinstance(item, str) or not item.strip() for item in raw_limitations
+        )
+    ):
+        raise TraceUnavailable("persisted execution.finished evidence is malformed")
+    limitations = tuple(raw_limitations)
+    try:
+        typed_outcome = ExecutionOutcome(outcome)
+    except ValueError:
+        raise TraceUnavailable("persisted execution outcome is invalid") from None
+    if (
+        snapshot.lifecycle is not ExecutionStatus.FINISHED
+        or snapshot.outcome != typed_outcome
+    ):
+        raise TraceUnavailable(
+            "persisted snapshot outcome conflicts with terminal evidence"
+        )
+    try:
+        return TraceResult(
+            trace_id=typed_trace_id,
+            execution_id=snapshot.execution_id,
+            completeness=cast(Literal["complete", "partial"], completeness),
+            highest_sequence=events[-1].sequence if events else 0,
+            events=events,
+            limitations=limitations,
+        )
+    except (TypeError, ValueError):
+        raise TraceUnavailable("persisted trace evidence is malformed") from None
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -2614,70 +2679,27 @@ class SQLiteExecutionStore(_SqliteBase):
         if snapshot is None:
             return None
         events = self._events(_execution_key(execution_id))
-        created_events = [
-            event for event in events if event.kind is EventKind.EXECUTION_CREATED
-        ]
-        if (
-            not events
-            or events[0].sequence != 0
-            or events[0].kind is not EventKind.EXECUTION_CREATED
-            or len(created_events) != 1
-        ):
-            raise TraceUnavailable("persisted execution.created evidence is malformed")
-        trace_id = events[0].payload.get("trace_id")
-        if not isinstance(trace_id, str) or not trace_id:
-            raise TraceUnavailable("trace identity evidence is unavailable")
-        try:
-            typed_trace_id = TraceId(trace_id)
-        except ValueError:
-            raise TraceUnavailable("trace identity evidence is invalid") from None
-        if typed_trace_id.root != trace_id:
-            raise TraceUnavailable("trace identity evidence is not stable")
-        terminal = [
-            event for event in events if event.kind is EventKind.EXECUTION_FINISHED
-        ]
-        if not terminal:
-            raise TraceNotFinalized("execution has not been finalized")
-        if len(terminal) != 1 or terminal[0] is not events[-1]:
-            raise TraceUnavailable("persisted trace terminal evidence is malformed")
-        final = terminal[-1]
-        outcome = final.payload.get("outcome")
-        completeness = final.payload.get("completeness")
-        raw_limitations = final.payload.get("limitations")
-        if (
-            not isinstance(outcome, str)
-            or outcome not in {item.value for item in ExecutionOutcome}
-            or completeness not in {"complete", "partial"}
-            or not isinstance(raw_limitations, (list, tuple))
-            or any(
-                not isinstance(item, str) or not item.strip()
-                for item in raw_limitations
-            )
-        ):
-            raise TraceUnavailable("persisted execution.finished evidence is malformed")
-        limitations = tuple(raw_limitations)
-        try:
-            typed_outcome = ExecutionOutcome(outcome)
-        except ValueError:
-            raise TraceUnavailable("persisted execution outcome is invalid") from None
-        if (
-            snapshot.lifecycle is not ExecutionStatus.FINISHED
-            or snapshot.outcome != typed_outcome
-        ):
-            raise TraceUnavailable(
-                "persisted snapshot outcome conflicts with terminal evidence"
-            )
-        try:
-            return TraceResult(
-                trace_id=typed_trace_id,
-                execution_id=snapshot.execution_id,
-                completeness=cast(Literal["complete", "partial"], completeness),
-                highest_sequence=events[-1].sequence if events else 0,
-                events=events,
-                limitations=limitations,
-            )
-        except (TypeError, ValueError):
-            raise TraceUnavailable("persisted trace evidence is malformed") from None
+        return _trace_result(snapshot, events)
+
+    def trace_views_for_reports(
+        self, reports: Sequence[ExecutionReport]
+    ) -> dict[str, TraceView]:
+        """Build trace views from loaded reports, persisting their tool-call
+        counts in one write; unfinished or unavailable traces are omitted."""
+        views: dict[str, TraceView] = {}
+        for report in reports:
+            execution_id = report.snapshot.execution_id
+            try:
+                if report.events_truncated or report.event_count != len(report.events):
+                    trace = self.get_trace(execution_id)
+                else:
+                    trace = _trace_result(report.snapshot, report.events)
+            except (TraceNotFinalized, TraceUnavailable):
+                continue
+            if trace is not None:
+                views[_execution_key(execution_id)] = trace.view()
+        self._remember_tool_call_counts_bulk(views)
+        return views
 
     def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None:
         trace = self.get_trace(execution_id)
@@ -2688,34 +2710,59 @@ class SQLiteExecutionStore(_SqliteBase):
         return view
 
     def _remember_tool_call_counts(self, key: str, view: TraceView) -> None:
-        """Best-effort persist: reads first and never waits on the write lock."""
-        total = view.summary.tool_call_count
-        successful = view.summary.successful_tool_call_count
-        counts = _json(
-            {
-                "schema_version": view.schema_version,
-                "total": total,
-                "successful": successful,
-            }
-        )
+        self._remember_tool_call_counts_bulk({key: view})
+
+    def _remember_tool_call_counts_bulk(self, views: Mapping[str, TraceView]) -> None:
+        """Best-effort persist of ``{execution_id: view}`` counts in one
+        transaction: reads first and never waits on the write lock."""
+        if not views:
+            return
+        keys = list(views)
         try:
             with self._connect() as connection:
-                row = connection.execute(
-                    "SELECT tool_call_counts_json FROM v2_executions WHERE id=?",
-                    (key,),
-                ).fetchone()
-                if row is None or _cached_tool_call_counts(row[0]) == (
-                    total,
-                    successful,
-                ):
+                stored: dict[str, str | None] = {}
+                for start in range(0, len(keys), 500):
+                    chunk = keys[start : start + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    rows = connection.execute(
+                        "SELECT id, tool_call_counts_json FROM v2_executions "
+                        f"WHERE id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    stored.update((str(row[0]), row[1]) for row in rows)
+                updates: list[tuple[str, str, str]] = []
+                for key, view in views.items():
+                    if key not in stored:
+                        continue
+                    total = view.summary.tool_call_count
+                    successful = view.summary.successful_tool_call_count
+                    if _cached_tool_call_counts(stored[key]) == (total, successful):
+                        continue
+                    counts = _json(
+                        {
+                            "schema_version": view.schema_version,
+                            "total": total,
+                            "successful": successful,
+                        }
+                    )
+                    updates.append((counts, key, counts))
+                if not updates:
                     return
                 connection.mark_settings_dirty()
                 connection.execute("PRAGMA busy_timeout=0")
-                connection.execute(
-                    "UPDATE v2_executions SET tool_call_counts_json=? WHERE id=? "
-                    "AND (tool_call_counts_json IS NULL OR tool_call_counts_json!=?)",
-                    (counts, key, counts),
-                )
+                self._begin(connection, immediate=True)
+                try:
+                    for parameters in updates:
+                        connection.execute(
+                            "UPDATE v2_executions SET tool_call_counts_json=? "
+                            "WHERE id=? AND (tool_call_counts_json IS NULL "
+                            "OR tool_call_counts_json!=?)",
+                            parameters,
+                        )
+                    self._commit(connection)
+                except BaseException:
+                    self._rollback(connection)
+                    raise
         except StorageError:
             pass
         except Exception as exc:
