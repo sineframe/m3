@@ -1,7 +1,9 @@
 """Agent feedback projections compare observed MCP evidence conservatively."""
 
+import hashlib
 import json
 import os
+import random
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from test_sqlite_storage import (
     _run_execution,
 )
 
+from m3 import feedback as feedback_module
 from m3.errors import TraceNotFinalized, TraceUnavailable
 from m3.events import EventFactory, EventSequence
 from m3.feedback import (
@@ -2481,3 +2484,238 @@ def test_feedback_reuses_stored_tool_call_counts_without_trace_views(
     assert build_feedback(store, "run").model_dump(mode="json") == first.model_dump(
         mode="json"
     )
+
+
+def _canonical(value):
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+class _DictTrace:
+    def __init__(self, value):
+        self.value = value
+
+    def model_dump(self, mode):
+        del mode
+        return self.value
+
+
+def _large_tools(marker="x"):
+    return [
+        {
+            "name": f"tool-{index}",
+            "description": marker * 400,
+            "inputSchema": {"type": "object"},
+        }
+        for index in range(60)
+    ]
+
+
+def _export_with_trace(tmp_path, report, trace):
+    store = _Store(
+        (report,),
+        traces={} if trace is None else {"new": _DictTrace(trace)},
+    )
+    feedback = build_feedback(store, "current")
+    payload = json.loads(export_feedback(feedback, store, tmp_path).read_text())
+    execution = json.loads((tmp_path / payload["execution_files"]["new"]).read_text())
+    return payload, execution
+
+
+def _response_payload(execution):
+    return next(
+        event["payload"]
+        for event in execution["events"]
+        if "result" in event["payload"]
+    )
+
+
+def _resolve_ref(root, marker):
+    trace = json.loads((root / marker["file"]).read_text())
+    entry = next(
+        item for item in trace["timeline"] if item["entry_id"] == marker["entry_id"]
+    )
+    value = entry
+    for token in marker["pointer"].split("/")[1:]:
+        token = token.replace("~1", "/").replace("~0", "~")
+        value = value[int(token)] if isinstance(value, list) else value[token]
+    return value
+
+
+def test_export_references_large_payload_value_held_by_the_trace(tmp_path):
+    tools = _large_tools()
+    report = _report("new", "current", "new", wire_tools=tools)
+    original = json.loads(json.dumps(_response_payload(report.model_dump(mode="json"))))
+    trace = {
+        "timeline": [
+            {"entry_id": "small", "kind": "lifecycle"},
+            {
+                "entry_id": "protocol/1",
+                "kind": "protocol",
+                "response": {"value": {"tools": tools}},
+                # The whole payload is also in the trace; the root stays inline.
+                "payload": original,
+            },
+        ]
+    }
+
+    payload, execution = _export_with_trace(tmp_path, report, trace)
+
+    response = _response_payload(execution)
+    assert response["method"] == "tools/list"
+    marker = response["result"]["__m3_ref__"]
+    assert marker == {
+        "file": payload["trace_files"]["new"],
+        "entry_id": "protocol/1",
+        "pointer": "/payload/result",
+        "sha256": hashlib.sha256(_canonical(original["result"])).hexdigest(),
+        "size_bytes": len(_canonical(original["result"])),
+    }
+    assert _resolve_ref(tmp_path, marker) == original["result"]
+    request = next(
+        event["payload"]
+        for event in execution["events"]
+        if "params" in event["payload"]
+    )
+    assert request == {"method": "tools/list", "params": {}}
+
+
+def test_export_uses_first_trace_copy_and_json_pointer_escaping(tmp_path):
+    tools = _large_tools()
+    report = _report("new", "current", "new", wire_tools=tools)
+    trace = {
+        "timeline": [
+            {"entry_id": "first", "a/b~c": [0, {"tools": tools}]},
+            {"entry_id": "second", "response": {"tools": tools}},
+        ]
+    }
+
+    _, execution = _export_with_trace(tmp_path, report, trace)
+
+    marker = _response_payload(execution)["result"]["__m3_ref__"]
+    assert (marker["entry_id"], marker["pointer"]) == ("first", "/a~1b~0c/1")
+    assert _resolve_ref(tmp_path, marker) == {"tools": tools}
+
+
+def test_export_keeps_payload_inline_when_trace_copy_differs(tmp_path):
+    tools = _large_tools()
+    report = _report("new", "current", "new", wire_tools=tools)
+    changed = [dict(tool) for tool in tools]
+    changed[0]["description"] += "!"
+    trace = {"timeline": [{"entry_id": "protocol/1", "tools": changed}]}
+
+    _, execution = _export_with_trace(tmp_path, report, trace)
+
+    assert _response_payload(execution)["result"]["tools"] == tools
+
+
+def test_export_keeps_payload_below_threshold_inline(tmp_path):
+    tools = [{"name": "lookup", "description": "x" * 1000}]
+    report = _report("new", "current", "new", wire_tools=tools)
+    trace = {"timeline": [{"entry_id": "protocol/1", "result": {"tools": tools}}]}
+
+    _, execution = _export_with_trace(tmp_path, report, trace)
+
+    assert _response_payload(execution)["result"] == {"tools": tools}
+
+
+def test_export_without_trace_writes_execution_unchanged(tmp_path):
+    report = _report("new", "current", "new", wire_tools=_large_tools())
+
+    class _NoTraceStore(_Store):
+        def get_trace_view(self, _execution_id):
+            raise TraceUnavailable("missing")
+
+    store = _NoTraceStore((report,))
+    feedback = build_feedback(store, "current")
+    payload = json.loads(export_feedback(feedback, store, tmp_path).read_text())
+
+    assert "new" not in payload["trace_files"]
+    assert (tmp_path / payload["execution_files"]["new"]).read_text() == (
+        json.dumps(report.model_dump(mode="json"), sort_keys=True, indent=2) + "\n"
+    )
+
+
+def test_export_with_trace_refs_is_deterministic(tmp_path):
+    tools = _large_tools()
+    report = _report("new", "current", "new", wire_tools=tools)
+    trace = {"timeline": [{"entry_id": "protocol/1", "result": {"tools": tools}}]}
+
+    _export_with_trace(tmp_path / "a", report, trace)
+    _export_with_trace(tmp_path / "b", report, trace)
+
+    for folder in ("executions", "traces"):
+        (first,) = (tmp_path / "a" / folder).iterdir()
+        assert first.read_bytes() == (tmp_path / "b" / folder / first.name).read_bytes()
+
+
+def _random_json(rng, depth):
+    leaves = ["", "a", "é", "☃", '\n"\\', "x" * 30, "\ud800", 0, -12, 1, 1.0]
+    leaves += [1.5, 0.0, -0.0, True, False, None]
+    if depth == 0 or rng.random() < 0.3:
+        return rng.choice(leaves)
+    if rng.random() < 0.5:
+        return [_random_json(rng, depth - 1) for _ in range(rng.randrange(0, 6))]
+    return {
+        rng.choice(["k", "κ", "a/b", "~", "long" * 5]) + str(index): _random_json(
+            rng, depth - 1
+        )
+        for index in range(rng.randrange(0, 6))
+    }
+
+
+def _canonical_bytes(value):
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8", "surrogatepass")
+
+
+def test_size_floor_never_exceeds_canonical_size(monkeypatch):
+    monkeypatch.setattr(feedback_module, "_TRACE_REF_MIN_BYTES", 24)
+    rng = random.Random(0)
+
+    def walk(value):
+        yield value
+        if isinstance(value, dict):
+            for item in value.values():
+                yield from walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item)
+
+    for _ in range(300):
+        value = _random_json(rng, 5)
+        large: dict[int, int] = {}
+        bound = feedback_module._size_floor(value, large)
+        assert bound <= len(_canonical_bytes(value))
+        assert feedback_module._size_floor(json.loads(json.dumps(value)), {}) == bound
+        for item in walk(value):
+            if id(item) in large:
+                assert large[id(item)] <= len(_canonical_bytes(item))
+
+
+def test_same_json_matches_canonical_equality():
+    rng = random.Random(1)
+    values = [_random_json(rng, 3) for _ in range(400)]
+    values += [1, 1.0, True, 0.0, -0.0, [1], [True], {"a": 1}, {"a": 1.0}]
+    for left in values:
+        for right in [*rng.sample(values, 20), json.loads(json.dumps(left))]:
+            assert feedback_module._same_json(left, right) == (
+                _canonical_bytes(left) == _canonical_bytes(right)
+            )
+
+
+def test_export_keeps_value_inline_when_trace_copy_differs_only_in_json_type(
+    tmp_path,
+):
+    tools = _large_tools()
+    tools[0]["annotations"] = {"readOnlyHint": True}
+    report = _report("new", "current", "new", wire_tools=tools)
+    changed = json.loads(json.dumps(tools))
+    changed[0]["annotations"]["readOnlyHint"] = 1
+    trace = {"timeline": [{"entry_id": "protocol/1", "result": {"tools": changed}}]}
+
+    _, execution = _export_with_trace(tmp_path, report, trace)
+
+    assert _response_payload(execution)["result"]["tools"] == tools

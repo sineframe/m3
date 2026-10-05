@@ -56,7 +56,7 @@ path; a map is `{}` when the run has nothing of that kind:
 
 | Map | Key | File holds |
 | --- | --- | --- |
-| `execution_files` | execution ID | The execution report (`executions/`). |
+| `execution_files` | execution ID | The execution report (`executions/`). Large payload values that the trace also holds are replaced by `__m3_ref__` markers; see below. |
 | `spec_files` | execution ID | The execution spec, when one was recorded (`specs/`). |
 | `catalog_files` | execution ID | Tool-catalog versions observed through `tools/list` (`catalogs/`); their tool sets are shared files under `catalogs/tools/`. |
 | `trace_files` | execution ID | The trace view (`traces/`). |
@@ -94,6 +94,26 @@ jq -r --arg id "$EXECUTION_ID" '.catalog_files[$id]' feedback.json | xargs jq -r
 
 The command prints one schema for each distinct tool set the execution
 observed that contains the tool.
+
+In an execution report, a large event payload value (about 16 KiB or more)
+is written once, in the trace, when the trace holds a byte-identical copy. The
+report keeps a marker in its place:
+
+```json
+{"__m3_ref__": {"file": "traces/<name>.json", "entry_id": "<entry ID>", "pointer": "/arguments/value", "sha256": "<hex>", "size_bytes": 5242896}}
+```
+
+`file` is relative to the report directory. `pointer` is a JSON Pointer into
+the `timeline[]` entry whose `entry_id` matches. `sha256` and `size_bytes`
+describe the value's compact, key-sorted UTF-8 JSON. The payload's top-level
+keys always stay in the report, and values without an identical trace copy
+stay inline. When an execution has no trace file, its report is written in
+full. To read a referenced value, run this from the report directory with the
+marker's fields:
+
+```sh
+jq --arg id "$ENTRY_ID" --arg ptr "$POINTER" '.timeline[] | select(.entry_id == $id) | reduce ($ptr | ltrimstr("/") | split("/")[] | gsub("~1"; "/") | gsub("~0"; "~")) as $k (.; if type == "array" then .[$k | tonumber] else .[$k] end)' "$FILE"
+```
 
 When a run sets `M3_TIMINGS=1`, `.m3/reports/<run-id>/` also has a `timings/`
 folder with `summary.json`, `trace.json`, and the raw per-process records. The

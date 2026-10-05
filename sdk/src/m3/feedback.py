@@ -555,6 +555,147 @@ def _safe_filename(identifier: Any, suffix: str) -> str:
     return digest + suffix
 
 
+# Exported execution reports replace large payload values that the exported
+# trace already holds byte for byte with a marker naming that trace entry.
+_TRACE_REF_MARKER = "__m3_ref__"
+_TRACE_REF_MIN_BYTES = 16 * 1024
+_CANONICAL_ENCODER = json.JSONEncoder(
+    sort_keys=True, separators=(",", ":"), ensure_ascii=False
+)
+
+
+def _size_floor(value: Any, large: dict[int, int]) -> int:
+    """Return a lower bound on value's canonical JSON size, without encoding it.
+
+    Containers and strings whose bound reaches the threshold are recorded in
+    ``large`` by id.  Equal JSON values always get equal bounds, so a copy can
+    only be found among trace values with the same bound.
+    """
+    if isinstance(value, str):
+        size = len(value) + 2
+    elif isinstance(value, dict):
+        size = 1 + len(value)
+        for key, item in value.items():
+            size += len(key) + 3 + _size_floor(item, large)
+    elif isinstance(value, list):
+        size = 1 + len(value)
+        for item in value:
+            size += _size_floor(item, large)
+    else:
+        return 1
+    if size >= _TRACE_REF_MIN_BYTES:
+        large[id(value)] = size
+    return size
+
+
+def _same_json(left: Any, right: Any) -> bool:
+    """Return whether two JSON values encode to the same canonical bytes."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_json(item, right[key]) for key, item in left.items()
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(map(_same_json, left, right))
+    if isinstance(left, float):
+        return left.hex() == cast(float, right).hex()
+    return bool(left == right)
+
+
+def _pointer_token(key: str | int) -> str:
+    return str(key).replace("~", "~0").replace("/", "~1")
+
+
+def _children(value: Any) -> list[tuple[str | int, Any]]:
+    if isinstance(value, dict):
+        return [(key, value[key]) for key in sorted(value)]
+    if isinstance(value, list):
+        return list(enumerate(value))
+    return []
+
+
+def _trace_values_by_bound(
+    trace: Any,
+) -> dict[tuple[type, int], list[tuple[str, str, Any]]]:
+    """List large trace subtrees by type and size bound in document order."""
+    found: dict[tuple[type, int], list[tuple[str, str, Any]]] = defaultdict(list)
+    timeline = trace.get("timeline") if isinstance(trace, dict) else None
+    if not isinstance(timeline, list):
+        return found
+    for entry in timeline:
+        if not isinstance(entry, dict) or not isinstance(entry.get("entry_id"), str):
+            continue
+        large: dict[int, int] = {}
+        _size_floor(entry, large)
+        pending: list[tuple[Any, str]] = [(entry, "")]
+        while pending:
+            value, pointer = pending.pop()
+            bound = large.get(id(value))
+            if bound is None:
+                continue
+            found[(type(value), bound)].append((entry["entry_id"], pointer, value))
+            pending.extend(
+                (item, f"{pointer}/{_pointer_token(key)}")
+                for key, item in reversed(_children(value))
+            )
+    return found
+
+
+def _reference_trace_values(report: Any, trace: Any, trace_file: str) -> Any:
+    """Replace large event payload values found in the trace with markers."""
+    events = report.get("events") if isinstance(report, dict) else None
+    if not isinstance(events, list):
+        return report
+    payload_bounds: list[dict[int, int]] = []
+    for event in events:
+        payload = event.get("payload") if isinstance(event, dict) else None
+        large: dict[int, int] = {}
+        if isinstance(payload, dict):
+            _size_floor(payload, large)
+            large.pop(id(payload), None)
+        payload_bounds.append(large)
+    if not any(payload_bounds):
+        return report
+    by_bound = _trace_values_by_bound(trace)
+    if not by_bound:
+        return report
+
+    def replace(value: Any, large: dict[int, int]) -> Any:
+        bound = large.get(id(value))
+        if bound is None:
+            return value
+        for entry_id, pointer, candidate in by_bound.get((type(value), bound), ()):
+            if _same_json(value, candidate):
+                encoded = _CANONICAL_ENCODER.encode(value).encode(
+                    "utf-8", "surrogatepass"
+                )
+                return {
+                    _TRACE_REF_MARKER: {
+                        "file": trace_file,
+                        "entry_id": entry_id,
+                        "pointer": pointer,
+                        "sha256": sha256(encoded).hexdigest(),
+                        "size_bytes": len(encoded),
+                    }
+                }
+        return replace_children(value, large)
+
+    def replace_children(value: Any, large: dict[int, int]) -> Any:
+        if isinstance(value, dict):
+            return {key: replace(item, large) for key, item in value.items()}
+        if isinstance(value, list):
+            return [replace(item, large) for item in value]
+        return value
+
+    referenced = []
+    for event, large in zip(events, payload_bounds, strict=True):
+        if large:
+            event = {**event, "payload": replace_children(event["payload"], large)}
+        referenced.append(event)
+    return {**report, "events": referenced}
+
+
 def _request_for(report: ExecutionReport, response: Event) -> Event | None:
     correlation = response.correlation
     if correlation is None or correlation.request_sequence is None:
@@ -2443,17 +2584,6 @@ def export_feedback(
     test_result_files: dict[str, str] = {}
     unavailable: list[Mapping[str, Any]] = []
     for execution_id, entry in reports.items():
-        execution_name = _safe_filename(execution_id, ".json")
-        (root / "executions" / execution_name).write_text(
-            json.dumps(
-                _jsonable(entry.report.model_dump(mode="json")),
-                sort_keys=True,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        execution_files[execution_id] = f"executions/{execution_name}"
         if entry.spec is not None:
             spec_name = _safe_filename(execution_id, ".json")
             (root / "specs" / spec_name).write_text(
@@ -2496,12 +2626,14 @@ def export_feedback(
                             "reason": "trace view unavailable",
                         }
                     )
+        written_trace: Any = None
         if trace is not None:
             try:
                 trace_name = _safe_filename(execution_id, ".json")
+                trace_value = _jsonable(trace.model_dump(mode="json"))
                 (root / "traces" / trace_name).write_text(
                     json.dumps(
-                        _jsonable(trace.model_dump(mode="json")),
+                        trace_value,
                         sort_keys=True,
                         indent=2,
                     )
@@ -2509,6 +2641,7 @@ def export_feedback(
                     encoding="utf-8",
                 )
                 trace_files[execution_id] = f"traces/{trace_name}"
+                written_trace = trace_value
             except Exception:
                 unavailable.append(
                     {
@@ -2517,6 +2650,22 @@ def export_feedback(
                         "reason": "trace view unavailable",
                     }
                 )
+        execution_name = _safe_filename(execution_id, ".json")
+        execution_value = _jsonable(entry.report.model_dump(mode="json"))
+        if written_trace is not None:
+            execution_value = _reference_trace_values(
+                execution_value, written_trace, trace_files[execution_id]
+            )
+        (root / "executions" / execution_name).write_text(
+            json.dumps(
+                execution_value,
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        execution_files[execution_id] = f"executions/{execution_name}"
         for event in entry.report.events:
             if event.raw_evidence_ref is not None:
                 try:
