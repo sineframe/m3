@@ -55,7 +55,7 @@ path; a map is `{}` when the run has nothing of that kind:
 | --- | --- | --- |
 | `execution_files` | execution ID | The execution report (`executions/`). |
 | `spec_files` | execution ID | The execution spec, when one was recorded (`specs/`). |
-| `catalog_files` | execution ID | Tool-catalog versions observed through `tools/list` (`catalogs/`). |
+| `catalog_files` | execution ID | Tool-catalog versions observed through `tools/list` (`catalogs/`); their tool sets are shared files under `catalogs/tools/`. |
 | `trace_files` | execution ID | The trace view (`traces/`). |
 | `evidence_files` | evidence ID | Raw captured evidence referenced by trace events; truncated captures are listed in `unavailable_references` instead (`evidence/`). |
 | `artifact_files` | artifact ID | The bytes of each artifact recorded on the execution (`artifacts/`). |
@@ -64,6 +64,33 @@ path; a map is `{}` when the run has nothing of that kind:
 | `test_result_files` | attempt ID | One saved test result per attempt (`diagnostics/`). |
 
 `unavailable_references` lists references that could not be included.
+
+A catalog file has `execution_id` and `versions[]`. Each version has
+`server`, `connection`, `complete`, `pages[]`, `fingerprint`, and
+`tools_file`. `complete` is `false` when the cursor chain stopped before its
+last page. A version with `reason` records `tools/list` pages that M3 could not
+place in a chain; it has no pages and no tools. `tools_file` names
+`catalogs/tools/<fingerprint>.json`, which holds `fingerprint`, `complete`, and
+`tools`, an object keyed by tool name. Versions with the same tools and
+`complete` value share one file, so a run that lists the same tools in every
+execution writes them once. Each page's `tool_names` lists its tools in
+the order the server returned them; look each name up in `tools`. A page keeps
+a `tools` array instead when a tool has no name or differs from the entry with
+that name, such as a tool that a later page returns again with other content.
+A version without `tools_file` keeps its `tools` object inline. `fingerprint`
+is the catalog fingerprint that `catalog_distribution` entries in
+`comparison.interface_changes` count under `before.counts` and `after.counts`.
+
+To print a tool's input schema for one execution, run this from the report
+directory with `EXECUTION_ID` set to an ID from `catalog_files` and `TOOL` set
+to the tool name:
+
+```sh
+jq -r --arg id "$EXECUTION_ID" '.catalog_files[$id]' feedback.json | xargs jq -r '.versions[].tools_file // empty' | sort -u | xargs jq --arg tool "$TOOL" '.tools[$tool].inputSchema // empty'
+```
+
+The command prints one schema for each distinct tool set the execution
+observed that contains the tool.
 
 When a run sets `M3_TIMINGS=1`, `.m3/reports/<run-id>/` also has a `timings/`
 folder with `summary.json`, `trace.json`, and the raw per-process records. The

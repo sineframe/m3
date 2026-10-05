@@ -741,6 +741,108 @@ def _identity_sort_key(value: tuple[Any, ...]) -> tuple[Any, ...]:
     )
 
 
+def _catalog_tool_set(version: Mapping[str, Any]) -> str:
+    """Canonical JSON of the tool set a catalog fingerprint identifies."""
+    return _canonical(
+        {"tools": version.get("tools", {}), "complete": version.get("complete")}
+    )
+
+
+def _catalog_fingerprint(tool_set: str) -> str:
+    return sha256(tool_set.encode()).hexdigest()[:16]
+
+
+def _page_tool_names(
+    page_tools: Sequence[Any],
+    tools: Mapping[str, Any],
+    canonical_tools: dict[str, str],
+) -> list[str] | None:
+    """Return the page's tool names if each tool equals ``tools[name]``."""
+    names: list[str] = []
+    for tool in page_tools:
+        name = tool.get("name") if isinstance(tool, Mapping) else None
+        if not isinstance(name, str) or name not in tools:
+            return None
+        expected = tools[name]
+        # Shallow copies of one wire tool share their value objects, so they
+        # serialize identically; compare anything else in full.
+        if list(tool) != list(expected) or any(
+            tool[key] is not expected[key] for key in tool
+        ):
+            if name not in canonical_tools:
+                canonical_tools[name] = _canonical(expected)
+            if _canonical(tool) != canonical_tools[name]:
+                return None
+        names.append(name)
+    return names
+
+
+def _shared_catalog_versions(
+    versions: Sequence[Mapping[str, Any]],
+    root: Path,
+    tool_sets: dict[str, str],
+) -> list[Mapping[str, Any]]:
+    """Move each version's tool set into ``catalogs/tools/<fingerprint>.json``.
+
+    ``tool_sets`` maps fingerprints already written in this export to their
+    canonical tool set, so each file is written once.  A page lists
+    ``tool_names`` only when every tool equals the version's entry for that
+    name; otherwise it keeps its tools inline.  A fingerprint prefix collision
+    keeps the whole version inline.
+    """
+    shared: list[Mapping[str, Any]] = []
+    for version in versions:
+        tool_set = _catalog_tool_set(version)
+        fingerprint = _catalog_fingerprint(tool_set)
+        written = tool_sets.get(fingerprint)
+        if written is not None and written != tool_set:
+            shared.append(version)
+            continue
+        tools_file = f"catalogs/tools/{fingerprint}.json"
+        if written is None:
+            (root / "catalogs" / "tools").mkdir(exist_ok=True)
+            (root / tools_file).write_text(
+                json.dumps(
+                    _jsonable(
+                        {
+                            "fingerprint": fingerprint,
+                            "complete": version.get("complete"),
+                            "tools": version.get("tools", {}),
+                        }
+                    ),
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            tool_sets[fingerprint] = tool_set
+        tools = version.get("tools", {})
+        canonical_tools: dict[str, str] = {}
+        pages: list[Mapping[str, Any]] = []
+        for page in version.get("pages", ()):
+            names = (
+                _page_tool_names(page["tools"], tools, canonical_tools)
+                if "tools" in page
+                else None
+            )
+            if names is None:
+                pages.append(page)
+                continue
+            compact = {key: value for key, value in page.items() if key != "tools"}
+            compact["tool_names"] = names
+            pages.append(compact)
+        compact_version = {
+            key: value for key, value in version.items() if key != "tools"
+        }
+        if "pages" in version:
+            compact_version["pages"] = pages
+        compact_version["fingerprint"] = fingerprint
+        compact_version["tools_file"] = tools_file
+        shared.append(compact_version)
+    return shared
+
+
 def _catalogs(
     entries: tuple[_Entry, ...],
     contexts: Mapping[str, Mapping[str, Any]] | None = None,
@@ -765,14 +867,9 @@ def _catalogs(
             enriched["execution_id"] = _id(entry.report.snapshot.execution_id)
             enriched.update(_suite(entry))
             enriched["configuration_label"] = label
-            enriched["catalog_fingerprint"] = sha256(
-                _canonical(
-                    {
-                        "tools": version.get("tools", {}),
-                        "complete": version.get("complete"),
-                    }
-                ).encode()
-            ).hexdigest()[:16]
+            enriched["catalog_fingerprint"] = _catalog_fingerprint(
+                _catalog_tool_set(version)
+            )
             values[key].append(enriched)
     return values
 
@@ -2337,6 +2434,7 @@ def export_feedback(
     execution_files: dict[str, str] = {}
     spec_files: dict[str, str] = {}
     catalog_files: dict[str, str] = {}
+    tool_sets: dict[str, str] = {}
     trace_files: dict[str, str] = {}
     evidence_files: dict[str, str] = {}
     artifact_files: dict[str, str] = {}
@@ -2371,9 +2469,12 @@ def export_feedback(
         versions = _catalog_versions(entry)
         if versions:
             catalog_name = _safe_filename(execution_id, ".json")
+            shared_versions = _shared_catalog_versions(versions, root, tool_sets)
             (root / "catalogs" / catalog_name).write_text(
                 json.dumps(
-                    _jsonable({"execution_id": execution_id, "versions": versions}),
+                    _jsonable(
+                        {"execution_id": execution_id, "versions": shared_versions}
+                    ),
                     sort_keys=True,
                     indent=2,
                 )
