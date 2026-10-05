@@ -5,7 +5,7 @@
 With managed input, an agent execution pauses when an MCP server asks for input
 and waits for a response from outside the test, usually a person using your
 application. Your code reads the pending request from the execution handle and
-submits a response, and the execution continues.
+submits a response, and then the agent picks up where it stopped.
 
 ## Requirements
 

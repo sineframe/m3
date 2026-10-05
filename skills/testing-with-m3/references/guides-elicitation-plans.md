@@ -187,8 +187,8 @@ For declined and cancelled answers, see
 
 Use `sequence(...)` for requests that arrive in later rounds, `one_of(...)` for
 alternatives, `optional(...)` for a step that may not happen, and
-`round_of(...)` for requests the server sends together. These helpers describe
-what the server does. They never make it ask.
+`round_of(...)` for requests the server sends together. The server still
+decides what to ask and when, and the plan has to fit what it does.
 [Compose elicitation workflows](guides-elicitation-composed.md) has an example of each.
 
 ## Round limit

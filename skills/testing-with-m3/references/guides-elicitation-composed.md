@@ -184,15 +184,15 @@ All three tests build their plans from the same leaves, `HOME`, `BUSINESS`, and
   uses it to put verification after the addresses.
 - `one_of(HOME, BUSINESS)` expects one of the two requests and answers
   whichever arrives. The server asks only for the business address here.
-- `optional(...)` lets a step not happen. With `none`, the server goes straight
+- `optional(...)` lets a step be skipped. With `none`, the server goes straight
   to verification and the plan still completes.
 - `round_of(HOME, BUSINESS)` expects both requests in the same round and
   answers them together.
 
 When the server's rounds don't fit the plan, the call raises
 `ElicitationExpectationError`. For example, `sequence(HOME, BUSINESS, VERIFY)`
-fails against `both`, because the server asks for the two addresses in one
-round, not two.
+fails against `both`, because the server sends both address forms in the same
+round.
 
 To make a single request optional, use `maybe_form` or `maybe_url`. The
 [elicitation reference](reference-python-m3-elicitation.md) describes

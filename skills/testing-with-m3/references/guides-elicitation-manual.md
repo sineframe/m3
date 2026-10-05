@@ -141,8 +141,8 @@ no plan raises `ElicitationExpectationError`. The second call passes
 
 Treat `request_state` as opaque. The server decides what it means, so pass back
 the value you received rather than building one. M3 sends the state, keys, and
-content you provide without checking them against the request. The server has
-to reject anything it doesn't accept; this one returns `is_error=True`.
+content you provide without checking them against the request, so rejecting
+bad input is up to the server. This one returns `is_error=True`.
 
 If the server may ask again, pass `allow_input_required=True` on the retry as
 well. The retry then returns a new `InputRequiredResult`; read the keys from it

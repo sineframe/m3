@@ -142,8 +142,8 @@ that step on the web page; M3 does not visit the URL.
 
 `cancel` is the MCP elicitation action for a user who dismissed the request.
 The server decides what happens next. This one still returns a normal result,
-so the tool call succeeds. It has nothing to do with `handle.cancel()`, which
-stops an agent execution or session.
+so the tool call succeeds. `handle.cancel()` is unrelated: it stops an agent
+execution or session.
 
 To attach metadata to a response, build the plan with
 `ElicitationPlan.model_validate(...)` and an `ElicitationResponse` that sets
