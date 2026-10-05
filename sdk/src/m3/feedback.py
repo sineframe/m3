@@ -13,6 +13,7 @@ import re
 from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -553,6 +554,215 @@ def _safe_filename(identifier: Any, suffix: str) -> str:
     """Use opaque names while retaining the original ID in the manifest."""
     digest = sha256(_id(identifier).encode("utf-8")).hexdigest()[:32]
     return digest + suffix
+
+
+# Exported execution reports replace large payload values that the exported
+# trace already holds byte for byte with a marker pointing at the trace copy.
+# A payload object whose only key is a marker key is wrapped in a literal
+# marker, so a reader can always tell references from payload data.
+_TRACE_REF_MARKER = "__m3_ref__"
+_TRACE_REF_LITERAL = "__m3_literal__"
+_TRACE_REF_KEYS = frozenset((_TRACE_REF_MARKER, _TRACE_REF_LITERAL))
+_TRACE_REF_MIN_BYTES = 16 * 1024
+_CANONICAL_ENCODER = json.JSONEncoder(
+    sort_keys=True, separators=(",", ":"), ensure_ascii=False
+)
+_encode_json_string = json.encoder.encode_basestring
+
+
+def _string_size(value: str) -> int:
+    encoded = _encode_json_string(value)
+    if encoded.isascii():
+        return len(encoded)
+    return len(encoded.encode("utf-8", "surrogatepass"))
+
+
+# Object keys and short strings repeat across payloads, so their sizes are
+# cached.
+_key_size = lru_cache(maxsize=4096)(_string_size)
+
+
+def _needs_literal(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and len(value) == 1
+        and next(iter(value)) in _TRACE_REF_KEYS
+    )
+
+
+def _scalar_size(value: Any) -> int:
+    if value is None or value is True:
+        return 4
+    if value is False:
+        return 5
+    if isinstance(value, int):
+        return len(int.__repr__(value))
+    if isinstance(value, float):
+        return len(float.__repr__(value))
+    return len(_CANONICAL_ENCODER.encode(value).encode("utf-8", "surrogatepass"))
+
+
+def _json_size(value: Any, large: dict[int, int], literals: set[int]) -> int:
+    """Return value's canonical JSON size in UTF-8 bytes without encoding it.
+
+    Containers and strings reaching the threshold are recorded in ``large`` by
+    id.  Objects whose only key is a marker key, and every container holding
+    one, are recorded in ``literals``.
+    """
+    if isinstance(value, dict):
+        found = len(literals)
+        # Braces, a colon per member, and commas between members.
+        size = 1 + 2 * len(value) if value else 2
+        for key, item in value.items():
+            size += _key_size(key)
+            if isinstance(item, str):
+                item_size = _key_size(item) if len(item) <= 64 else _string_size(item)
+                if item_size >= _TRACE_REF_MIN_BYTES:
+                    large[id(item)] = item_size
+                size += item_size
+            elif isinstance(item, (dict, list)):
+                size += _json_size(item, large, literals)
+            else:
+                size += _scalar_size(item)
+        if len(literals) > found or (
+            len(value) == 1 and next(iter(value)) in _TRACE_REF_KEYS
+        ):
+            literals.add(id(value))
+    elif isinstance(value, list):
+        found = len(literals)
+        size = 1 + len(value) if value else 2
+        for item in value:
+            if isinstance(item, str):
+                item_size = _key_size(item) if len(item) <= 64 else _string_size(item)
+                if item_size >= _TRACE_REF_MIN_BYTES:
+                    large[id(item)] = item_size
+                size += item_size
+            elif isinstance(item, (dict, list)):
+                size += _json_size(item, large, literals)
+            else:
+                size += _scalar_size(item)
+        if len(literals) > found:
+            literals.add(id(value))
+    elif isinstance(value, str):
+        size = _string_size(value)
+    else:
+        return _scalar_size(value)
+    if size >= _TRACE_REF_MIN_BYTES:
+        large[id(value)] = size
+    return size
+
+
+def _same_json(left: Any, right: Any) -> bool:
+    """Return whether two JSON values encode to the same canonical bytes."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_json(item, right[key]) for key, item in left.items()
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(map(_same_json, left, right))
+    if isinstance(left, float):
+        return left.hex() == cast(float, right).hex()
+    return bool(left == right)
+
+
+def _pointer_token(key: str | int) -> str:
+    return str(key).replace("~", "~0").replace("/", "~1")
+
+
+def _children(value: Any) -> list[tuple[str | int, Any]]:
+    if isinstance(value, dict):
+        return [(key, value[key]) for key in sorted(value)]
+    if isinstance(value, list):
+        return list(enumerate(value))
+    return []
+
+
+def _trace_values_by_size(trace: Any) -> dict[tuple[type, int], list[tuple[str, Any]]]:
+    """List large trace subtrees by type and size, with their JSON Pointers."""
+    found: dict[tuple[type, int], list[tuple[str, Any]]] = defaultdict(list)
+    timeline = trace.get("timeline") if isinstance(trace, dict) else None
+    if not isinstance(timeline, list):
+        return found
+    for index, entry in enumerate(timeline):
+        large: dict[int, int] = {}
+        _json_size(entry, large, set())
+        pending: list[tuple[Any, str]] = [(entry, f"/timeline/{index}")]
+        while pending:
+            value, pointer = pending.pop()
+            size = large.get(id(value))
+            if size is None:
+                continue
+            found[(type(value), size)].append((pointer, value))
+            pending.extend(
+                (item, f"{pointer}/{_pointer_token(key)}")
+                for key, item in reversed(_children(value))
+            )
+    return found
+
+
+def _reference_trace_values(
+    report: Any, trace: Any | None, trace_file: str | None
+) -> Any:
+    """Replace large event payload values found in the trace with markers.
+
+    Payload objects that look like markers are wrapped as literals, whether or
+    not the execution has a trace.
+    """
+    events = report.get("events") if isinstance(report, dict) else None
+    if not isinstance(events, list):
+        return report
+    scans: list[tuple[dict[int, int], set[int]]] = []
+    for event in events:
+        payload = event.get("payload") if isinstance(event, dict) else None
+        large: dict[int, int] = {}
+        literals: set[int] = set()
+        if isinstance(payload, dict):
+            _json_size(payload, large, literals)
+            large.pop(id(payload), None)
+        scans.append((large, literals))
+    if not any(large or literals for large, literals in scans):
+        return report
+    by_size: dict[tuple[type, int], list[tuple[str, Any]]] = {}
+    if trace_file is not None and any(large for large, _ in scans):
+        by_size = _trace_values_by_size(trace)
+
+    def replace(value: Any, large: dict[int, int], literals: set[int]) -> Any:
+        size = large.get(id(value))
+        if size is not None:
+            for pointer, candidate in by_size.get((type(value), size), ()):
+                if _same_json(value, candidate):
+                    return {
+                        _TRACE_REF_MARKER: {
+                            "file": trace_file,
+                            "pointer": pointer,
+                            "size_bytes": size,
+                        }
+                    }
+        if size is None and id(value) not in literals:
+            return value
+        return replace_children(value, large, literals)
+
+    def replace_children(value: Any, large: dict[int, int], literals: set[int]) -> Any:
+        if isinstance(value, dict):
+            replaced = {
+                key: replace(item, large, literals) for key, item in value.items()
+            }
+            return {_TRACE_REF_LITERAL: replaced} if _needs_literal(value) else replaced
+        if isinstance(value, list):
+            return [replace(item, large, literals) for item in value]
+        return value
+
+    referenced = []
+    for event, (large, literals) in zip(events, scans, strict=True):
+        if large or literals:
+            event = {
+                **event,
+                "payload": replace_children(event["payload"], large, literals),
+            }
+        referenced.append(event)
+    return {**report, "events": referenced}
 
 
 def _request_for(report: ExecutionReport, response: Event) -> Event | None:
@@ -2443,17 +2653,6 @@ def export_feedback(
     test_result_files: dict[str, str] = {}
     unavailable: list[Mapping[str, Any]] = []
     for execution_id, entry in reports.items():
-        execution_name = _safe_filename(execution_id, ".json")
-        (root / "executions" / execution_name).write_text(
-            json.dumps(
-                _jsonable(entry.report.model_dump(mode="json")),
-                sort_keys=True,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        execution_files[execution_id] = f"executions/{execution_name}"
         if entry.spec is not None:
             spec_name = _safe_filename(execution_id, ".json")
             (root / "specs" / spec_name).write_text(
@@ -2496,12 +2695,14 @@ def export_feedback(
                             "reason": "trace view unavailable",
                         }
                     )
+        written_trace: Any = None
         if trace is not None:
             try:
                 trace_name = _safe_filename(execution_id, ".json")
+                trace_value = _jsonable(trace.model_dump(mode="json"))
                 (root / "traces" / trace_name).write_text(
                     json.dumps(
-                        _jsonable(trace.model_dump(mode="json")),
+                        trace_value,
                         sort_keys=True,
                         indent=2,
                     )
@@ -2509,6 +2710,7 @@ def export_feedback(
                     encoding="utf-8",
                 )
                 trace_files[execution_id] = f"traces/{trace_name}"
+                written_trace = trace_value
             except Exception:
                 unavailable.append(
                     {
@@ -2517,6 +2719,22 @@ def export_feedback(
                         "reason": "trace view unavailable",
                     }
                 )
+        execution_name = _safe_filename(execution_id, ".json")
+        execution_value = _reference_trace_values(
+            _jsonable(entry.report.model_dump(mode="json")),
+            written_trace,
+            trace_files.get(execution_id) if written_trace is not None else None,
+        )
+        (root / "executions" / execution_name).write_text(
+            json.dumps(
+                execution_value,
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        execution_files[execution_id] = f"executions/{execution_name}"
         for event in entry.report.events:
             if event.raw_evidence_ref is not None:
                 try:
