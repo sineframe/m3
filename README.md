@@ -55,6 +55,10 @@ tests, captures MCP evidence, and can save runs for inspection and comparison.
   </tr>
 </table>
 
+<img width="2150" height="1568" alt="demo" src="https://github.com/user-attachments/assets/85cf6243-d22e-493c-ab42-61d1d11038c7" />
+
+
+
 ## What a test looks like
 
 A test gives an agent a prompt and your MCP server. M3 records every MCP call
