@@ -25,6 +25,7 @@ from m3.elicitation import (
     FormElicitationRequest,
     PendingElicitationRound,
 )
+from m3.errors import TraceUnavailable
 from m3.events import EventFactory, EventSequence
 from m3.storage import (
     ArtifactNotFound,
@@ -1316,25 +1317,48 @@ def test_writer_waits_for_cleanup_before_reusing_orphan(
     assert other.artifacts.get(reference) == content
 
 
-@pytest.mark.parametrize("name", sorted(_corpus()))
-def test_tool_call_counts_match_trace_view_before_and_after_persisting(
-    tmp_path: Path, name: str
-) -> None:
-    store = _store(tmp_path)
+def _persist_corpus_trace(
+    store: SQLiteExecutionStore, name: str, execution_id: str = "corpus", run_id=None
+) -> ExecutionId:
     trace = _normalized(_corpus()[name]())
-    execution_id = ExecutionId("corpus")
-    store.create(ExecutionState(execution_id=execution_id))
+    typed_id = ExecutionId(execution_id)
+    store.create(ExecutionState(execution_id=typed_id, run_id=run_id))
     store.append_events(
         [
             event.model_copy(
                 update={
-                    "execution_id": execution_id,
-                    "event_id": EventId(f"corpus-{event.sequence}"),
+                    "execution_id": typed_id,
+                    "event_id": EventId(f"{execution_id}-{event.sequence}"),
                 }
             )
             for event in trace.events
         ]
     )
+    return typed_id
+
+
+def _conflict_snapshot_outcome(tmp_path: Path, execution_id: ExecutionId) -> None:
+    """Make the snapshot outcome disagree with the terminal event."""
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        raw = json.loads(
+            connection.execute(
+                "SELECT snapshot_json FROM v2_executions WHERE id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+        )
+        raw["outcome"] = ExecutionOutcome.FAILED.value
+        connection.execute(
+            "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+            (json.dumps(raw), execution_id.root),
+        )
+
+
+@pytest.mark.parametrize("name", sorted(_corpus()))
+def test_tool_call_counts_match_trace_view_before_and_after_persisting(
+    tmp_path: Path, name: str
+) -> None:
+    store = _store(tmp_path)
+    execution_id = _persist_corpus_trace(store, name)
     summary = store.get_trace_view(execution_id).summary
     expected = (summary.tool_call_count, summary.successful_tool_call_count)
     with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
@@ -1347,6 +1371,15 @@ def test_tool_call_counts_match_trace_view_before_and_after_persisting(
         "successful": expected[1],
     }
     assert store.tool_call_counts([execution_id]) == {"corpus": expected}
+
+
+def test_conflicting_snapshot_outcome_has_no_trace_view(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    execution_id = _run_execution(store, "conflict", "run", [True])
+    _conflict_snapshot_outcome(tmp_path, execution_id)
+
+    with pytest.raises(TraceUnavailable, match="conflicts with terminal evidence"):
+        store.get_trace_view(execution_id)
 
 
 def test_tool_call_counts_omit_unfinished_and_missing_and_fill_null_rows(
