@@ -12,18 +12,20 @@ submits a response, and then the agent picks up where it stopped.
 
 ## Requirements
 
-Use Python 3.10 or later with `sf-m3[pytest]` installed in the project
-environment. Managed input is verified with Codex CLI `0.156.1`, which M3
-downloads as a managed runtime; other harnesses are unverified for this
-workflow. The example calls a real model, so it needs network access, a signed-in
-Codex account, and a model name:
+Use Python 3.10 or later and a project set up with `m3 init` and `m3 setup`,
+as in [Write your first MCP test](../../getting-started.md). This example
+was tested with Codex CLI `0.156.1`. Managed input on Pi is also verified for
+form, multi-round, and URL rounds; see
+[compatibility details](../../reference/compatibility.md). The example calls a real model, so it needs
+network access, a signed-in Codex account, and a model name:
 
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
 ```
 
 The pending request is stored with the execution, so managed input needs a
-persistent store. The example uses `SQLiteExecutionStore`.
+persistent store. `m3 test` provides one: it records executions in
+`.m3/executions.sqlite`.
 
 ## Example
 
@@ -123,23 +125,18 @@ Save the test as `test_managed_input.py` beside it:
 ```python
 from __future__ import annotations
 
-import os
 import sys
 import time
-from contextlib import closing
 from pathlib import Path
 
-from m3 import (
-    ElicitationResponse,
-    ExecutionOutcome,
-    MCPTestKit,
-    PendingElicitationRound,
-    expect,
-)
-from m3.storage import SQLiteExecutionStore
+import pytest
+
+from m3 import ElicitationResponse, ExecutionOutcome, PendingElicitationRound, expect
 from m3.types import ExecutionStatus, StdioServer
 
 HERE = Path(__file__).resolve().parent
+
+pytestmark = pytest.mark.m3(suite_name="elicitation")
 
 
 def wait_for_input(handle, timeout: float = 120) -> PendingElicitationRound:
@@ -154,49 +151,35 @@ def wait_for_input(handle, timeout: float = 120) -> PendingElicitationRound:
     raise AssertionError("execution did not ask for input in time")
 
 
-def test_managed_form_input_resumes_codex_execution(tmp_path: Path) -> None:
+def test_person_answers_while_the_agent_waits(agent) -> None:
     server = StdioServer(
         name="shipping",
         command=sys.executable,
         args=(str(HERE / "shipping_server.py"),),
         cwd=str(HERE),
     )
-    # Managed input needs a persistent store to hold the pending request.
-    store = SQLiteExecutionStore(tmp_path / "executions.sqlite")
-    with closing(store), MCPTestKit(store=store, env={}) as kit:
-        agent = kit.agents(
-            [
-                {
-                    "harness": "codex",
-                    "models": [os.environ["M3_DOCS_CODEX_MODEL"]],
-                    "runtime": "managed",
-                    "version": "0.156.1",
-                }
-            ]
-        )[0]
-        handle = agent.submit(
-            "Use shipping:book_shipment once for a 2 kg parcel. Ask me for the "
-            "address if needed, then report whether the shipment was booked.",
-            server=server,
-            tools=["shipping:book_shipment"],
-            timeout=120,
-            human_input="managed",
-            permission_policy="allow",
-        )
+    handle = agent.submit(
+        "Use shipping:book_shipment once for a 2 kg parcel. Ask me for the "
+        "address if needed, then report whether the shipment was booked.",
+        server=server,
+        tools=["shipping:book_shipment"],
+        timeout=120,
+        human_input="managed",
+    )
 
-        pending = wait_for_input(handle)
-        assert set(pending.requests) == {"shipping_address"}
-        handle.respond_elicitation(
-            pending.round_id,
-            {
-                "shipping_address": ElicitationResponse(
-                    action="accept",
-                    content={"street": "1 Main Street", "city": "Pune"},
-                )
-            },
-            idempotency_key=f"address-{pending.round_id}",
-        )
-        result = handle.result(timeout=120)
+    pending = wait_for_input(handle)
+    assert set(pending.requests) == {"shipping_address"}
+    handle.respond_elicitation(
+        pending.round_id,
+        {
+            "shipping_address": ElicitationResponse(
+                action="accept",
+                content={"street": "1 Main Street", "city": "Pune"},
+            )
+        },
+        idempotency_key=f"address-{pending.round_id}",
+    )
+    result = handle.result(timeout=120)
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
     expect(result).to_have_tool_call(
@@ -204,11 +187,15 @@ def test_managed_form_input_resumes_codex_execution(tmp_path: Path) -> None:
     )
 ```
 
-Run from `elicitation-managed-input`:
+The test takes M3's `agent` fixture, so the harness and model come from the
+command line. Run it from `elicitation-managed-input`:
 
 ```sh
-python -m pytest -q test_managed_input.py
+m3 test --harness "codex=${M3_DOCS_CODEX_MODEL}" -- test_managed_input.py
 ```
+
+To use the version this guide was tested with, add `--runtime managed` and pin
+it: `--harness "codex@0.156.1=${M3_DOCS_CODEX_MODEL}"`.
 
 `agent.submit(..., human_input="managed")` starts the execution and returns a
 handle right away. When the server asks for the address, the execution pauses
@@ -218,12 +205,13 @@ fails early if the execution finishes without asking. `respond_elicitation`
 sends one response per request key, and `handle.result()` waits for the agent
 to finish.
 
-`permission_policy="allow"` lets M3 approve Codex's call to `book_shipment`
-without prompting. Use it only for tools that are safe to run unattended.
+`tools=["shipping:book_shipment"]` limits the agent to that one tool, and M3
+approves Codex's calls to it from that selection.
 
 Every response needs an `idempotency_key`. If you submit the same key and
-response again, for example after a lost acknowledgement, M3 returns the
-stored record instead of applying it twice. Reusing a key with a different
+response again, for example after a lost acknowledgement, the call succeeds
+and M3 does not apply the response twice. `respond_elicitation` returns `None`
+either way. Reusing a key with a different
 response raises `ManagedInputConflict`. The example derives the key from the
 round ID; in an application, store the key with the response so a retry sends
 both unchanged.

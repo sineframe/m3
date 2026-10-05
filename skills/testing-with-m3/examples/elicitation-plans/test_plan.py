@@ -10,6 +10,8 @@ from m3 import (
     expect_form,
 )
 
+pytestmark = pytest.mark.m3(suite_name="elicitation")
+
 ADDRESS = {"street": "1 Main Street", "city": "Pune"}
 
 

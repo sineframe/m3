@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import pytest
 from mcp import types
 from shipping_server import build_server
 
 from m3 import Config, InProcessServer, MCPTestKit
 from m3.sync_api import InputRequiredResult
+
+pytestmark = pytest.mark.m3(suite_name="elicitation")
 
 ADDRESS = {"street": "1 Main Street", "city": "Pune"}
 

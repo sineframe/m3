@@ -11,8 +11,8 @@ response for each requested key.
 
 ## Requirements
 
-Use Python 3.10 or later with `sf-m3[pytest]` installed in the project
-environment. The test uses an in-process server and needs no agent harness,
+Use Python 3.10 or later and a project set up with `m3 init` and `m3 setup`,
+as in [Write your first MCP test](../../getting-started.md). The test uses an in-process server and needs no agent harness,
 network service, or credentials.
 
 ## Example
@@ -92,11 +92,14 @@ Save as `test_manual.py` beside it:
 ```python
 from __future__ import annotations
 
+import pytest
 from mcp import types
 from shipping_server import build_server
 
 from m3 import Config, InProcessServer, MCPTestKit
 from m3.sync_api import InputRequiredResult
+
+pytestmark = pytest.mark.m3(suite_name="elicitation")
 
 ADDRESS = {"street": "1 Main Street", "city": "Pune"}
 
@@ -127,13 +130,13 @@ def test_answer_the_returned_request_yourself() -> None:
 Run:
 
 ```sh
-python -m pytest -q test_manual.py
+m3 test -- test_manual.py
 ```
 
-Captured output:
+The summary ends with:
 
 ```text
-1 passed
+M3 verdicts: 1 passed
 ```
 
 `allow_input_required=True` makes the first call return the
@@ -145,7 +148,8 @@ no plan raises `ElicitationExpectationError`. The second call passes
 Treat `request_state` as opaque. The server decides what it means, so pass back
 the value you received rather than building one. M3 sends the state, keys, and
 content you provide without checking them against the request, so rejecting
-bad input is up to the server. This one returns `is_error=True`.
+bad input is up to the server. This one returns `is_error=True` for a wrong
+state or a response that isn't `accept`; it doesn't check the address itself.
 
 If the server may ask again, pass `allow_input_required=True` on the retry as
 well. The retry then returns a new `InputRequiredResult`; read the keys from it

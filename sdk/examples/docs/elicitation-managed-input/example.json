@@ -1,33 +1,56 @@
 {
   "schema_version": 1,
   "id": "elicitation-managed-input",
-  "owning_pages": ["guides-elicitation-managed-input"],
+  "owning_pages": [
+    "guides-elicitation-managed-input"
+  ],
   "target_release": "resolved from the published release pin",
   "python": ">=3.10",
-  "files": ["shipping_server.py", "test_managed_input.py"],
-  "displayed_blocks": [
-    {"page": "guides-elicitation-managed-input", "label": "managed input server", "source": "shipping_server.py", "kind": "file"},
-    {"page": "guides-elicitation-managed-input", "label": "managed input flow", "source": "test_managed_input.py", "kind": "file"}
+  "files": [
+    "shipping_server.py",
+    "test_managed_input.py"
   ],
-  "dependencies": ["sf-m3[pytest]", "Codex CLI managed runtime"],
+  "displayed_blocks": [
+    {
+      "page": "guides-elicitation-managed-input",
+      "label": "managed input server",
+      "source": "shipping_server.py",
+      "kind": "file"
+    },
+    {
+      "page": "guides-elicitation-managed-input",
+      "label": "managed input flow",
+      "source": "test_managed_input.py",
+      "kind": "file"
+    }
+  ],
+  "dependencies": [
+    "sf-m3[pytest]",
+    "sf-m3-cli",
+    "Codex login and model access"
+  ],
   "working_directory": "project directory",
   "scenarios": [
     {
       "id": "managed-form-pause-submit-resume",
-      "command": "python -m pytest -q test_managed_input.py",
+      "command": "m3 test --harness \"codex=${M3_DOCS_CODEX_MODEL}\" -- test_managed_input.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
-      "assertions": ["managed input request is persisted", "keyed response is accepted", "execution completes with successful tool evidence"],
+      "assertions": [
+        "managed input request is persisted",
+        "keyed response is accepted",
+        "execution completes with successful tool evidence"
+      ],
       "compatibility": {
         "harness": "Codex CLI",
-        "version": "0.156.1",
+        "version": "tested with 0.156.1",
         "mode": "managed agent input with live provider",
         "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
     }
   ],
-  "network": "Codex managed-runtime acquisition and provider access are required; the MCP server is local stdio.",
+  "network": "Provider access is required; the MCP server is local stdio. A pinned managed runtime also needs network access to download.",
   "credentials": "Codex provider access; M3_DOCS_CODEX_MODEL names a model available to the account.",
-  "cleanup": "The SQLite store, MCPTestKit, server process, and harness session are closed after the test."
+  "cleanup": "M3 closes the harness session and server process; m3 test keeps the execution in .m3/executions.sqlite."
 }

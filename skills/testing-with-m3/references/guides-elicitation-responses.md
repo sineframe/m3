@@ -7,8 +7,8 @@ any of these answers, so you can test how your server handles each one.
 
 ## Requirements
 
-Use Python 3.10 or later with `sf-m3[pytest]` installed in the project
-environment. The test uses an in-process server and needs no agent harness,
+Use Python 3.10 or later and a project set up with `m3 init` and `m3 setup`,
+as in [Write your first MCP test](getting-started.md). The test uses an in-process server and needs no agent harness,
 network service, or credentials.
 
 ## Example
@@ -97,6 +97,8 @@ from m3 import (
     expect_url,
 )
 
+pytestmark = pytest.mark.m3(suite_name="elicitation")
+
 CITY = expect_form("input")
 CHECKOUT = expect_url("input")
 
@@ -127,13 +129,13 @@ def test_server_receives_the_planned_response(
 Run:
 
 ```sh
-python -m pytest -q test_responses.py
+m3 test -- test_responses.py
 ```
 
-Captured output:
+The summary ends with:
 
 ```text
-6 passed
+M3 verdicts: 6 passed
 ```
 
 Only an accepted form carries content. Declining or cancelling sends the action

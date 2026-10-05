@@ -9,12 +9,12 @@
     {"page": "guides-elicitation-manual", "label": "manual input server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-elicitation-manual", "label": "manual input test", "source": "test_manual.py", "kind": "file"}
   ],
-  "dependencies": ["sf-m3[pytest]"],
+  "dependencies": ["sf-m3[pytest]", "sf-m3-cli"],
   "working_directory": "project directory",
   "scenarios": [
     {
       "id": "manual-input-required-response",
-      "command": "python -m pytest -q test_manual.py",
+      "command": "m3 test -- test_manual.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
       "assertions": ["direct call returns typed InputRequiredResult", "retry resends request_state with a response under the requested key", "server completes the tool call"],

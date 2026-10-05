@@ -28,8 +28,6 @@ try:
                 {
                     "harness": "codex",
                     "models": [os.environ["M3_DOCS_CODEX_MODEL"]],
-                    "runtime": "managed",
-                    "version": "0.156.1",
                 }
             ]
         )[0]
@@ -38,7 +36,6 @@ try:
             server=shipping_server,
             tools=["shipping:book_shipment"],
             human_input="managed",
-            permission_policy="allow",
         )
         deadline = time.monotonic() + 120
         pending = handle.pending_elicitation()
@@ -70,9 +67,10 @@ finally:
 
 The surrounding application must define `shipping_server` as a configured
 `StdioServer` binding, and the signed-in Codex account must have access to the
-selected model. Because the shipping tool is non-destructive, the fragment
-uses `permission_policy="allow"` instead of a separate approval handler. Choose
-a policy that fits the tools in your application. For a complete agent
+selected model. `tools=["shipping:book_shipment"]` limits the agent to that
+tool, and M3 approves Codex's calls to it from that selection.
+`permission_policy` only covers native prompts outside the selected tools. For
+a complete agent
 workflow, see
 [Submit input to a paused execution](../../../guides/elicitation/managed-input.md).
 
@@ -130,8 +128,9 @@ Request objects include their mode-specific fields plus optional `meta`,
 `task`, `server`, `operation_kind`, and `operation_name` context.
 When a managed runtime waits on a round with a deadline, expiry raises
 `OperationTimeout` and fails the round. The store's direct `submit_responses`
-method enforces the worker lease and response state; it records `deadline`,
-while the managed runtime owns deadline enforcement.
+method enforces the worker lease and response state. `deadline` is stored
+with the pending round when `create_round` persists it, and the managed runtime
+enforces it.
 
 `PendingElicitationRound` excludes internal worker lease tokens. Callers use
 the `round_id`, the exact keys in `requests`, and an `idempotency_key` created

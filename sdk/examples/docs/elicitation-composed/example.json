@@ -9,12 +9,12 @@
     {"page": "guides-elicitation-composed", "label": "composed local server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-elicitation-composed", "label": "composed direct tests", "source": "test_composed.py", "kind": "file"}
   ],
-  "dependencies": ["sf-m3[pytest]"],
+  "dependencies": ["sf-m3[pytest]", "sf-m3-cli"],
   "working_directory": "project directory",
   "scenarios": [
     {
       "id": "composed-alternative-optional-and-round-of",
-      "command": "python -m pytest -q test_composed.py",
+      "command": "m3 test -- test_composed.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
       "assertions": ["one_of answers the address the server requests before the URL round", "optional address step can be skipped", "round_of answers two forms in the same round"],

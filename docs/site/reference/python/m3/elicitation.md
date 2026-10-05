@@ -83,8 +83,9 @@ without mutating an existing bound response.
 ## Composition and ordering
 
 Every combinator requires complete children, and a complete leaf has a bound
-response. `sequence(a, b)` consumes `a` in one protocol round and `b` in a
-later round. It matches server order without issuing requests or changing that
+response. `sequence(a, b)` completes or skips `a` before it matches `b`. Each
+child can take zero, one, or several protocol rounds; two required leaves land
+in separate rounds. It matches server order without issuing requests or changing that
 order. `round_of(a, b)` requires both direct leaf requests in one round, with
 unique request keys. `one_of(a, b)` selects one distinct, non-empty
 alternative. When an observed round can select paths with different responses,
@@ -189,8 +190,10 @@ The managed-input reference documents the persistent contract:
 `ElicitationExpectationError` reports missing plans, mismatched requests,
 ambiguous alternatives, unresolved required leaves, and mismatched form
 content. `ElicitationRoundLimitError` reports more input rounds than
-`elicitation_round_limit`. `ModelValidationError` reports invalid or incomplete
-plans and incompatible API arguments. Managed submissions use
+`elicitation_round_limit`. `ModelValidationError` reports incomplete plans,
+invalid composition or response binding, and incompatible API arguments. An
+invalid field, such as an empty request key, raises Pydantic's
+`ValidationError` when the plan is built. Managed submissions use
 `ManagedInputValidationError`, `ManagedInputConflict`,
 `ManagedInputStateError`, and `ManagedInputRecoveryError` for invalid response
 content or keys, stale or conflicting updates, invalid round state, and

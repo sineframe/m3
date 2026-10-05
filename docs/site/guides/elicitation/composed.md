@@ -11,8 +11,8 @@ on their arguments. Combine single-request plans with `sequence`, `one_of`,
 
 ## Requirements
 
-Use Python 3.10 or later with `sf-m3[pytest]` installed in the project
-environment. The tests use an in-process server and need no agent harness,
+Use Python 3.10 or later and a project set up with `m3 init` and `m3 setup`,
+as in [Write your first MCP test](../../getting-started.md). The tests use an in-process server and need no agent harness,
 network service, or credentials.
 
 ## Example
@@ -120,6 +120,7 @@ Save as `test_composed.py` beside it:
 ```python
 from __future__ import annotations
 
+import pytest
 from shipping_server import build_server
 
 from m3 import (
@@ -134,6 +135,8 @@ from m3 import (
     round_of,
     sequence,
 )
+
+pytestmark = pytest.mark.m3(suite_name="elicitation")
 
 HOME = expect_form("home_address").accept({"street": "1 Home St", "city": "Pune"})
 BUSINESS = expect_form("business_address").accept(
@@ -171,20 +174,21 @@ def test_round_of_answers_two_requests_in_one_round() -> None:
 Run:
 
 ```sh
-python -m pytest -q test_composed.py
+m3 test -- test_composed.py
 ```
 
-Captured output:
+The summary ends with:
 
 ```text
-3 passed
+M3 verdicts: 3 passed
 ```
 
 All three tests build their plans from the same leaves, `HOME`, `BUSINESS`, and
 `VERIFY`. Plans are immutable, so one leaf can appear in several plans.
 
-- `sequence(a, b)` answers `a` in one round and `b` in a later round. Each test
-  uses it to put verification after the addresses.
+- `sequence(a, b)` finishes or skips `a` before it matches `b`. Two single
+  requests in a sequence land in separate rounds. Each test uses it to put
+  verification after the addresses.
 - `one_of(HOME, BUSINESS)` expects one of the two requests and answers
   whichever arrives. The server asks only for the business address here.
 - `optional(...)` lets a step be skipped. With `none`, the server goes straight

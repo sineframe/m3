@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from shipping_server import build_server
 
 from m3 import (
@@ -14,6 +15,8 @@ from m3 import (
     round_of,
     sequence,
 )
+
+pytestmark = pytest.mark.m3(suite_name="elicitation")
 
 HOME = expect_form("home_address").accept({"street": "1 Home St", "city": "Pune"})
 BUSINESS = expect_form("business_address").accept(

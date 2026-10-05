@@ -12,6 +12,8 @@ from m3 import (
     expect_url,
 )
 
+pytestmark = pytest.mark.m3(suite_name="elicitation")
+
 CITY = expect_form("input")
 CHECKOUT = expect_url("input")
 

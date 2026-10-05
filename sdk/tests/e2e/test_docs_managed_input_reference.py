@@ -194,7 +194,6 @@ def test_managed_input_project_test_against_native_codex_and_local_provider(
         shutil.copy2(source_project / filename, project / filename)
 
     monkeypatch.chdir(project)
-    monkeypatch.setenv("M3_DOCS_CODEX_MODEL", "m3-fixture-model")
     isolated_source_home = tmp_path / "empty-codex-source-home-project"
     isolated_source_home.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(isolated_source_home))
@@ -222,23 +221,32 @@ def test_managed_input_project_test_against_native_codex_and_local_provider(
             )
 
         registry = HarnessAdapterRegistry({"codex": make_adapter})
-
-        def configured_kit(*, store: SQLiteExecutionStore, env: dict[str, str]):
-            return MCPTestKit(
+        test_namespace = runpy.run_path(
+            str(project / "test_managed_input.py"),
+            run_name="m3_docs_managed_input_project",
+        )
+        store = SQLiteExecutionStore(tmp_path / "executions.sqlite")
+        try:
+            with MCPTestKit(
                 store=store,
-                env=env,
+                env={},
                 cwd=str(project),
                 adapter_registry=registry,
                 harness_cache_dir=cache_root,
-            )
-
-        with monkeypatch.context() as isolated_modules:
-            isolated_modules.setattr(m3, "MCPTestKit", configured_kit)
-            test_namespace = runpy.run_path(
-                str(project / "test_managed_input.py"),
-                run_name="m3_docs_managed_input_project",
-            )
-        test_namespace["test_managed_form_input_resumes_codex_execution"](tmp_path)
+            ) as kit:
+                agent = kit.agents(
+                    [
+                        {
+                            "harness": "codex",
+                            "models": ["m3-fixture-model"],
+                            "runtime": "managed",
+                            "version": "0.156.1",
+                        }
+                    ]
+                )[0]
+                test_namespace["test_person_answers_while_the_agent_waits"](agent)
+        finally:
+            store.close()
 
     assert len(provider.requests) == 2
     assert "mcp__shipping::book_shipment" in function_tools(provider.requests[0])
@@ -314,8 +322,6 @@ def test_elicitation_agent_sessions_use_local_providers_and_real_managed_clients
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.setenv("M3_HARNESS_CACHE_DIR", str(cache_root))
-    monkeypatch.setenv("M3_DOCS_CODEX_MODEL", "m3-fixture-model")
-    monkeypatch.setenv("M3_DOCS_PI_MODEL", "m3-fixture/fixture-model")
     monkeypatch.setenv("M3_DOCS_PI_PROVIDER", "m3-fixture")
     monkeypatch.setenv("M3_DOCS_PI_KEY_NAME", "M3_PI_FIXTURE_KEY")
     monkeypatch.setenv("M3_DOCS_PI_API_KEY", "local-fixture-placeholder")
@@ -379,19 +385,38 @@ def test_elicitation_agent_sessions_use_local_providers_and_real_managed_clients
                 registry.register("codex", make_codex_adapter)
                 registry.register("pi", make_pi_adapter)
                 monkeypatch.setattr(async_api, "_default_adapters", lambda: registry)
-                try:
-                    source.test_codex_uses_fresh_plan_for_each_session_turn()
-                except AssertionError as error:
-                    frames = codex_adapters[0].native_frames if codex_adapters else []
-                    failures.append(
-                        f"Codex guide test failed: {error}; frames={frames!r}"
+                with MCPTestKit(env={}) as kit:
+                    codex_agent, pi_agent = kit.agents(
+                        [
+                            {
+                                "harness": "codex",
+                                "models": ["m3-fixture-model"],
+                                "runtime": "managed",
+                                "version": "0.156.1",
+                            },
+                            {
+                                "harness": "pi",
+                                "models": ["m3-fixture/fixture-model"],
+                                "runtime": "managed",
+                                "version": "0.85.1",
+                            },
+                        ]
                     )
-                try:
-                    source.test_pi_uses_fresh_plan_for_each_session_turn()
-                except AssertionError as error:
-                    failures.append(
-                        f"Pi guide test failed: {error}; frames={pi_frames!r}"
-                    )
+                    try:
+                        source.test_each_turn_gets_its_own_plan(codex_agent)
+                    except AssertionError as error:
+                        frames = (
+                            codex_adapters[0].native_frames if codex_adapters else []
+                        )
+                        failures.append(
+                            f"Codex guide test failed: {error}; frames={frames!r}"
+                        )
+                    try:
+                        source.test_each_turn_gets_its_own_plan(pi_agent)
+                    except AssertionError as error:
+                        failures.append(
+                            f"Pi guide test failed: {error}; frames={pi_frames!r}"
+                        )
     finally:
         if runtime_manager is not None:
             asyncio.run(runtime_manager.close())

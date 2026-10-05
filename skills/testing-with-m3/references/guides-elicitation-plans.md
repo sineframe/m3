@@ -9,11 +9,11 @@ a person.
 
 ## Requirements
 
-Use Python 3.10 or later with `sf-m3[pytest]` installed in the project
-environment. Elicitation needs MCP protocol revision `2026-07-28`, so the
+Use Python 3.10 or later and a project set up with `m3 init` and `m3 setup`,
+as in [Write your first MCP test](getting-started.md). Elicitation needs MCP protocol revision `2026-07-28`, so the
 examples set it in `Config`. Direct SDK calls like the ones below need no agent
-harness, model, or credentials. Agent-driven elicitation is verified with Codex
-CLI `0.156.1` and Pi `0.85.1`; see
+harness, model, or credentials. Agent-driven elicitation works with Codex and Pi; it
+was tested with Codex CLI `0.156.1` and Pi `0.85.1`. See
 [compatibility details](reference-compatibility.md).
 
 ## Example
@@ -112,6 +112,8 @@ from m3 import (
     expect_form,
 )
 
+pytestmark = pytest.mark.m3(suite_name="elicitation")
+
 ADDRESS = {"street": "1 Main Street", "city": "Pune"}
 
 
@@ -148,13 +150,13 @@ def test_content_must_match_the_server_schema() -> None:
 Run:
 
 ```sh
-python -m pytest -q test_plan.py
+m3 test -- test_plan.py
 ```
 
-Captured output:
+The summary ends with:
 
 ```text
-3 passed
+M3 verdicts: 3 passed
 ```
 
 `expect_form("shipping_address")` matches a form request with that key, and
@@ -173,10 +175,11 @@ The complete project is in
 
 ## Narrow what a plan matches
 
-A plan matches a request by its key and mode (form or URL). `expect_form` and
-`expect_url` also take `message`, `schema`, `server`, `operation_kind`, and
-`operation_name`. Each one you pass must match the request as well, which helps
-when two servers or tools use the same key.
+A plan matches a request by its key and mode (form or URL). `expect_form` also
+takes `message`, `schema`, `server`, `operation_kind`, and `operation_name`.
+`expect_url` takes `message`, `url`, `elicitation_id`, `server`,
+`operation_kind`, and `operation_name`. Each one you pass must match the request
+as well, which helps when two servers or tools use the same key.
 
 `expect_url(...).accept()` takes no content. Accepting a URL request sends the
 `accept` action; M3 does not visit the URL or complete any sign-in behind it.
@@ -201,8 +204,8 @@ default; pass `elicitation_round_limit` beside `elicitation` to change it.
 When a direct operation goes past the limit, the client raises
 `ElicitationRoundLimitError`. In an agent test, the turn fails instead.
 
-A harness can stop earlier than M3's limit. The tested Codex version fails the
-action when a server asks for a tenth round, so a Codex action can use at most 9
+A harness can stop earlier than M3's limit. Codex `0.156.1`, for example, fails
+the action when a server asks for a tenth round, so a Codex action can use at most 9
 rounds, and setting `elicitation_round_limit` above 9 does not raise that cap.
 With Pi, M3 enforces the limit you pass. Managed input on Pi has its own
 maximum, listed in [compatibility details](reference-compatibility.md).

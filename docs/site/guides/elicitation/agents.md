@@ -11,15 +11,14 @@ attached to that agent action. In a session, attach a plan to each
 
 ## Requirements
 
-Use Python 3.10 or later with `sf-m3[pytest]` installed in the project
-environment. The example runs Codex CLI `0.156.1` and Pi `0.85.1`, which M3
-downloads as managed runtimes. Other harnesses are unverified for agent-driven
-elicitation. Both tests call a real model, so they need network access,
-provider credentials, and a model name for each harness:
+Use Python 3.10 or later and a project set up with `m3 init` and `m3 setup`,
+as in [Write your first MCP test](../../getting-started.md). Agent-driven
+elicitation works with Codex and Pi. Other harnesses are unverified. The test
+calls a real model, so it needs network access, provider credentials, and a
+model available to your account:
 
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
-export M3_DOCS_PI_MODEL='<model available to your Pi provider>'
 ```
 
 ## Example
@@ -129,54 +128,45 @@ Save as `test_agent_sessions.py` in the same directory:
 ```python
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
-from m3 import ExecutionOutcome, MCPTestKit, expect, expect_form
+import pytest
+
+from m3 import ExecutionOutcome, expect, expect_form
 from m3.types import StdioServer, TurnOutcome
 
 HERE = Path(__file__).resolve().parent
 HOME = {"street": "1 Main Street", "city": "Pune"}
 BUSINESS = {"street": "2 Business Street", "city": "Pune"}
 
+pytestmark = pytest.mark.m3(suite_name="elicitation")
 
-def run_two_turns(harness: str, version: str, model: str) -> None:
+
+def test_each_turn_gets_its_own_plan(agent) -> None:
     server = StdioServer(
         name="shipping",
         command=sys.executable,
         args=(str(HERE / "shipping_server.py"),),
         cwd=str(HERE),
     )
-    with MCPTestKit(env={}) as kit:
-        agent = kit.agents(
-            [
-                {
-                    "harness": harness,
-                    "models": [model],
-                    "runtime": "managed",
-                    "version": version,
-                }
-            ]
-        )[0]
-        with agent.session(
-            server=server,
-            tools=["shipping:book_shipment", "shipping:book_verified_shipment"],
+    with agent.session(
+        server=server,
+        tools=["shipping:book_shipment", "shipping:book_verified_shipment"],
+        timeout=120,
+    ) as session:
+        # Each turn gets a plan for the form its tool will request.
+        first = session.send(
+            "Book one 2 kg shipment and report its status.",
+            elicitation=expect_form("shipping_address").accept(HOME),
             timeout=120,
-            permission_policy="allow",
-        ) as session:
-            # Each turn gets its own plan for the form its tool will request.
-            first = session.send(
-                "Book one 2 kg shipment and report its status.",
-                elicitation=expect_form("shipping_address").accept(HOME),
-                timeout=120,
-            )
-            second = session.send(
-                "Book one business shipment and report its status.",
-                elicitation=expect_form("business_address").accept(BUSINESS),
-                timeout=120,
-            )
-        result = session.result
+        )
+        second = session.send(
+            "Book one business shipment and report its status.",
+            elicitation=expect_form("business_address").accept(BUSINESS),
+            timeout=120,
+        )
+    result = session.result
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
     assert first.snapshot.outcome is TurnOutcome.COMPLETED, first.error
@@ -200,22 +190,26 @@ def run_two_turns(harness: str, version: str, model: str) -> None:
         ("shipping_address", "accept", HOME),
         ("business_address", "accept", BUSINESS),
     ]
-
-
-def test_codex_uses_fresh_plan_for_each_session_turn() -> None:
-    run_two_turns("codex", "0.156.1", os.environ["M3_DOCS_CODEX_MODEL"])
-
-
-def test_pi_uses_fresh_plan_for_each_session_turn() -> None:
-    run_two_turns("pi", "0.85.1", os.environ["M3_DOCS_PI_MODEL"])
 ```
 
-Run each harness separately from `elicitation-agents`:
+The test takes M3's `agent` fixture, so the harness and model come from the
+command line. Run it from `elicitation-agents`:
 
 ```sh
-python -m pytest -q test_agent_sessions.py -k codex
-python -m pytest -q test_agent_sessions.py -k pi
+m3 test --harness "codex=${M3_DOCS_CODEX_MODEL}" -- test_agent_sessions.py
 ```
+
+To run a specific harness version, add `--runtime managed` and put the version
+in the selector. For example, the version this guide was tested with:
+
+```sh
+m3 test --runtime managed --harness "codex@0.156.1=${M3_DOCS_CODEX_MODEL}" \
+  -- test_agent_sessions.py
+```
+
+For Pi, pass `--harness "pi=<provider>/<model>"` and the provider credential;
+[Add another harness](../agents/versions.md#add-another-harness) shows the
+credential setup. This guide was also tested with Pi `0.85.1`.
 
 The first turn's plan answers only `shipping_address`, and the second turn's
 plan answers only `business_address`. `expect(result).to_have_tool_call(...)`
@@ -223,25 +217,23 @@ with `turn=` checks that each tool succeeded in its own turn.
 `trace.for_turn(turn).elicitations` lists the requests answered during that
 turn, with the key, action, and content M3 sent.
 
-Both tests depend on the model choosing the tool the prompt names. If the agent
-never triggers a request that its plan requires, M3 marks the turn incomplete.
-`permission_policy="allow"` lets M3 approve the tool calls without prompting;
-use it only for tools that are safe to run unattended.
+The test depends on the model choosing the tool the prompt names. If the agent
+never triggers a request that its plan requires, the turn fails. The
+`tools=[...]` list limits the agent to the two shipping tools, and M3 approves
+calls to them from that list.
 
 The complete project is in
 [`sdk/examples/docs/elicitation-agents`](../../../../sdk/examples/docs/elicitation-agents).
 
 ## Harness differences
 
-Both tests use the default round limit of 10. The tested Codex version stops an
-action at 9 rounds even when you set a higher limit; see
+The test uses the default round limit of 10. Codex `0.156.1`, for example,
+stops an action at 9 rounds even when you set a higher limit; see
 [Round limit](plans.md#round-limit). Pi's managed-input control protocol
 accepts a limit from 1 through 1024.
 
-Codex `0.156.1` rejects a URL-mode `InputRequiredResult` from a tool call with
-`unsupported MCP tool input request`, so this example uses forms only. To test
-URL requests, use a direct call as in
-[Compose elicitation workflows](composed.md).
+This example uses form requests only. For URL requests and combined plans
+without an agent, see [Compose elicitation workflows](composed.md).
 
 For a person answering while the agent waits, see
 [Submit input to a paused execution](managed-input.md). The
