@@ -95,25 +95,30 @@ jq -r --arg id "$EXECUTION_ID" '.catalog_files[$id]' feedback.json | xargs jq -r
 The command prints one schema for each distinct tool set the execution
 observed that contains the tool.
 
-In an execution report, a large event payload value (about 16 KiB or more)
-is written once, in the trace, when the trace holds a byte-identical copy. The
-report keeps a marker in its place:
+In an execution report, an event payload value of 16 KiB or more is written
+once, in the trace, when the trace holds a byte-identical copy. The report
+keeps a marker in its place:
 
 ```json
-{"__m3_ref__": {"file": "traces/<name>.json", "entry_id": "<entry ID>", "pointer": "/arguments/value", "sha256": "<hex>", "size_bytes": 5242896}}
+{"__m3_ref__": {"file": "traces/<name>.json", "pointer": "/timeline/3/arguments/value", "size_bytes": 5242896}}
 ```
 
 `file` is relative to the report directory. `pointer` is a JSON Pointer into
-the `timeline[]` entry whose `entry_id` matches. `sha256` and `size_bytes`
-describe the value's compact, key-sorted UTF-8 JSON. The payload's top-level
-keys always stay in the report, and values without an identical trace copy
-stay inline. When an execution has no trace file, its report is written in
-full. To read a referenced value, run this from the report directory with the
-marker's fields:
+that file. `size_bytes` is the size of the value's compact, key-sorted UTF-8
+JSON. The payload's top-level keys always stay in the report, and values
+without an identical trace copy stay inline. To read a referenced value, run
+this from the report directory with the marker's fields:
 
 ```sh
-jq --arg id "$ENTRY_ID" --arg ptr "$POINTER" '.timeline[] | select(.entry_id == $id) | reduce ($ptr | ltrimstr("/") | split("/")[] | gsub("~1"; "/") | gsub("~0"; "~")) as $k (.; if type == "array" then .[$k | tonumber] else .[$k] end)' "$FILE"
+jq --arg ptr "$POINTER" 'reduce ($ptr | ltrimstr("/") | split("/")[] | gsub("~1"; "/") | gsub("~0"; "~")) as $k (.; if type == "array" then .[$k | tonumber] else .[$k] end)' "$FILE"
 ```
+
+A payload object whose only key is `__m3_ref__` or `__m3_literal__` is
+written as `{"__m3_literal__": <object>}`, so payload data never reads as a
+marker. When reading a payload, treat an object whose only key is
+`__m3_ref__` as a reference and replace an object whose only key is
+`__m3_literal__` with its value, whose members follow the same rules. A
+referenced value is plain data.
 
 When a run sets `M3_TIMINGS=1`, `.m3/reports/<run-id>/` also has a `timings/`
 folder with `summary.json`, `trace.json`, and the raw per-process records. The

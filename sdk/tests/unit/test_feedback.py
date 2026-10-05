@@ -1,6 +1,5 @@
 """Agent feedback projections compare observed MCP evidence conservatively."""
 
-import hashlib
 import json
 import os
 import random
@@ -2532,15 +2531,34 @@ def _response_payload(execution):
 
 
 def _resolve_ref(root, marker):
-    trace = json.loads((root / marker["file"]).read_text())
-    entry = next(
-        item for item in trace["timeline"] if item["entry_id"] == marker["entry_id"]
-    )
-    value = entry
+    value = json.loads((root / marker["file"]).read_text())
     for token in marker["pointer"].split("/")[1:]:
         token = token.replace("~1", "/").replace("~0", "~")
         value = value[int(token)] if isinstance(value, list) else value[token]
     return value
+
+
+def _read_payload(root, value):
+    """Rebuild a payload the way the persistence docs tell readers to."""
+    if isinstance(value, dict) and len(value) == 1:
+        (key,) = value
+        if key == "__m3_ref__":
+            return _resolve_ref(root, value[key])
+        if key == "__m3_literal__":
+            return {k: _read_payload(root, v) for k, v in value[key].items()}
+    if isinstance(value, dict):
+        return {k: _read_payload(root, v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_read_payload(root, item) for item in value]
+    return value
+
+
+def _with_payloads(report, payloads):
+    events = [
+        event.model_copy(update={"payload": payload})
+        for event, payload in zip(report.events, payloads, strict=True)
+    ]
+    return report.model_copy(update={"events": events})
 
 
 def test_export_references_large_payload_value_held_by_the_trace(tmp_path):
@@ -2567,9 +2585,7 @@ def test_export_references_large_payload_value_held_by_the_trace(tmp_path):
     marker = response["result"]["__m3_ref__"]
     assert marker == {
         "file": payload["trace_files"]["new"],
-        "entry_id": "protocol/1",
-        "pointer": "/payload/result",
-        "sha256": hashlib.sha256(_canonical(original["result"])).hexdigest(),
+        "pointer": "/timeline/1/payload/result",
         "size_bytes": len(_canonical(original["result"])),
     }
     assert _resolve_ref(tmp_path, marker) == original["result"]
@@ -2594,7 +2610,7 @@ def test_export_uses_first_trace_copy_and_json_pointer_escaping(tmp_path):
     _, execution = _export_with_trace(tmp_path, report, trace)
 
     marker = _response_payload(execution)["result"]["__m3_ref__"]
-    assert (marker["entry_id"], marker["pointer"]) == ("first", "/a~1b~0c/1")
+    assert marker["pointer"] == "/timeline/0/a~1b~0c/1"
     assert _resolve_ref(tmp_path, marker) == {"tools": tools}
 
 
@@ -2651,15 +2667,15 @@ def test_export_with_trace_refs_is_deterministic(tmp_path):
 
 
 def _random_json(rng, depth):
-    leaves = ["", "a", "é", "☃", '\n"\\', "x" * 30, "\ud800", 0, -12, 1, 1.0]
-    leaves += [1.5, 0.0, -0.0, True, False, None]
+    leaves = ["", "a", "é", "☃", "😀", '\n"\\', "\x1f", "x" * 30, "\ud800", 0]
+    leaves += [-12, 1, 10**30, 1.0, 1.5, 1e300, 0.0, -0.0, True, False, None]
     if depth == 0 or rng.random() < 0.3:
         return rng.choice(leaves)
     if rng.random() < 0.5:
         return [_random_json(rng, depth - 1) for _ in range(rng.randrange(0, 6))]
     return {
-        rng.choice(["k", "κ", "a/b", "~", "long" * 5]) + str(index): _random_json(
-            rng, depth - 1
+        rng.choice(["k", "κ", "a/b", "~", "\n", "long" * 5]) + str(index): (
+            _random_json(rng, depth - 1)
         )
         for index in range(rng.randrange(0, 6))
     }
@@ -2671,7 +2687,7 @@ def _canonical_bytes(value):
     ).encode("utf-8", "surrogatepass")
 
 
-def test_size_floor_never_exceeds_canonical_size(monkeypatch):
+def test_json_size_matches_canonical_size(monkeypatch):
     monkeypatch.setattr(feedback_module, "_TRACE_REF_MIN_BYTES", 24)
     rng = random.Random(0)
 
@@ -2687,12 +2703,13 @@ def test_size_floor_never_exceeds_canonical_size(monkeypatch):
     for _ in range(300):
         value = _random_json(rng, 5)
         large: dict[int, int] = {}
-        bound = feedback_module._size_floor(value, large)
-        assert bound <= len(_canonical_bytes(value))
-        assert feedback_module._size_floor(json.loads(json.dumps(value)), {}) == bound
+        assert feedback_module._json_size(value, large, set()) == len(
+            _canonical_bytes(value)
+        )
         for item in walk(value):
-            if id(item) in large:
-                assert large[id(item)] <= len(_canonical_bytes(item))
+            if isinstance(item, (dict, list, str)):
+                size = len(_canonical_bytes(item))
+                assert large.get(id(item)) == (size if size >= 24 else None)
 
 
 def test_same_json_matches_canonical_equality():
@@ -2704,6 +2721,73 @@ def test_same_json_matches_canonical_equality():
             assert feedback_module._same_json(left, right) == (
                 _canonical_bytes(left) == _canonical_bytes(right)
             )
+
+
+@pytest.mark.parametrize("text", ["☃" * 6000, "\n" * 10000])
+def test_export_references_large_multibyte_and_escaped_strings(tmp_path, text):
+    report = _report("new", "current", "new", wire_tools=[{"name": "t"}])
+    report = _with_payloads(
+        report, [{"method": "tools/call"}, {"method": "tools/call", "result": text}]
+    )
+    trace = {"timeline": [{"entry_id": "call", "result": {"value": text}}]}
+
+    _, execution = _export_with_trace(tmp_path, report, trace)
+
+    marker = execution["events"][1]["payload"]["result"]["__m3_ref__"]
+    assert marker["pointer"] == "/timeline/0/result/value"
+    assert marker["size_bytes"] == len(_canonical_bytes(text))
+    assert _resolve_ref(tmp_path, marker) == text
+
+
+def test_export_reference_pointer_is_unique_when_entry_ids_repeat(tmp_path):
+    tools = _large_tools()
+    report = _report("new", "current", "new", wire_tools=tools)
+    trace = {
+        "timeline": [
+            {"entry_id": "shared", "kind": "raw_message", "preview": "x"},
+            {"entry_id": "shared", "kind": "protocol", "response": {"tools": tools}},
+        ]
+    }
+
+    _, execution = _export_with_trace(tmp_path, report, trace)
+
+    marker = _response_payload(execution)["result"]["__m3_ref__"]
+    assert marker["pointer"] == "/timeline/1/response"
+    assert _resolve_ref(tmp_path, marker) == {"tools": tools}
+
+
+@pytest.mark.parametrize("with_trace", [True, False])
+def test_export_wraps_payload_objects_that_look_like_markers(tmp_path, with_trace):
+    tools = _large_tools()
+    report = _report("new", "current", "new", wire_tools=tools)
+    lookalikes = {
+        "method": "tools/list",
+        "result": {"tools": tools},
+        "ref": {"__m3_ref__": {"file": "traces/x.json", "pointer": "/timeline/0"}},
+        "literal": {"__m3_literal__": {"__m3_ref__": 1}},
+        "nested": [{"__m3_ref__": []}, {"__m3_ref__": 1, "other": 2}],
+    }
+    request = {"__m3_ref__": "whole payload"}
+    original = _with_payloads(report, [request, lookalikes])
+    trace = {"timeline": [{"entry_id": "protocol/1", "result": {"tools": tools}}]}
+
+    _, execution = _export_with_trace(tmp_path, original, trace if with_trace else None)
+
+    request_payload, response_payload = (
+        event["payload"] for event in execution["events"][:2]
+    )
+    assert request_payload == {"__m3_literal__": request}
+    assert response_payload["ref"] == {"__m3_literal__": lookalikes["ref"]}
+    assert response_payload["literal"] == {
+        "__m3_literal__": {"__m3_literal__": {"__m3_literal__": {"__m3_ref__": 1}}}
+    }
+    assert response_payload["nested"] == [
+        {"__m3_literal__": {"__m3_ref__": []}},
+        {"__m3_ref__": 1, "other": 2},
+    ]
+    assert ("__m3_ref__" in response_payload["result"]) is with_trace
+    assert _read_payload(tmp_path, request_payload) == request
+    assert _read_payload(tmp_path, response_payload) == lookalikes
 
 
 def test_export_keeps_value_inline_when_trace_copy_differs_only_in_json_type(
