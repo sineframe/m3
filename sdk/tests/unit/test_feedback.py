@@ -830,6 +830,224 @@ def test_paginated_catalog_requires_the_complete_cursor_chain():
     assert change["complete"] is False
 
 
+def _inline_catalog_files(feedback, store, root, monkeypatch):
+    """Export with every tool set inline, as each catalog file used to be."""
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "m3.feedback._shared_catalog_versions",
+            lambda versions, root, tool_sets: list(versions),
+        )
+        payload = json.loads(export_feedback(feedback, store, root).read_text())
+    return {
+        execution_id: (root / path).read_bytes()
+        for execution_id, path in payload["catalog_files"].items()
+    }
+
+
+def _rebuild_catalog(root, catalog):
+    versions = []
+    for version in catalog["versions"]:
+        version = dict(version)
+        if "tools_file" in version:
+            shared = json.loads((root / version.pop("tools_file")).read_text())
+            assert shared["fingerprint"] == version.pop("fingerprint")
+            assert shared["complete"] == version["complete"]
+            version["tools"] = shared["tools"]
+            pages = []
+            for page in version["pages"]:
+                page = dict(page)
+                if "tool_names" in page:
+                    page["tools"] = [
+                        version["tools"][name] for name in page.pop("tool_names")
+                    ]
+                pages.append(page)
+            version["pages"] = pages
+        versions.append(version)
+    return {**catalog, "versions": versions}
+
+
+def _export_catalogs(store, run_id, tmp_path, monkeypatch, **build):
+    feedback = build_feedback(store, run_id, **build)
+    inline = _inline_catalog_files(feedback, store, tmp_path / "inline", monkeypatch)
+    root = tmp_path / "shared"
+    payload = json.loads(export_feedback(feedback, store, root).read_text())
+    catalogs = {}
+    for execution_id, path in payload["catalog_files"].items():
+        catalog = json.loads((root / path).read_text())
+        rebuilt = _rebuild_catalog(root, catalog)
+        assert (
+            json.dumps(rebuilt, sort_keys=True, indent=2) + "\n"
+        ).encode() == inline[execution_id]
+        catalogs[execution_id] = catalog
+    assert set(catalogs) == set(inline)
+    return feedback, root, catalogs
+
+
+def test_export_writes_each_catalog_tool_set_once(tmp_path, monkeypatch):
+    store = _Store(
+        (
+            _report("first", "run", "same"),
+            _report("second", "run", "same"),
+            _report("other", "run", "different"),
+        )
+    )
+    _, root, catalogs = _export_catalogs(store, "run", tmp_path, monkeypatch)
+    first, second, other = (
+        catalogs[key]["versions"][0] for key in ("first", "second", "other")
+    )
+    assert "tools" not in first
+    assert first["tools_file"] == second["tools_file"] != other["tools_file"]
+    assert first["tools_file"] == f"catalogs/tools/{first['fingerprint']}.json"
+    assert first["pages"][0]["tool_names"] == ["lookup"]
+    assert "tools" not in first["pages"][0]
+    assert sorted(path.name for path in (root / "catalogs" / "tools").iterdir()) == (
+        sorted({f"{first['fingerprint']}.json", f"{other['fingerprint']}.json"})
+    )
+    shared = json.loads((root / first["tools_file"]).read_text())
+    assert shared == {
+        "fingerprint": first["fingerprint"],
+        "complete": True,
+        "tools": {
+            "lookup": {
+                "name": "lookup",
+                "description": "same",
+                "inputSchema": {"type": "object"},
+            }
+        },
+    }
+
+
+def test_export_keeps_page_tools_inline_unless_they_match_the_tool_set(
+    tmp_path, monkeypatch
+):
+    replaced = _report(
+        "replaced",
+        "run",
+        "unused",
+        pages=((None, "next", "lookup", "first"), ("next", None, "lookup", "last")),
+    )
+    unnamed = _report(
+        "unnamed",
+        "run",
+        "unused",
+        wire_tools=[
+            {"description": "no name", "inputSchema": {"type": "object"}},
+            {"name": "", "inputSchema": {"type": "object"}},
+            {"name": "lookup", "inputSchema": {"type": "object"}},
+        ],
+    )
+    _, _, catalogs = _export_catalogs(
+        _Store((replaced, unnamed)), "run", tmp_path, monkeypatch
+    )
+    first_page, last_page = catalogs["replaced"]["versions"][0]["pages"]
+    assert first_page["tools"] == [
+        {"name": "lookup", "description": "first", "inputSchema": {"type": "object"}}
+    ]
+    assert "tool_names" not in first_page
+    assert last_page["tool_names"] == ["lookup"]
+    (page,) = catalogs["unnamed"]["versions"][0]["pages"]
+    assert [tool.get("name") for tool in page["tools"]] == [None, "", "lookup"]
+    assert "tool_names" not in page
+
+
+def test_export_shares_incomplete_and_unmatched_catalog_versions(tmp_path, monkeypatch):
+    reports = (
+        _report("broken", "run", "x", pages=((None, "missing", "lookup", "x"),)),
+        _report("headless", "run", "x", pages=(("cursor", None, "lookup", "x"),)),
+        _report(
+            "orphan",
+            "run",
+            "x",
+            pages=((None, None, "lookup", "x"), ("stray", None, "extra", "y")),
+        ),
+    )
+    _, _, catalogs = _export_catalogs(_Store(reports), "run", tmp_path, monkeypatch)
+    (broken,) = catalogs["broken"]["versions"]
+    assert broken["complete"] is False
+    assert broken["pages"][0]["tool_names"] == ["lookup"]
+    (headless,) = catalogs["headless"]["versions"]
+    assert headless["reason"] == "missing initial tools/list page"
+    assert headless["pages"] == []
+    matched, unmatched = catalogs["orphan"]["versions"]
+    assert matched["complete"] is True
+    assert unmatched["reason"] == "unmatched tools/list page"
+    assert unmatched["tools_file"] == headless["tools_file"]
+
+
+def test_export_keeps_tool_set_inline_on_fingerprint_collision(tmp_path, monkeypatch):
+    store = _Store((_report("first", "run", "one"), _report("second", "run", "two")))
+    feedback = build_feedback(store, "run")
+    monkeypatch.setattr("m3.feedback._catalog_fingerprint", lambda tool_set: "0" * 16)
+    inline = _inline_catalog_files(feedback, store, tmp_path / "inline", monkeypatch)
+    root = tmp_path / "shared"
+    payload = json.loads(export_feedback(feedback, store, root).read_text())
+    first = json.loads((root / payload["catalog_files"]["first"]).read_text())
+    second = (root / payload["catalog_files"]["second"]).read_bytes()
+    assert first["versions"][0]["tools_file"] == "catalogs/tools/0000000000000000.json"
+    assert second == inline["second"]
+    assert [path.name for path in (root / "catalogs" / "tools").iterdir()] == [
+        "0000000000000000.json"
+    ]
+
+
+def test_exported_tool_set_fingerprint_matches_comparison(tmp_path, monkeypatch):
+    store = _Store(
+        (
+            _report("old-1", "baseline", "old"),
+            _report("old-2", "baseline", "old"),
+            _report("new-1", "current", "a"),
+            _report("new-2", "current", "b"),
+        )
+    )
+    feedback, root, catalogs = _export_catalogs(
+        store, "current", tmp_path, monkeypatch, baseline_run_id="baseline"
+    )
+    (change,) = (
+        item
+        for item in feedback.comparison.interface_changes
+        if item.get("kind") == "catalog_distribution"
+    )
+    exported = {
+        execution_id: catalog["versions"][0]["fingerprint"]
+        for execution_id, catalog in catalogs.items()
+    }
+    assert change["before"]["counts"] == {exported["old-1"]: 2}
+    assert exported["old-1"] == exported["old-2"]
+    assert change["after"]["counts"] == {
+        exported["new-1"]: 1,
+        exported["new-2"]: 1,
+    }
+    assert len({path.name for path in (root / "catalogs" / "tools").iterdir()}) == 3
+
+
+def test_export_catalog_files_are_deterministic(tmp_path):
+    store = _Store(
+        (
+            _report(
+                "paged",
+                "run",
+                "x",
+                pages=((None, "next", "lookup", "a"), ("next", None, "extra", "b")),
+            ),
+            _report("plain", "run", "x"),
+        )
+    )
+    feedback = build_feedback(store, "run")
+    trees = []
+    for name in ("one", "two"):
+        root = tmp_path / name
+        export_feedback(feedback, store, root)
+        trees.append(
+            {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in sorted((root / "catalogs").rglob("*"))
+                if path.is_file()
+            }
+        )
+    assert trees[0] == trees[1]
+    assert len(trees[0]) == 4
+
+
 def test_direct_runs_use_manifest_node_id_and_ignore_connection_ids():
     old = _report("old-direct", "baseline", "old", connection="random-old")
     current = _report("new-direct", "current", "new", connection="random-new")
