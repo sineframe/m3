@@ -5,26 +5,25 @@ description: "Build an elicitation plan, attach it to one action, and assert the
 
 # Plan answers to elicitation requests
 
-An elicitation plan maps the requests an operation may make to the responses M3
-should submit. Attach a complete plan to the action that can request input,
-then assert the action’s result.
+An MCP server can pause a tool call to ask the client for input, such as a form
+to fill in or a URL to visit. An elicitation plan tells M3 which requests to
+expect and how to answer each one, so a test can run the whole exchange without
+a person.
 
-## Requirements and support
+## Requirements
 
-Works with Python 3.10 or newer and MCP protocol revision `2026-07-28` through
-direct SDK operations. Direct tests need no agent harness. Agent-driven
-elicitation is verified with Codex CLI `0.156.1` and Pi `0.85.1`; other
-harnesses are unverified. See
+Use Python 3.10 or later with `sf-m3[pytest]` installed in the project
+environment. Elicitation needs MCP protocol revision `2026-07-28`, so the
+examples set it in `Config`. Direct SDK calls like the ones below need no agent
+harness, model, or credentials. Agent-driven elicitation is verified with Codex
+CLI `0.156.1` and Pi `0.85.1`; see
 [compatibility details](../../reference/compatibility.md).
 
-From the repository root, install the candidate package and pytest with
-`python -m pip install -e 'sdk[pytest]'`. Installing `sf-m3[pytest]` from the
-package index selects a published release. The local in-process server needs no
-model, network service, or credentials. It returns `InputRequiredResult` for
-`book_shipment` and completes after receiving the keyed `shipping_address`
-response.
+## Example
 
-## Complete local server and test
+The server has one tool, `book_shipment`. The first call returns an
+`InputRequiredResult` asking for a `shipping_address` form. When the client
+retries with an accepted address, the tool books the shipment.
 
 Save as `elicitation_server.py`:
 
@@ -105,67 +104,51 @@ Save as `test_plan.py` beside it:
 
 ```python
 import pytest
-from elicitation_server import ADDRESS_SCHEMA, build_server
+from elicitation_server import build_server
 
 from m3 import (
     Config,
     ElicitationExpectationError,
+    ElicitationPlan,
     InProcessServer,
     MCPTestKit,
     expect_form,
 )
-from m3.sync_api import ToolCallResult
+
+ADDRESS = {"street": "1 Main Street", "city": "Pune"}
 
 
-def test_direct_tool_call_answers_a_form_request() -> None:
+def book_shipment(plan: ElicitationPlan):
     server = InProcessServer(name="shipping", factory=build_server)
-    plan = expect_form(
-        "shipping_address",
-        message="Enter the delivery address.",
-        schema=ADDRESS_SCHEMA,
-        server="shipping",
-        operation_kind="tool",
-        operation_name="book_shipment",
-    ).accept({"street": "1 Main Street", "city": "Pune"})
+    config = Config(protocol_revision="2026-07-28")
+    with MCPTestKit(config=config, env={}) as kit, kit.direct(server) as client:
+        return client.call_tool("book_shipment", {"weight_kg": 2}, elicitation=plan)
 
-    with MCPTestKit(config=Config(protocol_revision="2026-07-28"), env={}) as kit:
-        with kit.direct(server) as client:
-            result = client.call_tool(
-                "book_shipment",
-                {"weight_kg": 2},
-                elicitation=plan,
-            )
 
-    assert isinstance(result, ToolCallResult)
+def test_plan_answers_the_address_form() -> None:
+    plan = expect_form("shipping_address").accept(ADDRESS)
+
+    result = book_shipment(plan)
+
     assert result.is_error is False
     assert result.structured_content == {"status": "booked", "city": "Pune"}
 
 
-def test_request_key_mismatch_and_invalid_content_fail_before_retry() -> None:
-    server = InProcessServer(name="shipping", factory=build_server)
-    wrong_key = expect_form("address").accept(
-        {"street": "1 Main Street", "city": "Pune"}
-    )
-    with MCPTestKit(config=Config(protocol_revision="2026-07-28"), env={}) as kit:
-        with kit.direct(server) as client:
-            with pytest.raises(ElicitationExpectationError, match="did not match"):
-                client.call_tool(
-                    "book_shipment", {"weight_kg": 2}, elicitation=wrong_key
-                )
+def test_wrong_request_key_fails() -> None:
+    plan = expect_form("billing_address").accept(ADDRESS)
 
-    invalid_content = expect_form("shipping_address", schema=ADDRESS_SCHEMA).accept(
-        {"street": 3, "city": "Pune"}
-    )
-    with MCPTestKit(config=Config(protocol_revision="2026-07-28"), env={}) as kit:
-        with kit.direct(server) as client:
-            with pytest.raises(ElicitationExpectationError, match="schema"):
-                client.call_tool(
-                    "book_shipment", {"weight_kg": 2}, elicitation=invalid_content
-                )
+    with pytest.raises(ElicitationExpectationError, match="did not match"):
+        book_shipment(plan)
+
+
+def test_content_must_match_the_server_schema() -> None:
+    plan = expect_form("shipping_address").accept({"street": 3, "city": "Pune"})
+
+    with pytest.raises(ElicitationExpectationError, match="schema"):
+        book_shipment(plan)
 ```
 
-From the directory where you saved `elicitation_server.py` and `test_plan.py`,
-run:
+Run:
 
 ```sh
 python -m pytest -q test_plan.py
@@ -174,47 +157,71 @@ python -m pytest -q test_plan.py
 Captured output:
 
 ```text
-2 passed
+3 passed
 ```
 
-`test_direct_tool_call_answers_a_form_request` passes after the direct client
-matches the request, submits the planned response, and receives the booked
-result. `test_request_key_mismatch_and_invalid_content_fail_before_retry`
-raises `ElicitationExpectationError` for a wrong key or schema-invalid content
-before the retry. The complete source project is at
+`expect_form("shipping_address")` matches a form request with that key, and
+`.accept(...)` sets the content M3 sends back. With the plan attached,
+`call_tool` makes the first call, answers the request, retries, and returns the
+final `ToolCallResult`.
+
+M3 checks each response against the request before it retries.
+`test_wrong_request_key_fails` expects `billing_address`, which the server never
+asks for. `test_content_must_match_the_server_schema` sends a number where the
+server's schema wants a string. Both raise `ElicitationExpectationError`, and
+the server never receives the response.
+
+The complete project is in
 [`sdk/examples/docs/elicitation-plans`](../../../../sdk/examples/docs/elicitation-plans).
 
-The plan’s request key and mode must match the server request. Context fields
-such as server and operation match when provided. A mismatch raises
-`ElicitationExpectationError`. A form acceptance needs a mapping; URL
-acceptance uses `.accept()` without form content. A URL response does not
-visit the URL or complete authentication. See [response semantics](responses.md)
-for declined and cancelled responses.
+## Narrow what a plan matches
 
-Compose bound leaves with `sequence(...)` when a second request must arrive in
-a later protocol round. Use `one_of(...)` for alternatives and `round_of(...)`
-for requests that must share a round. These helpers match server behavior;
-they do not cause the server to issue requests.
+A plan matches a request by its key and mode (form or URL). `expect_form` and
+`expect_url` also take `message`, `schema`, `server`, `operation_kind`, and
+`operation_name`. Each one you pass must match the request as well, which helps
+when two servers or tools use the same key.
 
-The tool assertion runs after the action because one logical call owns all
-retries. Assert one logical operation and its ordered attempts.
+`expect_url(...).accept()` takes no content. Accepting a URL request sends the
+`accept` action; M3 does not visit the URL or complete any sign-in behind it.
+For declined and cancelled answers, see
+[Respond to elicitation requests](responses.md).
+
+## Plan several requests
+
+Use `sequence(...)` for requests that arrive in later rounds, `one_of(...)` for
+alternatives, `optional(...)` for a step that may not happen, and
+`round_of(...)` for requests the server sends together. These helpers describe
+what the server does. They never make it ask.
+[Compose elicitation workflows](composed.md) has an example of each.
 
 ## Round limit
 
-Each `InputRequiredResult` the server returns during an action counts as one round, including a result that carries only `requestState`. A plan that chains three steps with `sequence(...)` needs at least three rounds. The limit is 10 by default; pass `elicitation_round_limit` beside `elicitation` to change it.
+Each `InputRequiredResult` the server returns during an action counts as one
+round, including a result that carries only `requestState`. A plan that chains
+three steps with `sequence(...)` needs at least three rounds. The limit is 10 by
+default; pass `elicitation_round_limit` beside `elicitation` to change it.
 
-When a direct operation goes past the limit, the client raises `ElicitationRoundLimitError`. In an agent test, the turn fails instead.
+When a direct operation goes past the limit, the client raises
+`ElicitationRoundLimitError`. In an agent test, the turn fails instead.
 
-A harness can stop earlier than M3's limit. For example, the tested Codex version fails the action when a server asks for a tenth round, so a Codex action can use at most 9 rounds. Setting `elicitation_round_limit` above 9 does not raise that cap. With Pi, M3 enforces the limit you pass. Managed input on Pi has its own maximum, listed in [compatibility details](../../reference/compatibility.md).
+A harness can stop earlier than M3's limit. The tested Codex version fails the
+action when a server asks for a tenth round, so a Codex action can use at most 9
+rounds, and setting `elicitation_round_limit` above 9 does not raise that cap.
+With Pi, M3 enforces the limit you pass. Managed input on Pi has its own
+maximum, listed in [compatibility details](../../reference/compatibility.md).
 
-Tool calls, prompt retrieval, and resource reads accept plans on the direct
-operation. Agent actions bind a plan to `agent.run`, `agent.submit`, or one
-`session.send` turn. Do not put a plan on long-lived session creation. ACP
-agents that ask before calling tools need explicit tool approval through
-`permission_policy`.
+## Where to attach a plan
 
-Continue with [Compose elicitation workflows](composed.md) for alternatives
-and later rounds. For an agent action, see
-[Handle elicitation in agent tests](agents.md). If application code needs the
-raw `InputRequiredResult`, use [manual handling](manual.md). To collect a
-response from a person, [submit input to a paused execution](managed-input.md).
+Direct tool calls, prompt retrieval, and resource reads take `elicitation=` on
+the call itself. For agents, pass the plan to `agent.run`, `agent.submit`, or a
+single `session.send` turn, not to `agent.session(...)`. ACP agents that ask
+before calling tools also need tool approval through `permission_policy`.
+
+- [Compose elicitation workflows](composed.md) covers alternatives, optional
+  steps, and later rounds.
+- [Handle elicitation in agent tests](agents.md) attaches plans to Codex and Pi
+  turns.
+- [Handle elicitation directly with the SDK](manual.md) answers the request in
+  your own code.
+- [Submit input to a paused execution](managed-input.md) lets a person answer
+  while an agent waits.

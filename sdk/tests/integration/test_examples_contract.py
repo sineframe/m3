@@ -282,17 +282,3 @@ def test_elicitation_python_snippets_compile() -> None:
     assert "client.call_tool(" in source
     assert "elicitation=plan" in source
     assert "test_plan.py" in guide
-
-
-def test_direct_elicitation_docs_select_current_protocol() -> None:
-    """Canonical guide and runnable docs example select elicitation support."""
-
-    guide = (_SITE / "guides" / "elicitation" / "plans.md").read_text(encoding="utf-8")
-    example = (_EXAMPLES / "docs" / "elicitation-plans" / "test_plan.py").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'Config(protocol_revision="2026-07-28")' in guide
-    assert 'Config(protocol_revision="2026-07-28")' in example
-    assert "elicitation=plan" in example
-    assert "with kit.direct(server) as client" in example

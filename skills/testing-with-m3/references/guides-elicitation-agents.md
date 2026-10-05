@@ -1,7 +1,4 @@
----
-title: "Handle elicitation in agent tests"
-description: "Test action-bound elicitation in Codex and Pi sessions with a fresh plan for each turn."
----
+<!-- Generated from docs/site/guides/elicitation/agents.md by scripts/render_skill_references.py. Edit the source page, then rerun the script. -->
 
 # Handle elicitation in agent tests
 
@@ -229,21 +226,21 @@ never triggers a request that its plan requires, M3 marks the turn incomplete.
 use it only for tools that are safe to run unattended.
 
 The complete project is in
-[`sdk/examples/docs/elicitation-agents`](../../../../sdk/examples/docs/elicitation-agents).
+[`sdk/examples/docs/elicitation-agents`](../examples/elicitation-agents).
 
 ## Harness differences
 
 Both tests use the default round limit of 10. The tested Codex version stops an
 action at 9 rounds even when you set a higher limit; see
-[Round limit](plans.md#round-limit). Pi's managed-input control protocol
+[Round limit](guides-elicitation-plans.md#round-limit). Pi's managed-input control protocol
 accepts a limit from 1 through 1024.
 
 Codex `0.156.1` rejects a URL-mode `InputRequiredResult` from a tool call with
 `unsupported MCP tool input request`, so this example uses forms only. To test
 URL requests, use a direct call as in
-[Compose elicitation workflows](composed.md).
+[Compose elicitation workflows](guides-elicitation-composed.md).
 
 For a person answering while the agent waits, see
-[Submit input to a paused execution](managed-input.md). The
-[elicitation reference](../../reference/python/m3/elicitation.md) describes how
+[Submit input to a paused execution](guides-elicitation-managed-input.md). The
+[elicitation reference](reference-python-m3-elicitation.md) describes how
 plans match requests.

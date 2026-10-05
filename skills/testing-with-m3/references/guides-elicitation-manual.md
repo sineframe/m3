@@ -1,7 +1,4 @@
----
-title: "Handle elicitation directly with the SDK"
-description: "Read an InputRequiredResult, preserve its request state, and submit a response under the server request key."
----
+<!-- Generated from docs/site/guides/elicitation/manual.md by scripts/render_skill_references.py. Edit the source page, then rerun the script. -->
 
 # Handle elicitation directly with the SDK
 
@@ -155,6 +152,6 @@ You can't combine `elicitation=` with `allow_input_required`, `request_state`,
 or `input_responses` on one call; M3 raises `ModelValidationError`.
 
 The complete project is in
-[`sdk/examples/docs/elicitation-manual`](../../../../sdk/examples/docs/elicitation-manual).
+[`sdk/examples/docs/elicitation-manual`](../examples/elicitation-manual).
 To let M3 answer for you, see
-[Plan answers to elicitation requests](plans.md).
+[Plan answers to elicitation requests](guides-elicitation-plans.md).

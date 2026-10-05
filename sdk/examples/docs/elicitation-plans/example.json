@@ -17,7 +17,7 @@
       "command": "python -m pytest -q test_plan.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
-      "assertions": ["server requests shipping_address", "plan submits keyed form response", "tool returns booked result", "request-key mismatch raises ElicitationExpectationError", "schema-invalid form content fails before retry"],
+      "assertions": ["plan answers the shipping_address form and the tool returns a booked result", "a wrong request key raises ElicitationExpectationError", "content that fails the server schema raises ElicitationExpectationError"],
       "compatibility": {
         "harness": "none; direct SDK operation",
         "mcp_protocol_revision": "2026-07-28",

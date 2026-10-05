@@ -1,7 +1,4 @@
----
-title: "Compose elicitation workflows"
-description: "Combine address alternatives, optional requests, same-round forms, and a later URL request in direct SDK tests."
----
+<!-- Generated from docs/site/guides/elicitation/composed.md by scripts/render_skill_references.py. Edit the source page, then rerun the script. -->
 
 # Compose elicitation workflows
 
@@ -198,9 +195,9 @@ fails against `both`, because the server asks for the two addresses in one
 round, not two.
 
 To make a single request optional, use `maybe_form` or `maybe_url`. The
-[elicitation reference](../../reference/python/m3/elicitation.md) describes
+[elicitation reference](reference-python-m3-elicitation.md) describes
 these and the errors raised when a round could match more than one path.
 
 The complete project is in
-[`sdk/examples/docs/elicitation-composed`](../../../../sdk/examples/docs/elicitation-composed).
-To use plans in agent turns, see [Handle elicitation in agent tests](agents.md).
+[`sdk/examples/docs/elicitation-composed`](../examples/elicitation-composed).
+To use plans in agent turns, see [Handle elicitation in agent tests](guides-elicitation-agents.md).

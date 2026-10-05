@@ -1,7 +1,4 @@
----
-title: "Respond to elicitation requests"
-description: "Test accepted, declined, and cancelled form and URL responses on direct MCP operations."
----
+<!-- Generated from docs/site/guides/elicitation/responses.md by scripts/render_skill_references.py. Edit the source page, then rerun the script. -->
 
 # Respond to elicitation requests
 
@@ -151,10 +148,10 @@ stops an agent execution or session.
 To attach metadata to a response, build the plan with
 `ElicitationPlan.model_validate(...)` and an `ElicitationResponse` that sets
 `meta`. M3 sends it to the server as `_meta`. The
-[elicitation reference](../../reference/python/m3/elicitation.md) covers this
+[elicitation reference](reference-python-m3-elicitation.md) covers this
 and the rest of the plan API.
 
 The complete project is in
-[`sdk/examples/docs/elicitation-responses`](../../../../sdk/examples/docs/elicitation-responses).
+[`sdk/examples/docs/elicitation-responses`](../examples/elicitation-responses).
 When application code needs to see the request and answer it, continue to
-[Handle elicitation directly with the SDK](manual.md).
+[Handle elicitation directly with the SDK](guides-elicitation-manual.md).

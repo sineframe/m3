@@ -17,7 +17,7 @@
       "command": "python -m pytest -q test_manual.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
-      "assertions": ["direct call returns typed InputRequiredResult", "request_state is preserved and resent", "responses are keyed by current request keys", "server completes the tool call"],
+      "assertions": ["direct call returns typed InputRequiredResult", "retry resends request_state with a response under the requested key", "server completes the tool call"],
       "compatibility": {"harness": "none; direct SDK operation", "mcp_protocol_revision": "2026-07-28", "mode": "deterministic local", "status": "verified locally"},
       "verification": "deterministic"
     }

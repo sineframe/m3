@@ -17,7 +17,7 @@
       "command": "python -m pytest -q test_responses.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
-      "assertions": ["form accept sends content", "decline and cancel omit content", "URL actions do not send form content", "response metadata is preserved"],
+      "assertions": ["form accept sends content", "form decline and cancel send no content", "URL accept, decline, and cancel send no content"],
       "compatibility": {"harness": "none; direct SDK operation", "mcp_protocol_revision": "2026-07-28", "mode": "deterministic local", "status": "verified locally"},
       "verification": "deterministic"
     }

@@ -1,7 +1,4 @@
----
-title: "Managed elicitation input API"
-description: "Reference for persisted elicitation rounds, response submission, and recovery."
----
+<!-- Generated from docs/site/reference/python/m3/managed-input.md by scripts/render_skill_references.py. Edit the source page, then rerun the script. -->
 
 # Managed elicitation input API
 
@@ -74,7 +71,7 @@ selected model. Because the shipping tool is non-destructive, the fragment
 uses `permission_policy="allow"` instead of a separate approval handler. Choose
 a policy that fits the tools in your application. For a complete agent
 workflow, see
-[Submit input to a paused execution](../../../guides/elicitation/managed-input.md).
+[Submit input to a paused execution](guides-elicitation-managed-input.md).
 
 ## Public execution API
 
@@ -201,7 +198,7 @@ as failed. The round does not become pending again, and a late response cannot
 resume it. A lease token, native resume token, or delivery idempotency key is
 not enough to make a retry safe. The reopened execution keeps its terminal
 result, and a replacement worker cannot claim the round. See
-[execution lifecycle](../../../concepts/lifecycle.md) for terminal outcomes.
+[execution lifecycle](concepts-lifecycle.md) for terminal outcomes.
 
 ## Typed errors
 
@@ -213,6 +210,6 @@ describes a transition or response that is invalid for the current state.
 reclaim a round. Invalid `human_input` values or a predefined plan combined
 with managed input raise `ModelValidationError` at submission.
 
-See [Handle elicitation in agent tests](../../../guides/elicitation/agents.md),
-[Handle elicitation manually](../../../guides/elicitation/manual.md), and the
-[elicitation plan reference](elicitation.md).
+See [Handle elicitation in agent tests](guides-elicitation-agents.md),
+[Handle elicitation manually](guides-elicitation-manual.md), and the
+[elicitation plan reference](reference-python-m3-elicitation.md).

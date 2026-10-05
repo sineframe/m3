@@ -41,8 +41,12 @@
 - [Run M3 tests in CI](guides-ci-run.md): m3 ci test uses the normal project Python, storage, harness, and pytest selection. It excludes tests whose nearest M3 marker sets ci=False.
 - [Configure credentials](guides-credentials.md): Choose a credential source and pass it only to the M3 process that needs it.
 - [Pass a credential to a stdio MCP server](guides-credentials-endpoints.md): Map a parent environment variable to a stdio server and verify its tool result.
-- [Submit input to a paused execution](guides-elicitation-managed-input.md): Managed input lets an agent execution pause while it waits for a person’s response. The caller reads the persisted request, submits a response keyed by the request name, then waits for the worker to finish.
-- [Plan answers to elicitation requests](guides-elicitation-plans.md): An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result.
+- [Handle elicitation in agent tests](guides-elicitation-agents.md): Test action-bound elicitation in Codex and Pi sessions with a fresh plan for each turn.
+- [Compose elicitation workflows](guides-elicitation-composed.md): Combine address alternatives, optional requests, same-round forms, and a later URL request in direct SDK tests.
+- [Submit input to a paused execution](guides-elicitation-managed-input.md): Pause an agent execution for MCP elicitation, submit a keyed response, and wait for the worker to finish.
+- [Handle elicitation directly with the SDK](guides-elicitation-manual.md): Read an InputRequiredResult, preserve its request state, and submit a response under the server request key.
+- [Plan answers to elicitation requests](guides-elicitation-plans.md): Build an elicitation plan, attach it to one action, and assert the result.
+- [Respond to elicitation requests](guides-elicitation-responses.md): Test accepted, declined, and cancelled form and URL responses on direct MCP operations.
 - [Aggregate saved evaluations](guides-evaluations-aggregate.md): Aggregate records from one reader-created run so older rows in the same database do not alter the result.
 - [Assert the evidence that matters](guides-evaluations-assertions.md): Use ordinary Python assertions for direct operation results. Use expect when you need to ask a question about a complete M3 execution or agent turn.
 - [Write a custom evaluator](guides-evaluations-custom.md): A custom evaluator turns an explicit subject into a named evaluation result. It does not run automatically because an execution completed.
@@ -72,9 +76,10 @@
 - [pytest integration](reference-pytest.md): Install sf-m3[pytest] or run m3 setup. The plugin adds M3 fixtures, selection, storage integration, and feedback generation while leaving ordinary pytest selection after -- intact.
 - [Python SDK reference](reference-python.md): Start with the small package-root surface for ordinary synchronous tests:
 - [Core execution API](reference-python-m3-core.md): The synchronous runtime and cleanup boundary. Construct it with optional environment, store, evaluator, runtime, and harness-cache configuration. Enter it before opening direct clients or agent sessions and close it after all work.
-- [Elicitation and managed-input API](reference-python-m3-elicitation.md): ElicitationPlan describes expected form or URL input requests and the responses M3 may submit. Build plans with:
+- [Elicitation plans and direct request handling](reference-python-m3-elicitation.md): Reference for immutable elicitation plans, matching, response actions, and direct SDK request handling.
 - [Exceptions](reference-python-m3-errors.md): Normal MCP tool errors usually remain typed tool results rather than raised exceptions. Test result.is_error when the server intentionally returned a tool-level failure.
 - [Evaluation API](reference-python-m3-evaluations.md): An Evaluator or AsyncEvaluator receives EvaluationContext and returns an EvaluationDecision. EvaluatorCallable is the accepted callback union.
+- [Managed elicitation input API](reference-python-m3-managed-input.md): Reference for persisted elicitation rounds, response submission, and recovery.
 - [Matchers](reference-python-m3-matchers.md): expect(subject) creates an Expectation whose methods raise AssertionError when captured evidence does not satisfy the predicate. check(subject) records failures through a CheckGroup, allowing several related checks to be reported together when the plugin has a recording binding.
 - [Matrix API](reference-python-m3-matrix.md): ToolCase names one tool invocation and its arguments. ServerCase groups tool cases under the server that owns them. ToolMatrix validates and expands those cases without starting processes or network work.
 - [Observability models](reference-python-m3-observability.md): TraceView is the stable typed projection for reading a finalized trace. Its entries preserve whether a value was observed, reported, inferred, redacted, or unavailable.

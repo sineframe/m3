@@ -17,7 +17,7 @@
       "command": "python -m pytest -q test_composed.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
-      "assertions": ["address alternatives precede the URL round", "optional addresses can be skipped", "same-round forms are sent together", "retries carry only current keyed responses and server state"],
+      "assertions": ["one_of answers the address the server requests before the URL round", "optional address step can be skipped", "round_of answers two forms in the same round"],
       "compatibility": {"harness": "none; direct SDK operation", "mcp_protocol_revision": "2026-07-28", "mode": "deterministic local", "status": "verified locally"},
       "verification": "deterministic"
     }
