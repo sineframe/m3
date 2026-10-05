@@ -89,9 +89,23 @@ class _FrozenMapping(_Mapping[_Any, _Any]):
         return len(self._items)
 
 
+_NONE_TYPE = type(None)
+# Exact JSON scalar types whose freeze, thaw, and JSON-safety need no walk.
+# Subclasses (enum members, str subclasses) take the general path below.
+_PLAIN_SCALARS = frozenset({str, int, bool, _NONE_TYPE})
+_INFINITIES = (float("inf"), float("-inf"))
+
+
 def _deep_thaw(value: _Any) -> _Any:
     """Return JSON-compatible containers for Pydantic's serializer."""
 
+    kind = type(value)
+    if kind in _PLAIN_SCALARS or kind is float:
+        return value
+    if kind is _FrozenMapping:
+        return {_deep_thaw(key): _deep_thaw(item) for key, item in value._items}
+    if kind is tuple:
+        return [_deep_thaw(item) for item in value]
     if isinstance(value, _Mapping):
         return {_deep_thaw(key): _deep_thaw(item) for key, item in value.items()}
     if isinstance(value, (tuple, frozenset)):
@@ -102,6 +116,22 @@ def _deep_thaw(value: _Any) -> _Any:
 def _json_safe(value: _Any) -> bool:
     """Return whether a public value can be represented by JSON serialization."""
 
+    kind = type(value)
+    if kind in _PLAIN_SCALARS:
+        return True
+    if kind is float:
+        return value == value and value not in _INFINITIES
+    if kind is dict or kind is _FrozenMapping:
+        items = value._items if kind is _FrozenMapping else value.items()
+        for key, item in items:
+            if not isinstance(key, str) or not _json_safe(item):
+                return False
+        return True
+    if kind is tuple or kind is list:
+        for item in value:
+            if not _json_safe(item):
+                return False
+        return True
     if value is None or isinstance(value, (str, bool, int)):
         return True
     if isinstance(value, float):
@@ -134,6 +164,15 @@ def _json_safe(value: _Any) -> bool:
 def _deep_freeze(value: _Any) -> _Any:
     """Recursively freeze containers while retaining JSON-compatible shapes."""
 
+    kind = type(value)
+    if kind in _PLAIN_SCALARS or kind is float or kind is _FrozenMapping:
+        return value
+    if kind is dict:
+        return _FrozenMapping(
+            {_deep_freeze(key): _deep_freeze(item) for key, item in value.items()}
+        )
+    if kind is list or kind is tuple:
+        return tuple([_deep_freeze(item) for item in value])
     if isinstance(value, _FrozenMapping):
         return value
     if isinstance(value, _BaseModel):
@@ -154,13 +193,49 @@ def _deep_freeze(value: _Any) -> _Any:
     return value
 
 
+_NOT_JSON_SAFE = object()
+
+
+def _safe_freeze(value: _Any) -> _Any:
+    """Return ``_deep_freeze(value)``, or ``_NOT_JSON_SAFE`` when ``_json_safe``
+    would reject it, walking plain JSON containers once instead of twice."""
+
+    kind = type(value)
+    if kind in _PLAIN_SCALARS:
+        return value
+    if kind is float:
+        return value if value == value and value not in _INFINITIES else _NOT_JSON_SAFE
+    if kind is dict:
+        frozen: dict[_Any, _Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                return _NOT_JSON_SAFE
+            item = _safe_freeze(item)
+            if item is _NOT_JSON_SAFE:
+                return _NOT_JSON_SAFE
+            frozen[_deep_freeze(key)] = item
+        return _FrozenMapping(frozen)
+    if kind is list or kind is tuple:
+        items = []
+        for item in value:
+            item = _safe_freeze(item)
+            if item is _NOT_JSON_SAFE:
+                return _NOT_JSON_SAFE
+            items.append(item)
+        return tuple(items)
+    return _deep_freeze(value) if _json_safe(value) else _NOT_JSON_SAFE
+
+
 def _checked_freeze(model_type: type[_BaseModel], field_name: str, value: _Any) -> _Any:
     """Validate a field value as JSON-safe (unless excluded) and deep-freeze it."""
 
-    field_info = model_type.model_fields.get(field_name)
-    if (field_info is None or not field_info.exclude) and not _json_safe(value):
+    field_info = model_type.__pydantic_fields__.get(field_name)
+    if field_info is not None and field_info.exclude:
+        return _deep_freeze(value)
+    frozen = _safe_freeze(value)
+    if frozen is _NOT_JSON_SAFE:
         raise ValueError(f"{field_name} contains a non-JSON-serializable value")
-    return _deep_freeze(value)
+    return frozen
 
 
 class FrozenModel(_BaseModel):
@@ -175,9 +250,20 @@ class FrozenModel(_BaseModel):
 
     @_model_validator(mode="after")
     def _freeze_nested_values(self) -> FrozenModel:
+        model_type = type(self)
         for field_name, value in self.__dict__.items():
+            kind = type(value)
+            # Values that freeze to themselves and are always JSON-safe: skip
+            # the call and the no-op reassignment.
+            if (
+                kind in _PLAIN_SCALARS
+                or kind is _datetime
+                or (kind is float and value == value and value not in _INFINITIES)
+                or isinstance(value, FrozenModel)
+            ):
+                continue
             object.__setattr__(
-                self, field_name, _checked_freeze(type(self), field_name, value)
+                self, field_name, _checked_freeze(model_type, field_name, value)
             )
         return self
 

@@ -17,8 +17,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
+import sys
 import threading
+import time
 import uuid
 import warnings
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -189,16 +192,140 @@ _DATABASE_IDENTITY = "m3_database_identity"
 _OWNER_PID = "m3_owner_pid"
 
 
+_WRITE_KEYWORDS = ("INSERT", "UPDATE", "DELETE", "REPLACE")
+# SQLITE_BUSY and SQLITE_BUSY_RECOVERY: the lock may free up, so waiting can
+# help. SQLITE_BUSY_SNAPSHOT is excluded: only a new read snapshot fixes it.
+_RETRYABLE_BUSY_CODES = frozenset({5, 261})
+# How long a writer polls for the lock before handing the rest of its wait to
+# SQLite's own busy handler.
+_FAST_WRITE_LOCK_WAIT = 0.25
+# sqlite3 exposes the result code that tells a busy lock from other errors
+# only from Python 3.11; earlier interpreters keep SQLite's handler alone.
+_FAST_WRITE_LOCK_WAIT_SUPPORTED = sys.version_info >= (3, 11)
+_BUSY_TIMEOUT_PRAGMA = re.compile(
+    r"\s*PRAGMA\s+busy_timeout\s*=\s*(\d+)\s*;?\s*", re.IGNORECASE
+)
+
+
+def _starts_write(statement: str) -> bool:
+    """Whether a statement asks SQLite for the write lock."""
+    if statement == "BEGIN IMMEDIATE":
+        return True
+    return statement.lstrip()[:7].upper().startswith(_WRITE_KEYWORDS)
+
+
+def _is_retryable_busy(exc: BaseException) -> bool:
+    code = getattr(getattr(exc, "orig", exc), "sqlite_errorcode", None)
+    return code in _RETRYABLE_BUSY_CODES
+
+
 class _CompatConnection:
     """Keep the existing private SQL helpers while routing through SQLAlchemy."""
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(
+        self, connection: Any, busy_timeout_ms: int = 0, wal: bool = False
+    ) -> None:
         self._connection = connection
+        # The pool hands out connections at the store's timeout; callers may
+        # change it for one checkout with ``PRAGMA busy_timeout``.
+        self._busy_timeout_ms = busy_timeout_ms
+        self._wal = wal
 
     def execute(self, statement: str, parameters: Sequence[Any] = ()) -> _CompatResult:
+        if (
+            _FAST_WRITE_LOCK_WAIT_SUPPORTED
+            and self._wal
+            and self._busy_timeout_ms > 0
+            and _starts_write(statement)
+            and not self._sqlite_in_transaction()
+        ):
+            return self._execute_waiting_for_write_lock(statement, parameters)
+        result = self._run(statement, parameters)
+        if "busy_timeout" in statement and (
+            match := _BUSY_TIMEOUT_PRAGMA.fullmatch(statement)
+        ):
+            self._busy_timeout_ms = int(match.group(1))
+        return result
+
+    def _execute_waiting_for_write_lock(
+        self, statement: str, parameters: Sequence[Any]
+    ) -> _CompatResult:
+        """Take SQLite's write lock promptly once another writer releases it.
+
+        SQLite's busy handler sleeps in growing steps of up to 100 ms, so with
+        several pytest workers on one database a writer kept sleeping long
+        after the lock was free. For a short window the statement is instead
+        retried every millisecond or less with SQLite's timeout at zero; if
+        the lock is still busy, the statement runs once more with the normal
+        timeout, so it never fails sooner than it would have without this.
+
+        Only a statement that starts a write outside a transaction comes here:
+        a busy ``BEGIN IMMEDIATE`` or autocommit write has changed nothing, so
+        running it again is what SQLite's own handler does. Only WAL databases
+        use it; in rollback-journal mode a retry would give up the pending lock
+        that keeps new readers out.
+        """
+        dbapi_connection = self._dbapi_connection()
+        if dbapi_connection is None:
+            return self._run(statement, parameters)
+        timeout_ms = self._busy_timeout_ms
+        deadline = time.monotonic() + min(timeout_ms / 1000, _FAST_WRITE_LOCK_WAIT)
+        delay = 0.0001
+        # Until the timeout is restored, flag the connection so the pool
+        # restores it should that be interrupted (for example by a signal).
+        info = self._connection.connection.info
+        was_dirty = info.get(_SETTINGS_DIRTY, False)
+        info[_SETTINGS_DIRTY] = True
+        result: _CompatResult | None
+        try:
+            dbapi_connection.execute("PRAGMA busy_timeout=0")
+            while True:
+                try:
+                    result = self._run(statement, parameters)
+                    break
+                except Exception as exc:
+                    if not _is_retryable_busy(exc):
+                        raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    result = None
+                    break
+                time.sleep(min(delay, remaining))
+                delay = min(delay * 2, 0.001)
+        except BaseException:
+            # Keep the original error: SQLAlchemy closes the connection when
+            # an interrupt lands inside it, and the restore would then fail.
+            try:
+                dbapi_connection.execute(f"PRAGMA busy_timeout={timeout_ms}")
+            except Exception:
+                pass
+            raise
+        dbapi_connection.execute(f"PRAGMA busy_timeout={timeout_ms}")
+        if not was_dirty:
+            info.pop(_SETTINGS_DIRTY, None)
+        if result is None:
+            # Still busy: wait the rest of the way as SQLite always has.
+            result = self._run(statement, parameters)
+        return result
+
+    def _run(self, statement: str, parameters: Sequence[Any] = ()) -> _CompatResult:
         return _CompatResult(
             self._connection.exec_driver_sql(statement, tuple(parameters))
         )
+
+    def _dbapi_connection(self) -> Any:
+        try:
+            return self._connection.connection.dbapi_connection
+        except Exception:
+            return None
+
+    def _sqlite_in_transaction(self) -> bool:
+        # SQLAlchemy's AUTOCOMMIT view does not see the raw BEGIN statements
+        # this module issues, so ask the sqlite3 connection itself.
+        dbapi_connection = self._dbapi_connection()
+        if dbapi_connection is None:
+            return True
+        return bool(dbapi_connection.in_transaction)
 
     def executescript(self, script: str) -> None:
         # The schema is a controlled, fresh-only script containing no string
@@ -766,7 +893,11 @@ class _SqliteBase:
     @_timing.counted("store.connect")
     def _connect(self) -> _CompatConnection:
         try:
-            return _CompatConnection(self._engine.connect())
+            return _CompatConnection(
+                self._engine.connect(),
+                self.busy_timeout_ms,
+                wal=self.journal_mode == "wal",
+            )
         except StorageError:
             raise
         except Exception as exc:
