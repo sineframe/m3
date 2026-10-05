@@ -300,12 +300,13 @@ def _load_traced_entries(
         except Exception:
             views = None
         if views is not None:
+            # An omitted execution may have finished after its report loaded,
+            # so it gets the per-entry read instead of being left traceless.
             return [
-                _Entry(
-                    entry.report,
-                    entry.spec,
-                    views.get(_id(entry.report.snapshot.execution_id)),
-                )
+                _Entry(entry.report, entry.spec, view)
+                if (view := views.get(_id(entry.report.snapshot.execution_id)))
+                is not None
+                else _with_trace(store, entry)
                 for entry in entries
             ]
     return [_with_trace(store, entry) for entry in entries]

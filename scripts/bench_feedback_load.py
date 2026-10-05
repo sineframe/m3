@@ -252,6 +252,9 @@ def _real(args: argparse.Namespace, work: Path) -> None:
                 "SELECT run_id FROM v2_executions WHERE run_id IS NOT NULL "
                 "ORDER BY created_at DESC LIMIT 1"
             ).fetchone()
+        if row is None:
+            print(json.dumps({"scenario": "real", "skipped": "no run ids in source"}))
+            return
         run_id = row[0]
     _run_all(
         "real",

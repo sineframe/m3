@@ -2170,6 +2170,47 @@ def test_load_run_entries_match_store_reports_and_trace_views(tmp_path):
     } == unavailable
 
 
+def test_load_run_entries_traces_execution_that_finishes_while_loading(
+    tmp_path, monkeypatch
+):
+    store = SQLiteExecutionStore(tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs")
+    live = ExecutionId("live")
+    store.create(ExecutionState(execution_id=live, run_id="run"))
+    factory = EventFactory(live, allocator=EventSequence(start=0))
+    store.append_events(
+        [
+            factory.create(
+                EventKind.EXECUTION_CREATED, payload={"trace_id": "trace-live"}
+            )
+        ]
+    )
+    original = SQLiteExecutionStore._trace_views_for_reports
+
+    def finish_then_build(self, reports):
+        self.append_events(
+            [
+                factory.create(
+                    EventKind.EXECUTION_FINISHED,
+                    payload={
+                        "outcome": ExecutionOutcome.COMPLETED.value,
+                        "completeness": "complete",
+                        "limitations": [],
+                    },
+                )
+            ]
+        )
+        return original(self, reports)
+
+    monkeypatch.setattr(
+        SQLiteExecutionStore, "_trace_views_for_reports", finish_then_build
+    )
+
+    (entry,) = load_run_entries(store, "run")
+
+    assert entry.trace is not None
+    assert entry.trace.summary.tool_call_count == 0
+
+
 def test_load_run_entries_reads_each_execution_events_once(tmp_path, monkeypatch):
     # _run_execution snapshots carry tool_call_count, so snapshot reads never
     # fall back to loading events.
