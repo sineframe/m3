@@ -347,23 +347,26 @@ def default_adapters() -> HarnessAdapterRegistry:
     another when a selected executable is unavailable.
     """
 
-    from .acp import AcpHarnessAdapter
-    from .claude import ClaudeCodeHarnessAdapter
-    from .codex import CodexHarnessAdapter
-    from .opencode import OpenCodeHarnessAdapter
-    from .pi import PiHarnessAdapter
-
+    # Each adapter module is imported when its kind is first resolved: the
+    # ACP schema alone takes hundreds of milliseconds to import, and kits
+    # that only drive servers directly never resolve a harness.
     registry = HarnessAdapterRegistry()
 
     def claude_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
+        from .claude import ClaudeCodeHarnessAdapter
+
         executable = harness.executable if hasattr(harness, "executable") else None
         return ClaudeCodeHarnessAdapter(executable=executable or "claude")
 
     def opencode_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
+        from .opencode import OpenCodeHarnessAdapter
+
         executable = harness.executable if hasattr(harness, "executable") else None
         return OpenCodeHarnessAdapter(executable=executable or "opencode")
 
     def acp_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
+        from .acp import AcpHarnessAdapter
+
         manifest = getattr(harness, "manifest", {})
         if not manifest or not manifest.get("command"):
             # A typed ACP value without an executable is not a runnable
@@ -374,10 +377,14 @@ def default_adapters() -> HarnessAdapterRegistry:
         return AcpHarnessAdapter(manifest=manifest)
 
     def codex_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
+        from .codex import CodexHarnessAdapter
+
         executable = harness.executable if hasattr(harness, "executable") else None
         return CodexHarnessAdapter(executable=executable or "codex")
 
     def pi_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
+        from .pi import PiHarnessAdapter
+
         executable = harness.executable if hasattr(harness, "executable") else None
         return PiHarnessAdapter(executable=executable or "pi")
 
