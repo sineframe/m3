@@ -1390,7 +1390,7 @@ def test_trace_views_for_reports_match_get_trace_view(
     execution_id = _persist_corpus_trace(store, name)
     expected = store.get_trace_view(execution_id).model_dump(mode="json")
 
-    views = store.trace_views_for_reports([store.get_report(execution_id)])
+    views = store._trace_views_for_reports([store.get_report(execution_id)])
 
     assert views[execution_id.root].model_dump(mode="json") == expected
 
@@ -1406,7 +1406,7 @@ def test_trace_views_for_reports_omit_unfinished_and_conflicting(
     _conflict_snapshot_outcome(tmp_path, conflicting)
     ids = [finished, empty, unfinished, conflicting]
 
-    views = store.trace_views_for_reports([store.get_report(i) for i in ids])
+    views = store._trace_views_for_reports([store.get_report(i) for i in ids])
 
     assert set(views) == {"finished", "empty"}
 
@@ -1437,7 +1437,7 @@ def test_trace_views_for_reports_persist_counts_in_one_write(
     )
     monkeypatch.setattr(SQLiteExecutionStore, "_remember_tool_call_counts", fail_single)
 
-    store.trace_views_for_reports(reports)
+    store._trace_views_for_reports(reports)
 
     assert len(bulk_calls) == 1
     for execution_id, (total, successful) in (

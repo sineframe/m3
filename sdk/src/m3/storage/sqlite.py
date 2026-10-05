@@ -2681,7 +2681,7 @@ class SQLiteExecutionStore(_SqliteBase):
         events = self._events(_execution_key(execution_id))
         return _trace_result(snapshot, events)
 
-    def trace_views_for_reports(
+    def _trace_views_for_reports(
         self, reports: Sequence[ExecutionReport]
     ) -> dict[str, TraceView]:
         """Build trace views from loaded reports, persisting their tool-call

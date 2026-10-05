@@ -293,7 +293,7 @@ def _load_traced_entries(
         if (entry := _load_entry(store, snapshot.execution_id, with_trace=False))
         is not None
     ]
-    build_views = getattr(store, "trace_views_for_reports", None)
+    build_views = getattr(store, "_trace_views_for_reports", None)
     if callable(build_views):
         try:
             views = build_views([entry.report for entry in entries])
