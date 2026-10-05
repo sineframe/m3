@@ -942,6 +942,49 @@ def test_visible_malformed_reasoning_is_unavailable_and_unknown_role_is_diagnost
     )
 
 
+def test_session_prompt_and_response_dumps_project_their_content_blocks() -> None:
+    from m3.types import TextContent, TurnResponse, UserMessage
+
+    source = _trace().events[1]
+
+    def content(kind: EventKind, value: object) -> tuple[object, ...]:
+        event = source.model_copy(update={"kind": kind, "payload": {"content": value}})
+        entry = _entry_for_event(event)
+        assert isinstance(entry, MessageEntry)
+        return entry.content
+
+    prompt = UserMessage(content="Call echo", metadata={"case": "a"})
+    response = TurnResponse(content=(TextContent(text="echoed"),))
+    assert content(EventKind.AGENT_MESSAGE, prompt.model_dump(mode="json")) == (
+        TextContent(text="Call echo"),
+    )
+    assert content(EventKind.ASSISTANT_CONTENT, response.model_dump(mode="json")) == (
+        TextContent(text="echoed"),
+    )
+    flat = [{"kind": "text", "text": "chunk"}, {"type": "text", "text": "mcp"}]
+    assert content(EventKind.ASSISTANT_CONTENT, flat) == (
+        TextContent(text="chunk"),
+        TextContent(text="mcp"),
+    )
+    malformed = {
+        "kind": "opaque",
+        "provider": "mcp",
+        "payload": {"malformed": True},
+    }
+    for value in (
+        "not-a-block-list",
+        {"content": "text"},
+        {"content": [{"kind": "text", "text": "x"}], "role": "user"},
+        {"text": "x"},
+    ):
+        blocks = content(EventKind.AGENT_MESSAGE, value)
+        assert [block.model_dump(mode="json") for block in blocks] == [malformed]
+    odd = ["raw", {"kind": 1}, {"kind": "text", "text": 2}]
+    assert content(EventKind.AGENT_MESSAGE, {"content": odd}) == content(
+        EventKind.AGENT_MESSAGE, odd
+    )
+
+
 def test_provider_identity_and_pid_boolean_are_not_guessed() -> None:
     trace = _trace()
     provider = trace.events[1].model_copy(

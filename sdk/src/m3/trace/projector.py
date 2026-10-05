@@ -2154,7 +2154,16 @@ def _entry_for_event(
                 code="malformed_message_role",
                 message="message role is not recognized",
             )
-        message_content = _content(payload.get("content", ()))
+        raw_message_content = payload.get("content", ())
+        # The session records the prompt and final response as whole
+        # UserMessage/TurnResponse dumps; project their content blocks.
+        if (
+            isinstance(raw_message_content, Mapping)
+            and set(raw_message_content) <= {"content", "metadata"}
+            and isinstance(raw_message_content.get("content"), (list, tuple))
+        ):
+            raw_message_content = raw_message_content["content"]
+        message_content = _content(raw_message_content)
         return MessageEntry(
             **kwargs,
             message_id=_identifier_observation(
