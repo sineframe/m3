@@ -2424,7 +2424,13 @@ def export_feedback(
                         event.raw_evidence_ref,
                         max_bytes=size if size is not None else 1_048_576,
                     )
-                    if evidence.truncated:
+                    # The read is bounded by the stored size, so capture-time
+                    # truncation is only recorded on the event.
+                    raw_capture = event.payload.get("raw_capture")
+                    if evidence.truncated or (
+                        isinstance(raw_capture, Mapping)
+                        and raw_capture.get("truncated") is True
+                    ):
                         unavailable.append(
                             {
                                 "execution_id": execution_id,
