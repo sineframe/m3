@@ -1028,3 +1028,20 @@ def test_sync_session_fork_keeps_fresh_adapter_and_provenance(tmp_path) -> None:
         )
     assert child_adapter.started == 1
     assert child_adapter.closed == 1
+
+
+def test_session_trace_messages_project_the_prompt_and_response(tmp_path) -> None:
+    class ReplyHarness(FakeHarness):
+        async def send(self, message, *, timeout=None, metadata=None):
+            await super().send(message, timeout=timeout, metadata=metadata)
+            return TurnResponse(content=(TextContent(text="the answer"),))
+
+    with MCPTestKit(env={}, cwd=tmp_path) as kit:
+        with kit.agent_session(_spec(), adapter=ReplyHarness()) as session:
+            session.send("the prompt")
+    assert session.result.trace is not None
+    messages = session.result.trace.view().messages
+    assert [(item.role.value, item.content) for item in messages] == [
+        ("user", (TextContent(text="the prompt"),)),
+        ("assistant", (TextContent(text="the answer"),)),
+    ]

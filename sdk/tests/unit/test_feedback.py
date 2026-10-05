@@ -26,7 +26,8 @@ from m3.feedback import (
     load_run_entries,
     project_test_attempts,
 )
-from m3.storage import SQLiteExecutionStore
+from m3.observability import CaptureOptions
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from m3.types import (
     CallToolResult,
     ErrorCode,
@@ -2168,6 +2169,70 @@ def test_load_run_entries_match_store_reports_and_trace_views(tmp_path):
         for item in payload["unavailable_references"]
         if item["kind"] == "trace"
     } == unavailable
+
+
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+def test_export_lists_capture_truncated_evidence_as_unavailable(tmp_path, kind):
+    capture = CaptureOptions(raw_frame_bytes=16)
+    store = (
+        InMemoryExecutionStore(capture_config=capture)
+        if kind == "memory"
+        else SQLiteExecutionStore(
+            tmp_path / "m3.sqlite",
+            blob_root=tmp_path / "blobs",
+            capture_config=capture,
+        )
+    )
+    execution_id = ExecutionId("raw")
+    store.create(ExecutionState(execution_id=execution_id, run_id="run"))
+    factory = EventFactory(execution_id, allocator=EventSequence(start=0))
+    store.append_events(
+        [factory.create(EventKind.EXECUTION_CREATED, payload={"trace_id": "trace"})]
+    )
+    over = store.append_event(
+        factory.create(EventKind.DIAGNOSTIC, payload={"message": "over"}),
+        b"x" * 17,
+        media_type="text/plain",
+    )
+    under = store.append_event(
+        factory.create(EventKind.DIAGNOSTIC, payload={"message": "under"}),
+        b"y" * 16,
+        media_type="text/plain",
+    )
+    store.append_events(
+        [
+            factory.create(
+                EventKind.EXECUTION_FINISHED,
+                payload={
+                    "outcome": ExecutionOutcome.COMPLETED.value,
+                    "completeness": "complete",
+                    "limitations": [],
+                },
+            )
+        ]
+    )
+    assert over.payload["raw_capture"]["truncated"] is True
+    assert under.payload["raw_capture"]["truncated"] is False
+
+    out = tmp_path / "bundle"
+    export_feedback(build_feedback(store, "run"), store, out)
+    payload = json.loads((out / "feedback.json").read_text())
+
+    over_id = over.raw_evidence_ref.evidence_id
+    under_id = under.raw_evidence_ref.evidence_id
+    assert [
+        item for item in payload["unavailable_references"] if "evidence_id" in item
+    ] == [
+        {
+            "execution_id": "raw",
+            "evidence_id": over_id,
+            "reason": "capture is truncated",
+        }
+    ]
+    assert set(payload["evidence_files"]) == {under_id}
+    exported = json.loads((out / payload["evidence_files"][under_id]).read_text())
+    assert exported["truncated"] is False
+    assert exported["size_bytes"] == 16
 
 
 @pytest.mark.parametrize("unfinished", [False, True])
