@@ -1065,8 +1065,10 @@ class AsyncAgentSession:
         """Project newly observed MCP wire events into the session trace.
 
         Adapter-reported tool calls remain separate events.  Wire events are
-        authoritative for activity health and carry their own provenance,
-        typed correlation, and raw-evidence reference.
+        authoritative for activity health and carry their own provenance and
+        typed correlation.  They carry no raw-evidence reference: stores read
+        back only evidence they own, and the capture files live in a
+        temporary root removed when the server group closes.
         """
 
         manager = self._server_manager
@@ -1149,7 +1151,6 @@ class AsyncAgentSession:
                     "_mcp_connection_id": connection_id,
                     "_mcp_direction": direction.value,
                     "_mcp_server_binding": server_binding,
-                    "_mcp_raw_evidence_ref": getattr(event, "raw_evidence_ref", None),
                 }
                 arguments = getattr(event, "arguments", None)
                 params = getattr(event, "params", None)

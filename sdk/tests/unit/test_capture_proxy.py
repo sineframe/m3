@@ -18,6 +18,7 @@ from mcp.server.lowlevel import Server
 
 from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
+from m3.feedback import build_feedback, export_feedback, load_run_entries
 from m3.fixtures.echo_http import EchoMcpHttpServer
 from m3.harness import HarnessAdapterRegistry
 from m3.harness.contracts import (
@@ -32,6 +33,7 @@ from m3.server_group import (
     _LoopbackEndpoint,
     _SSECaptureParser,
 )
+from m3.storage import SQLiteExecutionStore
 from m3.trace.capture import CaptureWriter
 from m3.transport.capture_proxy import (
     _MAX_OBSERVATION_FRAME_BYTES,
@@ -1481,3 +1483,84 @@ async def test_agent_execution_projects_wire_capture_into_stable_trace() -> None
     assert request.correlation is not None and request.correlation.jsonrpc_id == 7
     assert result.activity_health.value == "all_succeeded"
     assert "secret-canary" not in str(result.trace.model_dump(mode="json"))
+
+
+@pytest.mark.asyncio
+async def test_agent_wire_capture_events_carry_no_unreadable_evidence_refs(
+    tmp_path: Path,
+) -> None:
+    writer_holder: dict[str, CaptureWriter] = {}
+
+    async def handler(
+        _request: HarnessTurnRequest, _state: MutableMapping[str, Any]
+    ) -> str:
+        writer = writer_holder["writer"]
+        writer.write(
+            transport="stdio",
+            direction="client_to_server",
+            payload={
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {"name": "draw", "arguments": {}},
+            },
+        )
+        writer.write(
+            transport="stdio",
+            direction="server_to_client",
+            payload={"jsonrpc": "2.0", "id": 7, "result": {"content": []}},
+        )
+        return "done"
+
+    class WireAdapter(DeterministicHarnessAdapter):
+        async def open(self, launch: HarnessLaunch) -> HarnessSession:
+            assert launch.capture is not None
+            writer_holder["writer"] = launch.capture.writer_for(
+                launch.configurations[0].connection_id
+            )
+            return await super().open(launch)
+
+    adapter = WireAdapter(handler=handler)
+    registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
+    spec = AgentSpec(
+        harness=ClaudeCode(model="fixture"),
+        servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
+        message=UserMessage(content=(TextContent(text="draw"),)),
+        run_id="run",
+    )
+    store = SQLiteExecutionStore(tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs")
+    try:
+        async with AsyncMCPTestKit(
+            adapter_registry=registry, env={}, cwd="/tmp/m3-no-project", store=store
+        ) as kit:
+            result = await kit.run(spec)
+        assert result.trace is not None
+        wire = [
+            event
+            for event in result.trace.events
+            if event.provenance.source == "m3.capture"
+        ]
+        assert {event.kind.value for event in wire} >= {
+            "tool.call_requested",
+            "tool.result_received",
+        }
+        assert all(event.raw_evidence_ref is None for event in wire)
+        wire_sequences = {event.sequence for event in wire}
+        assert not [
+            entry
+            for entry in result.trace.view().raw_messages
+            if entry.sequence_start in wire_sequences
+        ]
+        entries = load_run_entries(store, "run")
+        export_feedback(
+            build_feedback(store, "run", entries=entries),
+            store,
+            tmp_path / "bundle",
+            entries=entries,
+        )
+        payload = json.loads((tmp_path / "bundle" / "feedback.json").read_text())
+        assert not [
+            item for item in payload["unavailable_references"] if "evidence_id" in item
+        ]
+    finally:
+        store.close()
