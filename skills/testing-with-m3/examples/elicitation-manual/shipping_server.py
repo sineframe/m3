@@ -5,10 +5,7 @@ from mcp.server.lowlevel import Server
 
 ADDRESS_SCHEMA = {
     "type": "object",
-    "properties": {
-        "street": {"type": "string"},
-        "city": {"type": "string"},
-    },
+    "properties": {"street": {"type": "string"}, "city": {"type": "string"}},
     "required": ["street", "city"],
 }
 
@@ -18,7 +15,7 @@ async def list_tools(_context: object, _params: object) -> types.ListToolsResult
         tools=[
             types.Tool(
                 name="book_shipment",
-                description="Book a shipment after confirming a delivery address",
+                description="Book a shipment after confirming its address",
                 input_schema={
                     "type": "object",
                     "properties": {"weight_kg": {"type": "number"}},
@@ -32,8 +29,7 @@ async def list_tools(_context: object, _params: object) -> types.ListToolsResult
 async def call_tool(
     _context: object, params: types.CallToolRequestParams
 ) -> types.CallToolResult | types.InputRequiredResult:
-    responses = params.input_responses or {}
-    if not responses:
+    if params.request_state is None:
         return types.InputRequiredResult(
             input_requests={
                 "shipping_address": types.ElicitRequest(
@@ -43,14 +39,14 @@ async def call_tool(
                     )
                 )
             },
-            request_state="shipping-address",
+            request_state="awaiting-address",
         )
 
-    response = responses.get("shipping_address")
+    response = (params.input_responses or {}).get("shipping_address")
     if (
-        not isinstance(response, types.ElicitResult)
+        params.request_state != "awaiting-address"
+        or not isinstance(response, types.ElicitResult)
         or response.action != "accept"
-        or response.content != {"street": "1 Main Street", "city": "Pune"}
     ):
         return types.CallToolResult(
             content=[types.TextContent(text="address response did not match")],
@@ -58,13 +54,9 @@ async def call_tool(
         )
     return types.CallToolResult(
         content=[types.TextContent(text="Shipment booked.")],
-        structured_content={"status": "booked", "city": "Pune"},
+        structured_content={"status": "booked", "address": response.content},
     )
 
 
 def build_server() -> Server:
-    return Server(
-        "shipping-elicitation",
-        on_list_tools=list_tools,
-        on_call_tool=call_tool,
-    )
+    return Server("shipping-manual", on_list_tools=list_tools, on_call_tool=call_tool)

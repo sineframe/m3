@@ -6,17 +6,18 @@
   "python": ">=3.10",
   "files": ["elicitation_server.py", "test_plan.py"],
   "displayed_blocks": [
+    {"page": "guides-elicitation-plans", "label": "local elicitation server", "source": "elicitation_server.py", "kind": "file"},
     {"page": "guides-elicitation-plans", "label": "direct elicitation plan", "source": "test_plan.py", "kind": "file"}
   ],
-  "dependencies": ["sf-m3[pytest]"],
+  "dependencies": ["sf-m3[pytest]", "sf-m3-cli"],
   "working_directory": "project directory",
   "scenarios": [
     {
       "id": "direct-form-plan",
-      "command": "python -m pytest -q test_plan.py",
+      "command": "m3 test -- test_plan.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
-      "assertions": ["server requests shipping_address", "plan submits keyed form response", "tool returns booked result"],
+      "assertions": ["plan answers the shipping_address form and the tool returns a booked result", "a wrong request key raises ElicitationExpectationError", "content that fails the server schema raises ElicitationExpectationError"],
       "compatibility": {
         "harness": "none; direct SDK operation",
         "mcp_protocol_revision": "2026-07-28",

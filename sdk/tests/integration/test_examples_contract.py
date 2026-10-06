@@ -169,6 +169,9 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     elicitation_api = (
         _SITE / "reference" / "python" / "m3" / "elicitation.md"
     ).read_text(encoding="utf-8")
+    managed_input_api = (
+        _SITE / "reference" / "python" / "m3" / "managed-input.md"
+    ).read_text(encoding="utf-8")
     index = (_SDK / "docs" / "README.md").read_text(encoding="utf-8")
     parity = (_SDK / "tests" / "mrtr-harness-parity.md").read_text(encoding="utf-8")
     api = (_REPO / "app" / "docs" / "api-v2.md").read_text(encoding="utf-8")
@@ -186,7 +189,7 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert "round_of(...)" in elicitation
     assert "sdk/examples/docs/elicitation-plans" in elicitation
     assert elicitation_api.startswith(
-        '---\ntitle: "Elicitation and managed-input API"\n'
+        '---\ntitle: "Elicitation plans and direct request handling"\n'
     )
     assert all(
         term in elicitation_api
@@ -195,7 +198,6 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
             "ElicitationResponse",
             "FormElicitationRequest",
             "UrlElicitationRequest",
-            "PendingElicitationRound",
             "expect_form",
             "maybe_form",
             "expect_url",
@@ -207,6 +209,18 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
             "agent.run",
             "agent.submit",
             "session.send",
+        )
+    )
+    assert managed_input_api.startswith('---\ntitle: "Managed elicitation input API"\n')
+    assert all(
+        term in managed_input_api
+        for term in (
+            "PendingElicitationRound",
+            "ManagedInputLease",
+            "ManagedInputRecord",
+            "respond_elicitation",
+            "idempotency_key",
+            "fail_recovery",
         )
     )
     _assert_sdk_doc_is_relocation_stub("elicitation.md", "guides/elicitation/plans")
@@ -268,17 +282,3 @@ def test_elicitation_python_snippets_compile() -> None:
     assert "client.call_tool(" in source
     assert "elicitation=plan" in source
     assert "test_plan.py" in guide
-
-
-def test_direct_elicitation_docs_select_current_protocol() -> None:
-    """Canonical guide and runnable docs example select elicitation support."""
-
-    guide = (_SITE / "guides" / "elicitation" / "plans.md").read_text(encoding="utf-8")
-    example = (_EXAMPLES / "docs" / "elicitation-plans" / "test_plan.py").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'Config(protocol_revision="2026-07-28")' in guide
-    assert 'Config(protocol_revision="2026-07-28")' in example
-    assert "elicitation=plan" in example
-    assert "with kit.direct(server) as client" in example

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "elicitation-responses",
+  "owning_pages": ["guides-elicitation-responses"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "files": ["shipping_server.py", "test_responses.py"],
+  "displayed_blocks": [
+    {"page": "guides-elicitation-responses", "label": "response server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-elicitation-responses", "label": "response tests", "source": "test_responses.py", "kind": "file"}
+  ],
+  "dependencies": ["sf-m3[pytest]", "sf-m3-cli"],
+  "working_directory": "project directory",
+  "scenarios": [
+    {
+      "id": "form-and-url-response-actions",
+      "command": "m3 test -- test_responses.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["form accept sends content", "form decline and cancel send no content", "URL accept, decline, and cancel send no content"],
+      "compatibility": {"harness": "none; direct SDK operation", "mcp_protocol_revision": "2026-07-28", "mode": "deterministic local", "status": "verified locally"},
+      "verification": "deterministic"
+    }
+  ],
+  "network": "none",
+  "credentials": "none",
+  "cleanup": "Direct clients, in-process servers, and MCPTestKit instances close through context managers."
+}
