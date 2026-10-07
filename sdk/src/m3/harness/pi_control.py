@@ -486,11 +486,12 @@ class PiControlChannel:
                 raise PiControlClosed("control extension is not connected")
             try:
                 connection.writer.write(encoded)
-                await asyncio.wait_for(connection.writer.drain(), self.timeout)
+                # Commit before draining: the peer may answer while drain yields.
                 if frame["type"] == "response":
                     self._response_sent = True
                 elif frame["type"] == "cancel":
                     self._clear_scope()
+                await asyncio.wait_for(connection.writer.drain(), self.timeout)
             except (ConnectionError, asyncio.TimeoutError) as error:
                 await self._drop_connection(connection)
                 raise PiControlClosed("control extension disconnected") from error

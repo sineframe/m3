@@ -594,6 +594,49 @@ def test_envelope_validation_rejects_oversized_frame() -> None:
         )
 
 
+def test_terminal_racing_response_drain_is_accepted() -> None:
+    async def scenario() -> None:
+        channel = PiControlChannel()
+        await channel.start()
+        reader, writer = await _connect(channel)
+        pending = _pending(channel)
+        writer.write((json.dumps(pending) + "\n").encode())
+        await writer.drain()
+        assert (await channel.receive())["type"] == "pending"
+        assert channel._connection is not None
+        server_writer = channel._connection.writer
+        original_drain = server_writer.drain
+
+        async def drain_after_peer_terminal() -> None:
+            # The peer can answer before the parent's drain returns.
+            server_writer.drain = original_drain
+            assert json.loads((await reader.readline()).decode())["type"] == "response"
+            terminal = _terminal(channel, pending, "terminal-1")
+            writer.write((json.dumps(terminal) + "\n").encode())
+            await writer.drain()
+            while channel._incoming.empty():
+                await asyncio.sleep(0.01)
+            await original_drain()
+
+        server_writer.drain = drain_after_peer_terminal
+        try:
+            await channel.send_response(
+                generation="g1",
+                turn_sequence=2,
+                execution_id="execution-1",
+                logical_operation_id="op-1",
+                round_id="r1",
+                responses={"address": {"action": "accept"}},
+            )
+            assert (await channel.receive(1))["type"] == "terminal"
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await channel.close()
+
+    asyncio.run(scenario())
+
+
 def test_authenticated_pending_response_terminal_round_trip() -> None:
     async def scenario() -> None:
         channel = PiControlChannel()
