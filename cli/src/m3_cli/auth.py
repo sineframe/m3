@@ -266,6 +266,15 @@ def _save_token(base: str, token: str, metadata: dict[str, Any]) -> None:
         except Exception:
             pass
         raise RuntimeError("could not save credential metadata securely") from None
+    legacy = _legacy_account(base)
+    if legacy != account:
+        # Older CLIs stored the token under the legacy account; drop that copy
+        # so logout and later logins see only the current credential.
+        try:
+            if keyring.get_password(_SERVICE, legacy) is not None:
+                keyring.delete_password(_SERVICE, legacy)
+        except Exception:
+            pass
 
 
 def _remove_saved_token(base: str) -> bool:
@@ -300,8 +309,6 @@ def _json_request(
     method: str,
     body: dict[str, Any] | None = None,
     token: str | None = None,
-    *,
-    expect_no_content: bool = False,
 ) -> dict[str, Any]:
     request_id = _http.new_request_id()
     headers = {
@@ -321,9 +328,7 @@ def _json_request(
             req, timeout=_REQUEST_TIMEOUT
         ) as response:
             if response.status == 204:
-                if not expect_no_content:
-                    raise RuntimeError("server returned an invalid response")
-                return {}
+                raise RuntimeError("server returned an invalid response")
             raw = _read_limited(response)
         result = json.loads(raw)
     except error.HTTPError as exc:
@@ -368,22 +373,6 @@ def _json_request(
     return result
 
 
-def _revoke_token(base: str, token: str) -> bool:
-    """Revoke a CLI token; return False if the server no longer knows it."""
-    try:
-        _json_request(
-            base + "/v1/cli/session",
-            "DELETE",
-            token=token,
-            expect_no_content=True,
-        )
-    except _Unauthorized:
-        # The control plane answers 401 only for tokens it has no record of,
-        # which cannot authenticate anymore.
-        return False
-    return True
-
-
 def status() -> int:
     try:
         base = control_plane_url()
@@ -392,7 +381,7 @@ def status() -> int:
             validate_access_token(env_token)
             print(
                 "M3_ACCESS_TOKEN is set in the current environment "
-                "(CI token validity is not checked by auth status)."
+                "(access token validity is not checked by auth status)."
             )
         token = load_saved_token(base)
         if not token:
@@ -431,21 +420,16 @@ def status() -> int:
 def logout() -> int:
     try:
         base = control_plane_url()
-        # Logout is deliberately local-only: an explicit environment token is
-        # not the CLI credential that this command owns.
+        # Like `gh auth logout`, this only removes the saved CLI credential from
+        # this machine. It ignores M3_ACCESS_TOKEN and never revokes on the
+        # server; that happens on the console's Access tokens page or at expiry.
         token = load_saved_token(base)
         if not token:
             print("No local M3 CLI credential is configured.")
             return 0
-        revoked = _revoke_token(base, token)
         if not _remove_saved_token(base):
-            raise RuntimeError(
-                "remote credential revoked, but local credential could not be removed"
-            )
-        if revoked:
-            print("M3 CLI credential revoked and removed.")
-        else:
-            print("M3 CLI credential was no longer valid; removed it.")
+            raise RuntimeError("could not remove the local credential")
+        print("M3 CLI credential removed.")
         return 0
     except (RuntimeError, ValueError, CLIError) as exc:
         print(f"m3 auth logout: {exc}", file=sys.stderr)
@@ -502,7 +486,6 @@ def login() -> int:
             os.environ.get("M3_AUTH_URL", _AUTH_DEFAULT), "M3_AUTH_URL"
         )
         _probe_keyring()
-        previous_token = load_saved_token(base)
         authorization = _json_request(
             base + "/v1/cli/device/authorization",
             "POST",
@@ -604,25 +587,7 @@ def login() -> int:
             try:
                 _save_token(base, token, {key: metadata[key] for key in fields})
             except Exception:
-                try:
-                    _revoke_token(base, token)
-                except Exception:
-                    raise RuntimeError(
-                        "token was issued but could not be saved; remote revocation also failed"
-                    ) from None
-                raise RuntimeError(
-                    "token was issued but could not be saved; remote token revoked"
-                ) from None
-            if previous_token is not None and previous_token != token:
-                try:
-                    _revoke_token(base, previous_token)
-                except RuntimeError as exc:
-                    print(
-                        "m3 auth login: warning: could not revoke the previous "
-                        f"CLI credential ({exc}); it expires on its own, or you "
-                        "can revoke it in the M3 account console",
-                        file=sys.stderr,
-                    )
+                raise RuntimeError("token was issued but could not be saved") from None
             print("M3 CLI credential saved in OS credential store.")
             return 0
         raise RuntimeError("device authorization expired")

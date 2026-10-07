@@ -13,7 +13,7 @@ m3 auth login
 m3 test --upload -- tests/
 ```
 
-In CI, store a CI token as `M3_ACCESS_TOKEN` (see
+In CI, store an access token as `M3_ACCESS_TOKEN` (see
 [Manage M3 access](guides-ci-access.md)) and run:
 
 ```sh

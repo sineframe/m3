@@ -157,12 +157,13 @@ does not accept a custom database path.
 ## `m3 auth`
 
 `login` starts device authorization in the M3 account console and saves the
-issued 30-day CLI credential in a supported operating-system credential
+issued 60-day CLI credential in a supported operating-system credential
 store. `status` validates the saved CLI credential with M3 and reports its
-organization and expiry. It checks the format of a CI token supplied as
-`M3_ACCESS_TOKEN`, but does not validate that CI token with M3. `logout` asks
-M3 to revoke the saved CLI credential, then removes it locally. It does not
-revoke or remove `M3_ACCESS_TOKEN`.
+organization and expiry. It checks the format of an access token supplied as
+`M3_ACCESS_TOKEN`, but does not validate that token with M3. `logout` removes
+the saved CLI credential from this machine without contacting M3, so it does
+not revoke it; revoke it on the **Access tokens** page in the M3 account
+console, where it is listed as `M3 CLI (<hostname>)` with type CLI. It does not remove `M3_ACCESS_TOKEN`.
 
 ## `m3 runtime cache`
 
