@@ -5,6 +5,12 @@ from dataclasses import dataclass
 
 from ..observability import ToolCallEntry
 from ..types import Event, EventKind, EventOrigin
+from .pairing import (
+    CallKey,
+    canonical_arguments,
+    pair_reported_wire,
+    wire_provider_call_id,
+)
 from .projector import TraceProjector
 
 
@@ -79,10 +85,7 @@ def _is_mrtr_event(event: Event) -> bool:
 @dataclass(frozen=True)
 class _RequestDescriptor:
     reported: bool
-    call_id: str | None
-    turn_id: str | None
-    server: str | None
-    tool: str
+    key: CallKey
 
 
 def _request_descriptor(event: Event) -> _RequestDescriptor | None:
@@ -93,13 +96,26 @@ def _request_descriptor(event: Event) -> _RequestDescriptor | None:
     name = params.get("name", event.payload.get("tool"))
     if not isinstance(name, str) or not name:
         return None
+    reported = event.provenance.origin is EventOrigin.HARNESS_REPORTED
     call_id = event.payload.get("call_id")
+    if "call_id" not in event.payload and not reported:
+        call_id = wire_provider_call_id(params)
+    arguments_present = "arguments" in params or "arguments" in event.payload
     return _RequestDescriptor(
-        reported=event.provenance.origin is EventOrigin.HARNESS_REPORTED,
-        call_id=call_id if isinstance(call_id, str) and call_id else None,
-        turn_id=str(event.turn_id.root) if event.turn_id is not None else None,
-        server=event.server_binding if event.server_binding else None,
-        tool=name,
+        reported=reported,
+        key=CallKey(
+            provider_call_id=call_id if isinstance(call_id, str) and call_id else None,
+            turn_id=str(event.turn_id.root) if event.turn_id is not None else None,
+            server=event.server_binding if event.server_binding else None,
+            tool=name,
+            arguments=(
+                canonical_arguments(
+                    params.get("arguments", event.payload.get("arguments"))
+                )
+                if arguments_present
+                else None
+            ),
+        ),
     )
 
 
@@ -109,31 +125,9 @@ def _mixed_request_count(events: Sequence[Event]) -> int:
         for event in events
         if (descriptor := _request_descriptor(event)) is not None
     ]
-    reported = [descriptor for descriptor in descriptors if descriptor.reported]
-    wire = [descriptor for descriptor in descriptors if not descriptor.reported]
-    used: set[int] = set()
-    merged = 0
-    for provider in reported:
-        candidates: list[int] = []
-        for index, candidate in enumerate(wire):
-            if index in used:
-                continue
-            if provider.call_id is not None and candidate.call_id is not None:
-                if candidate.call_id != provider.call_id:
-                    continue
-            elif (
-                candidate.turn_id != provider.turn_id
-                or candidate.server is None
-                or provider.server is None
-                or candidate.server != provider.server
-                or candidate.tool != provider.tool
-            ):
-                continue
-            candidates.append(index)
-        if len(candidates) == 1:
-            used.add(candidates[0])
-            merged += 1
-    return len(descriptors) - merged
+    reported = [item.key for item in descriptors if item.reported]
+    wire = [item.key for item in descriptors if not item.reported]
+    return len(descriptors) - len(pair_reported_wire(reported, wire))
 
 
 __all__ = ["has_tool_request", "tool_call_count", "tool_call_count_after"]

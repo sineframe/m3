@@ -82,6 +82,12 @@ from ..types import (
     TraceResult,
     TransportKind,
 )
+from .pairing import (
+    CallKey,
+    canonical_arguments,
+    pair_reported_wire,
+    wire_provider_call_id,
+)
 
 _ACP_INTERACTION_REQUESTS = frozenset(
     {
@@ -274,12 +280,24 @@ def _stderr_observation(payload: Mapping[str, Any]) -> Observation[str]:
     )
 
 
-def _same_observed_text(left: Observation[Any], right: Observation[Any]) -> bool:
-    return (
-        left.state is ObservationState.OBSERVED
-        and right.state is ObservationState.OBSERVED
-        and isinstance(left.value, str)
-        and left.value == right.value
+def _call_key(entry: ToolCallEntry) -> CallKey:
+    def text(value: Observation[Any]) -> str | None:
+        return (
+            value.value
+            if value.state is ObservationState.OBSERVED and isinstance(value.value, str)
+            else None
+        )
+
+    return CallKey(
+        provider_call_id=text(entry.provider_call_id),
+        turn_id=entry.turn_id.root if entry.turn_id is not None else None,
+        server=text(entry.server),
+        tool=text(entry.tool),
+        arguments=(
+            canonical_arguments(entry.arguments.value)
+            if entry.arguments.state is ObservationState.OBSERVED
+            else None
+        ),
     )
 
 
@@ -1117,6 +1135,17 @@ def _interaction_entry(events: Sequence[Event]) -> InteractionEntry:
     )
 
 
+def _provider_call_id(event: Event, params: Mapping[str, Any]) -> Observation[str]:
+    """The provider's id for a call: reported directly, or stamped on the wire."""
+    if "call_id" in event.payload:
+        return _string_observation(event.payload.get("call_id"))
+    if event.provenance.origin is not EventOrigin.HARNESS_REPORTED:
+        stamped = wire_provider_call_id(params)
+        if stamped is not None:
+            return _observed(stamped)
+    return _not_emitted()
+
+
 def _tool_entry(events: Sequence[Event]) -> TraceEntry:
     first, last = events[0], events[-1]
     reported_evidence = first.provenance.origin is EventOrigin.HARNESS_REPORTED
@@ -1345,9 +1374,7 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
             status=entry_status,
         ),
         call_id=_call_id(first),
-        provider_call_id=_string_observation(
-            first.payload.get("call_id"), present="call_id" in first.payload
-        ),
+        provider_call_id=_provider_call_id(first, params),
         server=(
             _observed(first.server_binding) if first.server_binding else _not_emitted()
         ),
@@ -2724,16 +2751,16 @@ class TraceProjector:
     ) -> tuple[TraceEntry, ...]:
         """Join provider and wire calls only on conservative evidence.
 
-        An explicit provider call ID is authoritative, even when the wire
-        evidence arrived first. When an adapter has no shared ID, correlation
-        is permitted only if exactly one unused wire call has the same turn,
-        server, and tool. The resulting sequence order remains deterministic,
-        but arrival direction is not treated as identity: a provider history
-        snapshot commonly arrives after the wire exchange it reports.
-        Raw evidence references are intentionally not used here: the typed
-        tool-call model does not expose per-source refs, so treating an event
-        ref as a call identity would be an unsafe guess. A name-only match is
-        never sufficient when there is more than one candidate.
+        The decision lives in ``pair_reported_wire`` so the snapshot counter
+        joins exactly the same calls. An explicit provider call ID is
+        authoritative, even when the wire evidence arrived first. Without
+        one, calls join only within the same turn, server and tool, by
+        arguments that pick out one partner or by order when both sides hold
+        the same number of calls. Arrival direction is not treated as
+        identity: a provider history snapshot commonly arrives after the wire
+        exchange it reports. Raw evidence references are intentionally not
+        used: the typed tool-call model does not expose per-source refs, so
+        treating an event ref as a call identity would be an unsafe guess.
         """
         reported = [
             index
@@ -2747,52 +2774,17 @@ class TraceProjector:
             if isinstance(entry, ToolCallEntry)
             and entry.correlation is CorrelationState.WIRE_ONLY
         ]
-        used: set[int] = set()
+        pairs = pair_reported_wire(
+            [_call_key(cast(ToolCallEntry, entries[index])) for index in reported],
+            [_call_key(cast(ToolCallEntry, entries[index])) for index in wire],
+        )
         replacements: dict[int, ToolCallEntry] = {}
         removed: set[int] = set()
-        for reported_index in reported:
-            reported_entry = entries[reported_index]
-            assert isinstance(reported_entry, ToolCallEntry)
-            provider_id = (
-                reported_entry.provider_call_id.value
-                if reported_entry.provider_call_id.state is ObservationState.OBSERVED
-                else None
-            )
-            candidates: list[int] = []
-            for wire_index in wire:
-                if wire_index in used:
-                    continue
-                wire_entry = entries[wire_index]
-                assert isinstance(wire_entry, ToolCallEntry)
-                wire_id = (
-                    wire_entry.provider_call_id.value
-                    if wire_entry.provider_call_id.state is ObservationState.OBSERVED
-                    else None
-                )
-                if provider_id is not None and wire_id is not None:
-                    if wire_id != provider_id:
-                        continue
-                    candidates.append(wire_index)
-                    continue
-                if wire_entry.turn_id != reported_entry.turn_id:
-                    continue
-                if not _same_observed_text(
-                    reported_entry.server, wire_entry.server
-                ) or not _same_observed_text(reported_entry.tool, wire_entry.tool):
-                    continue
-                candidates.append(wire_index)
-            # An explicit ID may select one candidate directly; absent IDs
-            # require uniqueness to avoid silently joining repeated calls.
-            if provider_id is None and len(candidates) != 1:
-                continue
-            if len(candidates) != 1:
-                continue
-            wire_index = candidates[0]
-            wire_entry = entries[wire_index]
-            assert isinstance(wire_entry, ToolCallEntry)
-            used.add(wire_index)
+        for left, right in pairs.items():
+            reported_index, wire_index = reported[left], wire[right]
             replacements[reported_index] = _merge_tool_evidence(
-                reported_entry, wire_entry
+                cast(ToolCallEntry, entries[reported_index]),
+                cast(ToolCallEntry, entries[wire_index]),
             )
             removed.add(wire_index)
         result: list[TraceEntry] = []
