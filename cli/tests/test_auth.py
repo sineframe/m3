@@ -153,6 +153,30 @@ def test_legacy_keyring_account_migrates_on_read(store: Keyring) -> None:
     assert store.get_password(auth._SERVICE, current) == token()
 
 
+def test_save_removes_legacy_keyring_entry(store: Keyring) -> None:
+    base = "https://control.example"
+    legacy = auth._legacy_account(base)
+    store.set_password(auth._SERVICE, legacy, token(b"l"))
+    auth._save_token(base, token(), {"id": "id"})
+    assert store.get_password(auth._SERVICE, legacy) is None
+    assert auth.load_saved_token(base) == token()
+
+
+def test_save_succeeds_when_legacy_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring
+) -> None:
+    base = "https://control.example"
+    legacy = auth._legacy_account(base)
+    store.set_password(auth._SERVICE, legacy, token(b"l"))
+
+    def stuck(service: str, account: str) -> None:
+        raise RuntimeError("locked")
+
+    monkeypatch.setattr(store, "delete_password", stuck)
+    auth._save_token(base, token(), {"id": "id"})
+    assert store.get_password(auth._SERVICE, auth._account(base)) == token()
+
+
 def test_installation_id_does_not_replace_corrupt_metadata(store: Keyring) -> None:
     path = auth._metadata_path()
     path.parent.mkdir(parents=True)
@@ -555,55 +579,44 @@ def test_login_preflight_failure_and_browser_fallback(
     assert "no store" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("has_previous", [True, False])
 def test_save_failure_restores_old_credential(
-    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    store: Keyring,
+    capsys: pytest.CaptureFixture[str],
+    has_previous: bool,
 ) -> None:
     base = "https://control.example"
     old = token(b"o")
-    auth._save_token(base, old, {"id": "old"})
-    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
-    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
-    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: True)
-    start = {
-        "device_code": "d",
-        "user_code": "ABCD-EFGH",
-        "verification_uri": "https://auth.sineframe.com/sign-in",
-        "verification_uri_complete": "https://auth.sineframe.com/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
-        "expires_in": 1,
-        "interval": 1,
-    }
-    new = {
-        "access_token": token(b"n"),
-        "token_type": "Bearer",
-        "metadata": {
-            "id": "new",
-            "kind": "cli",
-            "org_id": "o",
-            "name": "M3 CLI",
-            "created_at": "a",
-            "expires_at": "b",
-        },
-    }
-    monkeypatch.setattr(
-        auth, "_save_token", lambda *a: (_ for _ in ()).throw(RuntimeError("disk full"))
-    )
-    responses = iter((start, new))
-    monkeypatch.setattr(
-        auth,
-        "_json_request",
-        lambda url, method, body=None, token=None: (
-            next(responses)
-            if url.endswith("authorization")
-            else new
-            if url.endswith("/token")
-            else (_ for _ in ()).throw(RuntimeError("offline"))
-        ),
-    )
-    monkeypatch.setattr(auth.time, "sleep", lambda _: None)
-    monkeypatch.setattr(auth.time, "monotonic", lambda: 0.0)
+    new = token()
+    if has_previous:
+        auth._save_token(base, old, {"id": "old"})
+    prepare_login(monkeypatch)
+    fake_clock(monkeypatch)
+    calls: list[tuple[str, str]] = []
+
+    def fake(url: str, method: str, body=None, token=None, **kwargs):
+        calls.append((method, url))
+        if url.endswith("/authorization"):
+            return device_authorization()
+        if url.endswith("/token"):
+            return {**issued_token(), "access_token": new}
+        pytest.fail(f"unexpected request: {method} {url}")
+
+    def disk_full(_update: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(auth, "_json_request", fake)
+    monkeypatch.setattr(auth, "_update_metadata", disk_full)
     assert auth.login() == 2
-    assert auth.load_saved_token(base) == old
-    assert "token was issued but could not be saved" in capsys.readouterr().err
+    output = capsys.readouterr()
+    assert output.err.rstrip("\n").endswith("token was issued but could not be saved")
+    assert old not in output.out + output.err
+    assert new not in output.out + output.err
+    assert [method for method, _ in calls] == ["POST", "POST"]
+    expected = old if has_previous else None
+    assert store.get_password(auth._SERVICE, auth._account(base)) == expected
+    assert new not in store.values.values()
 
 
 def test_relogin_replaces_previous_credential_without_revoking(
@@ -716,7 +729,6 @@ def test_dead_saved_credential_does_not_block_login_or_logout(
     assert capsys.readouterr().err == ""
     assert auth.load_saved_token(base) == second
 
-    control_plane.live.clear()
     assert auth.logout() == 0
     assert "credential removed" in capsys.readouterr().out
     assert auth.load_saved_token(base) is None
@@ -778,10 +790,6 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
                 self.send_header("Location", "/ok")
                 self.end_headers()
                 return
-            if self.path == "/empty":
-                self.send_response(204)
-                self.end_headers()
-                return
             if self.path == "/error":
                 self.send_response(500)
                 body = b"x" * (auth._MAX_RESPONSE + 1)
@@ -825,9 +833,6 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
             self.end_headers()
             self.wfile.write(body)
 
-        def do_DELETE(self) -> None:
-            self.do_GET()
-
         def log_message(self, *_args: object) -> None:
             pass
 
@@ -838,9 +843,6 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
     thread.start()
     try:
         base = f"http://127.0.0.1:{server.server_port}"
-        assert (
-            auth._json_request(base + "/empty", "DELETE", expect_no_content=True) == {}
-        )
         with pytest.raises(RuntimeError, match="invalid response") as invalid:
             auth._json_request(base + "/json204", "GET")
         invalid_id = next(item[1] for item in seen if item[0] == "/json204")

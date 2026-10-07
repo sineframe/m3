@@ -40,16 +40,20 @@ machine with a browser and a supported OS credential store.
 
    `m3 auth status` must report that no local CLI credential is configured.
 
-4. Create a short-lived CI token on the organization's **CI tokens** page in
-   the M3 account console. Export it as `M3_ACCESS_TOKEN` from a secret
-   manager, without pasting it into a command line, and upload again:
+4. Logout does not revoke the credential on the server. On the organization's
+   **Access tokens** page in the M3 account console, revoke the smoke-test
+   CLI token, listed as `M3 CLI (<host>)` with type CLI.
+
+5. Create a short-lived access token on the organization's **Access tokens**
+   page in the M3 account console. Export it as `M3_ACCESS_TOKEN` from a
+   secret manager, without pasting it into a command line, and upload again:
 
    ```sh
    m3 ci test --upload
    ```
 
-   The upload must succeed with the CI token. Revoke the token on the
-   **CI tokens** page afterward.
+   The upload must succeed with the access token. Revoke the token on the
+   **Access tokens** page afterward.
 
 Record the candidate version, OS, credential store, and date. Never record a
 token, device code, or browser session.

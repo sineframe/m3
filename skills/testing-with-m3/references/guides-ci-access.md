@@ -20,8 +20,8 @@ For local CLI authorization:
   Service or KWallet credential store. `m3 auth login` stops before
   authorization when supported storage is unavailable.
 
-For CI, you need a secret store that can expose the token to
-the M3 process as `M3_ACCESS_TOKEN`.
+For CI, you need a secret store that can expose an access token to the M3
+process as `M3_ACCESS_TOKEN`.
 
 Both paths require active membership in the M3 organization that will receive
 uploads. If you have none, the M3 account console offers organization creation
@@ -51,8 +51,8 @@ again to start a new authorization.
 
 Running `m3 auth login` again replaces the saved CLI credential but does not
 revoke the old one. The old credential stays on your organization's **Access
-tokens** page in the M3 account console until it expires or you revoke it
-there.
+tokens** page in the M3 account console, listed as `M3 CLI (<hostname>)` with
+type CLI, until it expires or you revoke it there.
 
 ## Check the saved CLI credential
 
@@ -111,7 +111,8 @@ m3 auth logout
 Logout removes the saved CLI credential from this machine's operating-system
 credential store. It does not contact M3, so the credential is not revoked and
 stays valid until it expires. To revoke it, use your organization's **Access
-tokens** page in the M3 account console. Logout does not unset or remove
+tokens** page in the M3 account console, where it is listed as
+`M3 CLI (<hostname>)` with type CLI. Logout does not unset or remove
 `M3_ACCESS_TOKEN`.
 
 To rotate or remove CI access, create a replacement on the organization's
