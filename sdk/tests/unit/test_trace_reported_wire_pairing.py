@@ -199,3 +199,17 @@ def test_ambiguous_calls_stay_separate() -> None:
     assert not any(
         call.correlation is CorrelationState.CORRELATED for call in view.tool_calls
     )
+
+
+def test_partial_history_pairs_the_reported_call_by_arguments() -> None:
+    # The provider history only records the second of two different calls.
+    events = _events([{"text": "a"}, {"text": "b"}], reported=[1])
+
+    view = _view(events)
+
+    assert view.summary.tool_call_count == 2
+    assert tool_call_count_after(0, events, events) == 2
+    assert [call.correlation for call in view.tool_calls] == [
+        CorrelationState.WIRE_ONLY,
+        CorrelationState.CORRELATED,
+    ]

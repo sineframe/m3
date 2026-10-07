@@ -31,13 +31,24 @@ def wire_provider_call_id(params: Mapping[str, Any]) -> str | None:
 
 
 def canonical_arguments(value: Any) -> str | None:
-    """Canonical JSON text of plain tool arguments, or None if not JSON."""
+    """Canonical JSON text of tool arguments, or None if they are not JSON.
+
+    Event payloads hold frozen mappings and tuples, so they are thawed first.
+    """
     try:
         return json.dumps(
-            value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            _thaw(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False
         )
     except (TypeError, ValueError):
         return None
+
+
+def _thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)

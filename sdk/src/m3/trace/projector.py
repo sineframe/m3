@@ -82,7 +82,12 @@ from ..types import (
     TraceResult,
     TransportKind,
 )
-from .pairing import CallKey, pair_reported_wire, wire_provider_call_id
+from .pairing import (
+    CallKey,
+    canonical_arguments,
+    pair_reported_wire,
+    wire_provider_call_id,
+)
 
 _ACP_INTERACTION_REQUESTS = frozenset(
     {
@@ -289,7 +294,7 @@ def _call_key(entry: ToolCallEntry) -> CallKey:
         server=text(entry.server),
         tool=text(entry.tool),
         arguments=(
-            _canonical_json(entry.arguments.value)
+            canonical_arguments(entry.arguments.value)
             if entry.arguments.state is ObservationState.OBSERVED
             else None
         ),
