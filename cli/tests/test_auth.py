@@ -5,10 +5,12 @@ import json
 import re
 import threading
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -642,8 +644,157 @@ def test_relogin_revokes_previous_cli_credential(
     monkeypatch.setattr(auth.time, "monotonic", lambda: 0.0)
     assert auth.login() == 0
     assert auth.load_saved_token(base) == new
-    assert auth._pending_revoke_token(base) is None
     assert revoked == [(old, True)]
+
+
+def test_relogin_warns_but_succeeds_when_previous_revoke_fails(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = "https://control.example"
+    old = token(b"o")
+    auth._save_token(base, old, {"id": "old", "kind": "cli"})
+    prepare_login(monkeypatch)
+    fake_clock(monkeypatch)
+    revoked: list[str] = []
+
+    def fake(url: str, method: str, body=None, token=None, **kwargs):
+        if url.endswith("/authorization"):
+            return device_authorization()
+        if url.endswith("/token"):
+            return issued_token()
+        revoked.append(token)
+        raise RuntimeError("server rejected the request (ref: r)")
+
+    monkeypatch.setattr(auth, "_json_request", fake)
+    assert auth.login() == 0
+    assert auth.load_saved_token(base) == token()
+    assert revoked == [old]
+    err = capsys.readouterr().err
+    assert "could not revoke the previous CLI credential" in err
+    assert old not in err
+    assert set(store.values) == {(auth._SERVICE, auth._account(base))}
+
+
+class ControlPlane(BaseHTTPRequestHandler):
+    """Mirrors the control plane's CLI session endpoints.
+
+    GET accepts only live tokens. DELETE answers 204 for any token that still
+    has a row, including revoked or expired ones, and 401 for unknown tokens.
+    """
+
+    live: ClassVar[set[str]] = set()
+    dead: ClassVar[set[str]] = set()
+    issue: ClassVar[list[str]] = []
+    calls: ClassVar[list[str]] = []
+
+    def _reply(self, status: int, value: dict[str, object] | None = None) -> None:
+        raw = b"" if value is None else json.dumps(value).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _bearer(self) -> str:
+        return (self.headers.get("Authorization") or "").removeprefix("Bearer ")
+
+    def _unauthorized(self) -> None:
+        self._reply(401, {"error": {"code": "unauthorized", "message": "no"}})
+
+    def do_GET(self) -> None:
+        self.calls.append("GET " + self.path)
+        if self._bearer() in self.live:
+            self._reply(200, {"metadata": issued_token()["metadata"]})
+        else:
+            self._unauthorized()
+
+    def do_DELETE(self) -> None:
+        self.calls.append("DELETE " + self.path)
+        bearer = self._bearer()
+        if bearer not in self.live | self.dead:
+            self._unauthorized()
+            return
+        self.live.discard(bearer)
+        self.dead.add(bearer)
+        self._reply(204)
+
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.calls.append("POST " + self.path)
+        if self.path.endswith("/authorization"):
+            self._reply(200, device_authorization())
+            return
+        issued = self.issue.pop(0)
+        self.live.add(issued)
+        self._reply(200, {**issued_token(), "access_token": issued})
+
+    def log_message(self, *_args: object) -> None:
+        pass
+
+
+@pytest.fixture
+def control_plane(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[ControlPlane]]:
+    prepare_login(monkeypatch)
+    fake_clock(monkeypatch)
+    ControlPlane.live, ControlPlane.dead = set(), set()
+    ControlPlane.issue, ControlPlane.calls = [], []
+    server = HTTPServer(("127.0.0.1", 0), ControlPlane)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setattr(auth, "control_plane_url", lambda: base)
+    yield ControlPlane
+    server.shutdown()
+    thread.join()
+    server.server_close()
+
+
+def test_dead_saved_credential_does_not_block_login_or_logout(
+    store: Keyring,
+    control_plane: type[ControlPlane],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    base = auth.control_plane_url()
+    first, second, third, fourth = (token(fill) for fill in (b"a", b"b", b"c", b"d"))
+    control_plane.issue = [first, second, third, fourth]
+    assert auth.login() == 0
+    control_plane.live.clear()  # the token row was deleted server-side
+    capsys.readouterr()
+
+    assert auth.status() == 2
+    assert "saved CLI credential is expired or revoked" in capsys.readouterr().err
+
+    control_plane.calls.clear()
+    assert auth.login() == 0
+    assert capsys.readouterr().err == ""
+    assert control_plane.calls == [
+        "POST /v1/cli/device/authorization",
+        "POST /v1/cli/device/token",
+        "DELETE /v1/cli/session",
+    ]
+    assert auth.load_saved_token(base) == second
+
+    assert auth.login() == 0
+    assert "Complete sign-in with code" in capsys.readouterr().out
+    assert second not in control_plane.live
+    assert auth.load_saved_token(base) == third
+
+    control_plane.live.discard(third)  # expired: the row stays, revoke is a 204
+    control_plane.dead.add(third)
+    assert auth.status() == 2
+    assert auth.logout() == 0
+    assert "revoked and removed" in capsys.readouterr().out
+    assert auth.load_saved_token(base) is None
+
+    assert auth.login() == 0
+    control_plane.live.clear()  # the token row was deleted server-side
+    capsys.readouterr()
+    assert auth.logout() == 0
+    assert "no longer valid" in capsys.readouterr().out
+    assert auth.load_saved_token(base) is None
+    assert all(service != auth._SERVICE for service, _ in store.values)
 
 
 def test_logout_remote_failure_retains_local_and_no_local_does_not_delete(
