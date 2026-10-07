@@ -31,7 +31,6 @@ from .ci_credentials import (
 from .errors import CLIError
 
 _SERVICE = "sf-m3"
-_PENDING_REVOKE_SERVICE = "sf-m3-pending-revoke"
 _MAX_RESPONSE = 64 * 1024
 _AUTH_DEFAULT = "https://auth.sineframe.com"
 _REQUEST_TIMEOUT = 20
@@ -42,6 +41,10 @@ class _RateLimited(RuntimeError):
     def __init__(self, retry_after: float) -> None:
         self.retry_after = retry_after
         super().__init__("rate_limited")
+
+
+class _Unauthorized(RuntimeError):
+    """The server rejected the bearer token as missing, expired, or revoked."""
 
 
 def _retry_after_seconds(value: str | None) -> float:
@@ -280,35 +283,6 @@ def _remove_saved_token(base: str) -> bool:
     return True
 
 
-def _pending_revoke_token(base: str) -> str | None:
-    try:
-        token = _keyring().get_password(_PENDING_REVOKE_SERVICE, _account(base))
-    except Exception:
-        raise RuntimeError("could not read pending credential cleanup") from None
-    if token is not None and not isinstance(token, str):
-        raise RuntimeError("OS credential store returned invalid cleanup data")
-    return token
-
-
-def _remember_pending_revoke(base: str, token: str) -> None:
-    try:
-        _keyring().set_password(_PENDING_REVOKE_SERVICE, _account(base), token)
-    except Exception:
-        raise RuntimeError(
-            "could not preserve the previous credential for revocation"
-        ) from None
-
-
-def _clear_pending_revoke(base: str) -> None:
-    keyring = _keyring()
-    account = _account(base)
-    try:
-        if keyring.get_password(_PENDING_REVOKE_SERVICE, account) is not None:
-            keyring.delete_password(_PENDING_REVOKE_SERVICE, account)
-    except Exception:
-        raise RuntimeError("could not clear completed credential cleanup") from None
-
-
 class _NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:
         raise RuntimeError("redirect rejected")
@@ -376,6 +350,10 @@ def _json_request(
             raise RuntimeError(
                 f"server rejected the request (ref: {request_id})"
             ) from None
+        if exc.code == 401:
+            raise _Unauthorized(
+                f"server rejected the request (ref: {request_id})"
+            ) from None
         if code:
             raise RuntimeError(code) from None
         raise RuntimeError(f"server rejected the request (ref: {request_id})") from None
@@ -390,13 +368,19 @@ def _json_request(
     return result
 
 
-def _revoke_token(base: str, token: str) -> None:
-    _json_request(
-        base + "/v1/cli/session",
-        "DELETE",
-        token=token,
-        expect_no_content=True,
-    )
+def _revoke_token(base: str, token: str) -> bool:
+    """Revoke a CLI token; return False if it was already expired or revoked."""
+    try:
+        _json_request(
+            base + "/v1/cli/session",
+            "DELETE",
+            token=token,
+            expect_no_content=True,
+        )
+    except _Unauthorized:
+        # An expired or already revoked token cannot authenticate anymore.
+        return False
+    return True
 
 
 def status() -> int:
@@ -409,21 +393,17 @@ def status() -> int:
                 "M3_ACCESS_TOKEN is set in the current environment "
                 "(CI token validity is not checked by auth status)."
             )
-        pending = _pending_revoke_token(base)
-        if pending is not None:
-            try:
-                _revoke_token(base, pending)
-                _clear_pending_revoke(base)
-            except RuntimeError:
-                print(
-                    "Warning: the previous CLI credential still needs server revocation.",
-                    file=sys.stderr,
-                )
         token = load_saved_token(base)
         if not token:
             print("No local M3 CLI credential is configured.")
             return 0
-        result = _json_request(base + "/v1/cli/session", "GET", token=token)
+        try:
+            result = _json_request(base + "/v1/cli/session", "GET", token=token)
+        except _Unauthorized as exc:
+            raise RuntimeError(
+                "saved CLI credential is expired or revoked; run `m3 auth login` "
+                "to replace it " + str(exc).removeprefix("server rejected the request ")
+            ) from None
         metadata = result.get("metadata")
         fields = ("id", "kind", "org_id", "name", "created_at", "expires_at")
         if (
@@ -453,20 +433,18 @@ def logout() -> int:
         # Logout is deliberately local-only: an explicit environment token is
         # not the CLI credential that this command owns.
         token = load_saved_token(base)
-        pending = _pending_revoke_token(base)
-        if not token and not pending:
+        if not token:
             print("No local M3 CLI credential is configured.")
             return 0
-        if token:
-            _revoke_token(base, token)
-            if not _remove_saved_token(base):
-                raise RuntimeError(
-                    "remote credential revoked, but local credential could not be removed"
-                )
-        if pending is not None:
-            _revoke_token(base, pending)
-            _clear_pending_revoke(base)
-        print("M3 CLI credential revoked and removed.")
+        revoked = _revoke_token(base, token)
+        if not _remove_saved_token(base):
+            raise RuntimeError(
+                "remote credential revoked, but local credential could not be removed"
+            )
+        if revoked:
+            print("M3 CLI credential revoked and removed.")
+        else:
+            print("M3 CLI credential was already expired or revoked; removed it.")
         return 0
     except (RuntimeError, ValueError, CLIError) as exc:
         print(f"m3 auth logout: {exc}", file=sys.stderr)
@@ -523,10 +501,6 @@ def login() -> int:
             os.environ.get("M3_AUTH_URL", _AUTH_DEFAULT), "M3_AUTH_URL"
         )
         _probe_keyring()
-        pending = _pending_revoke_token(base)
-        if pending is not None:
-            _revoke_token(base, pending)
-            _clear_pending_revoke(base)
         previous_token = load_saved_token(base)
         authorization = _json_request(
             base + "/v1/cli/device/authorization",
@@ -627,14 +601,8 @@ def login() -> int:
             except CLIError:
                 raise RuntimeError("server returned an invalid CLI token") from None
             try:
-                if previous_token is not None and previous_token != token:
-                    _remember_pending_revoke(base, previous_token)
                 _save_token(base, token, {key: metadata[key] for key in fields})
             except Exception:
-                try:
-                    _clear_pending_revoke(base)
-                except Exception:
-                    pass
                 try:
                     _revoke_token(base, token)
                 except Exception:
@@ -647,14 +615,13 @@ def login() -> int:
             if previous_token is not None and previous_token != token:
                 try:
                     _revoke_token(base, previous_token)
-                    _clear_pending_revoke(base)
-                except RuntimeError:
+                except RuntimeError as exc:
                     print(
-                        "m3 auth login: new credential saved, but the previous "
-                        "credential still needs server revocation",
+                        "m3 auth login: warning: could not revoke the previous "
+                        f"CLI credential ({exc}); it expires on its own, or you "
+                        "can revoke it in the M3 account console",
                         file=sys.stderr,
                     )
-                    return 2
             print("M3 CLI credential saved in OS credential store.")
             return 0
         raise RuntimeError("device authorization expired")

@@ -53,10 +53,10 @@ server authorization can remain active until it expires. Run `m3 auth login`
 again to start a new authorization.
 
 When reauthorization replaces a saved CLI credential, login revokes the old
-credential after saving the new one. If that revocation fails, login exits with
-status 2 and leaves the new credential saved. It keeps the old credential in
-pending-revocation keyring state. A later login, status, or logout command
-retries the old credential's revocation.
+credential after saving the new one. An old credential that has already expired
+or been revoked needs no revocation. If revoking it fails for another reason,
+login still succeeds and prints a warning. The old credential then stays valid
+until it expires, or until you revoke it in the M3 account console.
 
 ## Check the saved CLI credential
 
@@ -67,9 +67,10 @@ m3 auth status
 ```
 
 The command validates the saved CLI credential with M3 and reports its token
-name, organization, token ID, and expiry. It requires network access. If
-`M3_ACCESS_TOKEN` is also set, status checks its format and reports its
-presence, but does not validate that CI token with M3.
+name, organization, token ID, and expiry. If the saved credential has expired
+or been revoked, status says so; run `m3 auth login` to replace it. The command
+requires network access. If `M3_ACCESS_TOKEN` is also set, status checks its
+format and reports its presence, but does not validate that CI token with M3.
 
 ## Create a CI token
 
@@ -112,9 +113,10 @@ m3 auth logout
 ```
 
 Logout asks M3 to revoke the saved CLI credential, then removes it from the
-operating-system credential store. If revocation fails, the command keeps the
-local credential so you can retry. Logout does not revoke, unset, or remove
-`M3_ACCESS_TOKEN`.
+operating-system credential store. A credential that has already expired or
+been revoked is removed without error. If revocation fails for another reason,
+the command keeps the local credential so you can retry. Logout does not
+revoke, unset, or remove `M3_ACCESS_TOKEN`.
 
 To rotate or remove CI access, create a replacement on the organization's
 **CI tokens** page, update the `M3_ACCESS_TOKEN` secret, verify an upload, and
