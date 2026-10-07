@@ -89,6 +89,13 @@ def prepare_login(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: True)
 
 
+def forbid_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("logout must not make HTTP requests")
+
+    monkeypatch.setattr(auth, "_json_request", fail)
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -548,7 +555,7 @@ def test_login_preflight_failure_and_browser_fallback(
     assert "no store" in capsys.readouterr().err
 
 
-def test_save_failure_restores_old_credential_and_reports_revoke_failure(
+def test_save_failure_restores_old_credential(
     monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
 ) -> None:
     base = "https://control.example"
@@ -596,58 +603,10 @@ def test_save_failure_restores_old_credential_and_reports_revoke_failure(
     monkeypatch.setattr(auth.time, "monotonic", lambda: 0.0)
     assert auth.login() == 2
     assert auth.load_saved_token(base) == old
-    assert "revocation also failed" in capsys.readouterr().err
+    assert "token was issued but could not be saved" in capsys.readouterr().err
 
 
-def test_relogin_revokes_previous_cli_credential(
-    monkeypatch: pytest.MonkeyPatch, store: Keyring
-) -> None:
-    base = "https://control.example"
-    old = token(b"o")
-    new = token(b"n")
-    auth._save_token(base, old, {"id": "old", "kind": "cli"})
-    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
-    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
-    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: True)
-    start = {
-        "device_code": "device-secret",
-        "user_code": "ABCD-EFGH",
-        "verification_uri": "https://auth.sineframe.com/sign-in",
-        "verification_uri_complete": "https://auth.sineframe.com/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
-        "expires_in": 30,
-        "interval": 1,
-    }
-    issued = {
-        "access_token": new,
-        "token_type": "Bearer",
-        "metadata": {
-            "id": "new",
-            "kind": "cli",
-            "org_id": "org",
-            "name": "M3 CLI",
-            "created_at": "a",
-            "expires_at": "b",
-        },
-    }
-    revoked: list[tuple[str, bool]] = []
-
-    def fake(url: str, method: str, body=None, token=None, **kwargs):
-        if url.endswith("/authorization"):
-            return start
-        if url.endswith("/token"):
-            return issued
-        revoked.append((token, kwargs.get("expect_no_content", False)))
-        return {}
-
-    monkeypatch.setattr(auth, "_json_request", fake)
-    monkeypatch.setattr(auth.time, "sleep", lambda _: None)
-    monkeypatch.setattr(auth.time, "monotonic", lambda: 0.0)
-    assert auth.login() == 0
-    assert auth.load_saved_token(base) == new
-    assert revoked == [(old, True)]
-
-
-def test_relogin_warns_but_succeeds_when_previous_revoke_fails(
+def test_relogin_replaces_previous_credential_without_revoking(
     monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
 ) -> None:
     base = "https://control.example"
@@ -655,35 +614,28 @@ def test_relogin_warns_but_succeeds_when_previous_revoke_fails(
     auth._save_token(base, old, {"id": "old", "kind": "cli"})
     prepare_login(monkeypatch)
     fake_clock(monkeypatch)
-    revoked: list[str] = []
+    calls: list[tuple[str, str]] = []
 
     def fake(url: str, method: str, body=None, token=None, **kwargs):
+        calls.append((method, url))
         if url.endswith("/authorization"):
             return device_authorization()
         if url.endswith("/token"):
             return issued_token()
-        revoked.append(token)
-        raise RuntimeError("server rejected the request (ref: r)")
+        pytest.fail(f"unexpected request: {method} {url}")
 
     monkeypatch.setattr(auth, "_json_request", fake)
     assert auth.login() == 0
     assert auth.load_saved_token(base) == token()
-    assert revoked == [old]
-    err = capsys.readouterr().err
-    assert "could not revoke the previous CLI credential" in err
-    assert old not in err
+    assert [method for method, _ in calls] == ["POST", "POST"]
+    assert capsys.readouterr().err == ""
     assert set(store.values) == {(auth._SERVICE, auth._account(base))}
 
 
 class ControlPlane(BaseHTTPRequestHandler):
-    """Mirrors the control plane's CLI session endpoints.
-
-    GET accepts only live tokens. DELETE answers 204 for any token that still
-    has a row, including revoked or expired ones, and 401 for unknown tokens.
-    """
+    """Mirrors the control plane's CLI endpoints; GET accepts only live tokens."""
 
     live: ClassVar[set[str]] = set()
-    dead: ClassVar[set[str]] = set()
     issue: ClassVar[list[str]] = []
     calls: ClassVar[list[str]] = []
 
@@ -710,12 +662,6 @@ class ControlPlane(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         self.calls.append("DELETE " + self.path)
-        bearer = self._bearer()
-        if bearer not in self.live | self.dead:
-            self._unauthorized()
-            return
-        self.live.discard(bearer)
-        self.dead.add(bearer)
         self._reply(204)
 
     def do_POST(self) -> None:
@@ -736,7 +682,7 @@ class ControlPlane(BaseHTTPRequestHandler):
 def control_plane(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[ControlPlane]]:
     prepare_login(monkeypatch)
     fake_clock(monkeypatch)
-    ControlPlane.live, ControlPlane.dead = set(), set()
+    ControlPlane.live = set()
     ControlPlane.issue, ControlPlane.calls = [], []
     server = HTTPServer(("127.0.0.1", 0), ControlPlane)
     thread = threading.Thread(
@@ -757,61 +703,61 @@ def test_dead_saved_credential_does_not_block_login_or_logout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     base = auth.control_plane_url()
-    first, second, third, fourth = (token(fill) for fill in (b"a", b"b", b"c", b"d"))
-    control_plane.issue = [first, second, third, fourth]
+    first, second = token(b"a"), token(b"b")
+    control_plane.issue = [first, second]
     assert auth.login() == 0
-    control_plane.live.clear()  # the token row was deleted server-side
+    control_plane.live.clear()  # the token was revoked or expired server-side
     capsys.readouterr()
 
     assert auth.status() == 2
     assert "saved CLI credential is expired or revoked" in capsys.readouterr().err
 
-    control_plane.calls.clear()
     assert auth.login() == 0
     assert capsys.readouterr().err == ""
-    assert control_plane.calls == [
-        "POST /v1/cli/device/authorization",
-        "POST /v1/cli/device/token",
-        "DELETE /v1/cli/session",
-    ]
     assert auth.load_saved_token(base) == second
 
-    assert auth.login() == 0
-    assert "Complete sign-in with code" in capsys.readouterr().out
-    assert second not in control_plane.live
-    assert auth.load_saved_token(base) == third
-
-    control_plane.live.discard(third)  # expired: the row stays, revoke is a 204
-    control_plane.dead.add(third)
-    assert auth.status() == 2
+    control_plane.live.clear()
     assert auth.logout() == 0
-    assert "revoked and removed" in capsys.readouterr().out
-    assert auth.load_saved_token(base) is None
-
-    assert auth.login() == 0
-    control_plane.live.clear()  # the token row was deleted server-side
-    capsys.readouterr()
-    assert auth.logout() == 0
-    assert "no longer valid" in capsys.readouterr().out
+    assert "credential removed" in capsys.readouterr().out
     assert auth.load_saved_token(base) is None
     assert all(service != auth._SERVICE for service, _ in store.values)
+    assert not any(call.startswith("DELETE") for call in control_plane.calls)
 
 
-def test_logout_remote_failure_retains_local_and_no_local_does_not_delete(
+def test_logout_makes_no_http_call_and_removes_local_credential(
     monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
 ) -> None:
     base = "https://control.example"
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
-    monkeypatch.setattr(
-        auth,
-        "_json_request",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")),
-    )
+    forbid_http(monkeypatch)
     assert auth.logout() == 0
     assert "No local" in capsys.readouterr().out
     auth._save_token(base, token(), {"id": "id"})
+    assert auth.logout() == 0
+    assert "M3 CLI credential removed." in capsys.readouterr().out
+    assert auth.load_saved_token(base) is None
+
+
+def test_logout_reports_local_deletion_failure_without_secret(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class StuckKeyring(Keyring):
+        def delete_password(self, service: str, account: str) -> None:
+            raise RuntimeError(f"cannot delete {self.values[(service, account)]}")
+
+    base = "https://control.example"
+    secret = token()
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+    auth._save_token(base, secret, {"id": "id"})
+    stuck = StuckKeyring()
+    stuck.values = store.values
+    monkeypatch.setattr(auth, "_keyring", lambda: stuck)
+    forbid_http(monkeypatch)
     assert auth.logout() == 2
-    assert auth.load_saved_token(base) == token()
+    output = capsys.readouterr()
+    assert "could not remove the local credential" in output.err
+    assert secret not in output.out + output.err
+    assert auth.load_saved_token(base) == secret
 
 
 def test_json_request_caps_body_and_rejects_redirect() -> None:
@@ -1043,17 +989,9 @@ def test_logout_ignores_environment_token(
     base = "https://control.example"
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
     monkeypatch.setenv("M3_ACCESS_TOKEN", token())
-    auth._save_token(base, token(), {"id": "id", "kind": "cli"})
-    used: list[tuple[str, bool]] = []
-    monkeypatch.setattr(
-        auth,
-        "_json_request",
-        lambda url, method, body=None, token=None, **kwargs: (
-            used.append((token or "", kwargs.get("expect_no_content", False))) or {}
-        ),
-    )
+    auth._save_token(base, token(b"l"), {"id": "id", "kind": "cli"})
+    forbid_http(monkeypatch)
     assert auth.logout() == 0
-    assert used == [(token(), True)]
     assert auth.load_saved_token(base) is None
 
 

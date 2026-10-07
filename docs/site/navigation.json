@@ -174,7 +174,7 @@
       "id": "guides-ci-access",
       "title": "Manage M3 access",
       "source": "guides/ci/access.md",
-      "description": "Use device authorization for local uploads, or create and store a separate CI token for automated uploads.",
+      "description": "Use device authorization for local uploads, or create and store a separate access token for automated uploads.",
       "kind": "guides"
     },
     {

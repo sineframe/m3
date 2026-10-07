@@ -35,7 +35,7 @@
 - [Run agent cases as a matrix](guides-agents-matrices.md): Use HarnessMatrix to run the same MCP cases across harnesses and trials. A matrix expands test work; it does not make model behavior deterministic.
 - [Test a multi-turn agent session](guides-agents-sessions.md): An agent session keeps one conversation open across turns. Use it when later prompts depend on earlier work, and assert evidence against the turn that produced it.
 - [Compare agent harnesses and versions](guides-agents-versions.md): Run the same test across pinned agent harnesses in isolated runtimes and compare each execution's recorded tool-call result.
-- [Manage M3 access](guides-ci-access.md): Use device authorization for local uploads, or create and store a separate CI token for automated uploads.
+- [Manage M3 access](guides-ci-access.md): Use device authorization for local uploads, or create and store a separate access token for automated uploads.
 - [Run M3 in GitHub Actions](guides-ci-github-actions.md): Run M3 tests in a consumer repository with a credential-free pull request workflow and an optional trusted upload workflow.
 - [Publish or retry a run](guides-ci-publish.md): Publishing is opt-in. Add --upload to m3 test after m3 auth login, or to m3 ci test with M3_ACCESS_TOKEN in CI.
 - [Run M3 tests in CI](guides-ci-run.md): m3 ci test uses the normal project Python, storage, harness, and pytest selection. It excludes tests whose nearest M3 marker sets ci=False.
