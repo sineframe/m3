@@ -50,9 +50,9 @@ server authorization can remain active until it expires. Run `m3 auth login`
 again to start a new authorization.
 
 When reauthorization replaces a saved CLI credential, login revokes the old
-credential after saving the new one. An old credential that has already expired
-or been revoked needs no revocation. If revoking it fails for another reason,
-login still succeeds and prints a warning. The old credential then stays valid
+credential after saving the new one. If M3 no longer recognizes the old
+credential, there is nothing to revoke. If revoking it fails for another
+reason, login still succeeds and prints a warning. The old credential then stays valid
 until it expires, or until you revoke it in the M3 account console.
 
 ## Check the saved CLI credential
@@ -110,9 +110,9 @@ m3 auth logout
 ```
 
 Logout asks M3 to revoke the saved CLI credential, then removes it from the
-operating-system credential store. A credential that has already expired or
-been revoked is removed without error. If revocation fails for another reason,
-the command keeps the local credential so you can retry. Logout does not
+operating-system credential store. A credential that M3 no longer recognizes
+is removed without error. If revocation fails for another reason, the command
+keeps the local credential so you can retry. Logout does not
 revoke, unset, or remove `M3_ACCESS_TOKEN`.
 
 To rotate or remove CI access, create a replacement on the organization's

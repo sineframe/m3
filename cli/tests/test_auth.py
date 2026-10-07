@@ -676,9 +676,14 @@ def test_relogin_warns_but_succeeds_when_previous_revoke_fails(
 
 
 class ControlPlane(BaseHTTPRequestHandler):
-    """A control plane that answers 401 for any token it does not hold live."""
+    """Mirrors the control plane's CLI session endpoints.
+
+    GET accepts only live tokens. DELETE answers 204 for any token that still
+    has a row, including revoked or expired ones, and 401 for unknown tokens.
+    """
 
     live: ClassVar[set[str]] = set()
+    dead: ClassVar[set[str]] = set()
     issue: ClassVar[list[str]] = []
     calls: ClassVar[list[str]] = []
 
@@ -690,24 +695,28 @@ class ControlPlane(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def _authorized(self) -> str | None:
-        bearer = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
-        if bearer in self.live:
-            return bearer
+    def _bearer(self) -> str:
+        return (self.headers.get("Authorization") or "").removeprefix("Bearer ")
+
+    def _unauthorized(self) -> None:
         self._reply(401, {"error": {"code": "unauthorized", "message": "no"}})
-        return None
 
     def do_GET(self) -> None:
         self.calls.append("GET " + self.path)
-        if self._authorized():
+        if self._bearer() in self.live:
             self._reply(200, {"metadata": issued_token()["metadata"]})
+        else:
+            self._unauthorized()
 
     def do_DELETE(self) -> None:
         self.calls.append("DELETE " + self.path)
-        bearer = self._authorized()
-        if bearer:
-            self.live.discard(bearer)
-            self._reply(204)
+        bearer = self._bearer()
+        if bearer not in self.live | self.dead:
+            self._unauthorized()
+            return
+        self.live.discard(bearer)
+        self.dead.add(bearer)
+        self._reply(204)
 
     def do_POST(self) -> None:
         self.rfile.read(int(self.headers["Content-Length"]))
@@ -727,7 +736,8 @@ class ControlPlane(BaseHTTPRequestHandler):
 def control_plane(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[ControlPlane]]:
     prepare_login(monkeypatch)
     fake_clock(monkeypatch)
-    ControlPlane.live, ControlPlane.issue, ControlPlane.calls = set(), [], []
+    ControlPlane.live, ControlPlane.dead = set(), set()
+    ControlPlane.issue, ControlPlane.calls = [], []
     server = HTTPServer(("127.0.0.1", 0), ControlPlane)
     thread = threading.Thread(
         target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
@@ -747,10 +757,10 @@ def test_dead_saved_credential_does_not_block_login_or_logout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     base = auth.control_plane_url()
-    first, second, third = token(b"a"), token(b"b"), token(b"c")
-    control_plane.issue = [first, second, third]
+    first, second, third, fourth = (token(fill) for fill in (b"a", b"b", b"c", b"d"))
+    control_plane.issue = [first, second, third, fourth]
     assert auth.login() == 0
-    control_plane.live.clear()  # expired or revoked in the console
+    control_plane.live.clear()  # the token row was deleted server-side
     capsys.readouterr()
 
     assert auth.status() == 2
@@ -771,9 +781,18 @@ def test_dead_saved_credential_does_not_block_login_or_logout(
     assert second not in control_plane.live
     assert auth.load_saved_token(base) == third
 
-    control_plane.live.clear()
+    control_plane.live.discard(third)  # expired: the row stays, revoke is a 204
+    control_plane.dead.add(third)
+    assert auth.status() == 2
     assert auth.logout() == 0
-    assert "already expired or revoked" in capsys.readouterr().out
+    assert "revoked and removed" in capsys.readouterr().out
+    assert auth.load_saved_token(base) is None
+
+    assert auth.login() == 0
+    control_plane.live.clear()  # the token row was deleted server-side
+    capsys.readouterr()
+    assert auth.logout() == 0
+    assert "no longer valid" in capsys.readouterr().out
     assert auth.load_saved_token(base) is None
     assert all(service != auth._SERVICE for service, _ in store.values)
 

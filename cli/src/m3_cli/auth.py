@@ -369,7 +369,7 @@ def _json_request(
 
 
 def _revoke_token(base: str, token: str) -> bool:
-    """Revoke a CLI token; return False if it was already expired or revoked."""
+    """Revoke a CLI token; return False if the server no longer knows it."""
     try:
         _json_request(
             base + "/v1/cli/session",
@@ -378,7 +378,8 @@ def _revoke_token(base: str, token: str) -> bool:
             expect_no_content=True,
         )
     except _Unauthorized:
-        # An expired or already revoked token cannot authenticate anymore.
+        # The control plane answers 401 only for tokens it has no record of,
+        # which cannot authenticate anymore.
         return False
     return True
 
@@ -444,7 +445,7 @@ def logout() -> int:
         if revoked:
             print("M3 CLI credential revoked and removed.")
         else:
-            print("M3 CLI credential was already expired or revoked; removed it.")
+            print("M3 CLI credential was no longer valid; removed it.")
         return 0
     except (RuntimeError, ValueError, CLIError) as exc:
         print(f"m3 auth logout: {exc}", file=sys.stderr)
