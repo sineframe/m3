@@ -392,7 +392,8 @@ async def test_installed_pi_real_cancellation_cleans_action_channel(
         expect_form("shipping_address").accept(
             {"street": "1 Main", "city": "Pune", "postal_code": "411001"}
         ),
-        timeout=0.2,
+        # The retry blocks forever, so this only bounds how long pi has to reach it.
+        timeout=5,
         block_retry=True,
     )
     assert turn.snapshot.outcome is TurnOutcome.TIMED_OUT
