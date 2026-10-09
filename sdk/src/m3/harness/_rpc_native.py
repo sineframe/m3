@@ -12,7 +12,7 @@ import json
 import shutil
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -249,6 +249,7 @@ class NativeRPCAdapter:
         self.last_policy_evidence: ToolPolicyEvidence | None = None
         self._runtime_secrets: set[str] = set()
         self._process_observed = False
+        self._partial_capture: Callable[[], TurnEvidence] | None = None
 
     @property
     def name(self) -> str:
@@ -375,9 +376,11 @@ class NativeRPCAdapter:
         del metadata
         if self._session is None:
             raise HarnessAdapterError("harness session is not open")
+        self._partial_capture = None
         result = await self._session.send(
             HarnessTurnRequest.from_message(message, timeout_seconds=timeout)
         )
+        self._partial_capture = None
         return AdapterTurn(
             response=result.response,
             error=result.error,
@@ -398,6 +401,12 @@ class NativeRPCAdapter:
     async def cancel(self) -> None:
         if self._session is not None:
             await self._session.cancel()
+
+    def take_partial_turn_evidence(self) -> TurnEvidence | None:
+        """Return observations of a turn cancelled before it returned, once."""
+
+        capture, self._partial_capture = self._partial_capture, None
+        return capture() if capture is not None else None
 
     def process_argv(self, launch: HarnessLaunch) -> tuple[str, ...]:
         return ()
@@ -448,6 +457,19 @@ class NativeRPCAdapter:
         tool_calls: list[Mapping[str, Any]] = []
         text_parts: list[str] = []
         limitations: list[str] = []
+
+        def partial_evidence() -> TurnEvidence:
+            # The session deadline or an outer cancellation stopped this turn
+            # before it could return; keep what was already observed.
+            return TurnEvidence(
+                sequence=sequence,
+                status="cancelled",
+                observations=tuple(observations),
+                limitations=tuple(dict.fromkeys((*limitations, "capture_incomplete"))),
+                monotonic_origin=started,
+            )
+
+        self._partial_capture = partial_evidence
         try:
             await self.send_turn(process, request, sequence)
             terminal = False

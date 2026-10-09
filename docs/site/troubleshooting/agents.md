@@ -66,6 +66,12 @@ Inspect the trace and harness diagnostics before increasing either value; a
 server waiting for input or approval will not be fixed by an arbitrary larger
 value.
 
+A timed-out trace keeps the messages, tool calls, and usage that Codex, Pi,
+Claude Code, and ACP agents reported before the deadline, with the
+`capture_incomplete` limitation. An agent that was still working shows that
+activity; one that stalled shows none. OpenCode returns a turn in one response,
+so its timed-out turns have no messages or tool calls.
+
 An explicit tool request that times out while waiting for a harness response
 may be an unanswered Codex MCP approval request. `agent.run(..., timeout=...)`
 covers startup, turns, and cleanup; `handle.result(timeout=...)` limits only

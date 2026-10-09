@@ -710,6 +710,7 @@ class _AcpContractSession:
         self._initialize_value: dict[str, Any] = {}
         self._session_value: dict[str, Any] = {}
         self._process_started_emitted = False
+        self._partial_capture: Callable[[], TurnEvidence] | None = None
         # Register ambient credential-shaped values before the child can emit
         # even its first byte.  Explicit server values are added by
         # ``_prepare_servers`` below, still in this process.
@@ -1474,6 +1475,29 @@ class _AcpContractSession:
             )
             turn_started = time.monotonic()
             turn_wall_time = datetime.now(timezone.utc)
+
+            def partial_evidence() -> TurnEvidence:
+                # The session deadline or an outer cancellation stopped this
+                # turn before it could return; keep what was already observed.
+                observations, _calls, limitations = self._observations_for_turn(
+                    sequence,
+                    self._updates[before:],
+                    self._frames[frame_before:],
+                    turn_wall_time,
+                    turn_started,
+                    include_started=not self._process_started_emitted,
+                )
+                self._process_started_emitted = True
+                if "capture_incomplete" not in limitations:
+                    limitations.append("capture_incomplete")
+                return TurnEvidence(
+                    sequence=sequence,
+                    status="cancelled",
+                    observations=tuple(observations),
+                    limitations=tuple(limitations),
+                )
+
+            self._partial_capture = partial_evidence
             try:
                 blocks = self._message_blocks(request.message)
                 operation = self._connection.prompt(self._session_id, blocks)
@@ -2176,6 +2200,7 @@ class AcpHarnessAdapter:
             from .contracts import HarnessAdapterError
 
             raise HarnessAdapterError("ACP harness session is not open")
+        self._active._partial_capture = None
         request = HarnessTurnRequest.from_message(
             message,
             timeout_seconds=timeout,
@@ -2185,7 +2210,9 @@ class AcpHarnessAdapter:
                 if isinstance(v, (str, int, float, bool)) or v is None
             },
         )
-        result = await self._active.send(request)
+        active = self._active
+        result = await active.send(request)
+        active._partial_capture = None
         outcome = {
             "completed": TurnOutcome.COMPLETED,
             "timed_out": TurnOutcome.TIMED_OUT,
@@ -2205,6 +2232,14 @@ class AcpHarnessAdapter:
     async def cancel(self) -> None:
         if self._active is not None:
             await self._active.cancel()
+
+    def take_partial_turn_evidence(self) -> TurnEvidence | None:
+        """Return observations of a turn cancelled before it returned, once."""
+
+        if self._active is None:
+            return None
+        capture, self._active._partial_capture = self._active._partial_capture, None
+        return capture() if capture is not None else None
 
     async def close(self) -> None:
         if self._active is not None:
