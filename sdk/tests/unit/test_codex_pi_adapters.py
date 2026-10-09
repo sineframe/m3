@@ -977,6 +977,47 @@ async def test_codex_thread_start_error_redacts_native_login_tokens(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("adapter_environment", "auth"),
+    (
+        # Credentials the adapter itself hands to Codex.
+        ({"OPENAI_API_KEY": "sk-test-key"}, None),
+        # Short login values are credentials too, whatever their length.
+        ({}, {"OPENAI_API_KEY": "sk-test-key", "tokens": {"account_id": "acct"}}),
+    ),
+)
+async def test_codex_thread_start_error_redacts_every_child_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_environment: dict[str, str],
+    auth: dict[str, object] | None,
+) -> None:
+    source = tmp_path / "source-home"
+    source.mkdir()
+    if auth is not None:
+        (source / "auth.json").write_text(json.dumps(auth), encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE), environment=adapter_environment
+    )
+    root = tmp_path / "root"
+    root.mkdir()
+    adapter.environment_for_launch(launch, root)
+    process = _ThreadStartErrorProcess(
+        {"code": -32603, "message": "rejected sk-test-key for acct"}
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    message = str(exc_info.value)
+    assert "sk-test-key" not in message
+    assert message.startswith("Codex thread/start failed: rejected")
+    if auth is not None:
+        assert "acct" not in message
+
+
+@pytest.mark.asyncio
 async def test_codex_thread_start_error_without_message_is_generic() -> None:
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
     process = _ThreadStartErrorProcess({"code": -32603})

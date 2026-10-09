@@ -17,7 +17,7 @@ from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
-from ..trace.redaction import RedactionConfig, redact_for_api
+from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
 from ..types import (
     Codex,
     ErrorCode,
@@ -137,15 +137,27 @@ def _within_request(granted: Any, requested: Any) -> bool:
     return bool(granted == requested or granted is None or granted is False)
 
 
-def _login_values(value: Any) -> set[str]:
-    """Every credential-like string in a Codex ``auth.json`` document."""
+def _login_values(value: Any, sensitive: bool = False) -> set[str]:
+    """Every credential-like string in a Codex ``auth.json`` document.
+
+    Values under credential-named keys (and everything under ``tokens``)
+    count whatever their length; any other long string counts too, so an
+    unrecognized token field is still covered.
+    """
     if isinstance(value, Mapping):
-        return {item for nested in value.values() for item in _login_values(nested)}
+        return {
+            item
+            for key, nested in value.items()
+            for item in _login_values(
+                nested,
+                sensitive or key == "tokens" or is_sensitive_key(str(key)),
+            )
+        }
     if isinstance(value, list):
-        return {item for nested in value for item in _login_values(nested)}
-    # Short values are modes and flags ("chatgpt"); redacting them would only
-    # garble ordinary words in the message.
-    return {value} if isinstance(value, str) and len(value) >= 16 else set()
+        return {item for nested in value for item in _login_values(nested, sensitive)}
+    if isinstance(value, str) and value and (sensitive or len(value) >= 16):
+        return {value}
+    return set()
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,6 +628,13 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     environment[value.name] = resolved
                     runtime_secrets.add(resolved)
         runtime_secrets |= login_secrets
+        # Credentials the adapter passes to Codex directly (for example an
+        # OPENAI_API_KEY in its environment) are runtime secrets as well.
+        runtime_secrets |= {
+            value
+            for key, value in environment.items()
+            if value and is_sensitive_key(key)
+        }
         self._runtime_secrets = runtime_secrets
         self._mcp_protocol_markers = protocol_markers
         add_secrets = getattr(launch.capture, "add_secrets", None)
