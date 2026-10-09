@@ -53,6 +53,7 @@ from m3.types import (
     EventOrigin,
     EventSource,
     ExecutionOutcome,
+    FullToolPolicy,
     NativeToolPolicy,
     OpenCode,
     RequestLink,
@@ -127,6 +128,8 @@ def test_opencode_nonempty_config_is_dialect_exact() -> None:
     )
     legacy = opencode_configuration(launch, dialect="legacy")
     v2 = opencode_configuration(launch, dialect="v2")
+    # The no-policy permission block is covered by its own test.
+    assert legacy.pop("permission") == v2.pop("permission")
     assert legacy == {
         "$schema": "https://opencode.ai/config.json",
         "mcp": {
@@ -1939,6 +1942,7 @@ async def test_opencode_native_policy_is_preflighted_and_rendered_for_each_mode(
         assert rendered_v2["mcp"]["servers"]["stdio"]["type"] == "local"
         assert rendered_v2["tools"] == rendered["tools"]
         assert rendered_v2["permission"] == rendered["permission"]
+        assert "ask" not in rendered["permission"].values()
         if mode == "full":
             assert rendered["tools"] == {"*": True}
             assert rendered["permission"] == {"*": "allow"}
@@ -1958,6 +1962,47 @@ async def test_opencode_native_policy_is_preflighted_and_rendered_for_each_mode(
                 "read": "allow",
                 "glob": "allow",
             }
+
+
+def test_opencode_without_native_policy_never_leaves_permissions_on_ask() -> None:
+    # M3 has no channel to answer OpenCode permission prompts, so an `ask`
+    # default (e.g. external_directory) blocks the turn until it times out.
+    configuration = HarnessServerConfig(
+        key="stdio",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="stdio",
+        command="python",
+    )
+    server = StdioServer(name="stdio", command="python")
+    servers = ServerGroupSnapshot(
+        (ServerRecord("stdio", server, True, True, "stdio", TransportKind.STDIO),)
+    )
+
+    def values(permission: Any) -> list[Any]:
+        if isinstance(permission, Mapping):
+            return [item for value in permission.values() for item in values(value)]
+        return [permission]
+
+    for policy in (
+        RestrictiveToolPolicy(),
+        RestrictiveToolPolicy(allowed_tools=("stdio:read",)),
+        FullToolPolicy(acknowledge_risk=True),
+    ):
+        spec = AgentSpec(
+            harness=OpenCode(model="fixture"),
+            servers=(ServerBinding(server=server, alias="stdio"),),
+            tool_policy=policy,
+        )
+        launch = HarnessLaunch(spec, servers, (configuration,), policy)
+        for dialect in ("legacy", "v2"):
+            rendered = opencode_configuration(launch, dialect=dialect)
+            assert "tools" not in rendered
+            permission = rendered["permission"]
+            assert permission["external_directory"] == "deny"
+            assert permission["doom_loop"] == "deny"
+            assert "ask" not in values(permission)
 
 
 @pytest.mark.asyncio

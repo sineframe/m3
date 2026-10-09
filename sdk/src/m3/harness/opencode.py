@@ -197,13 +197,27 @@ def opencode_configuration(
                 ),
             }
     else:
+        # Without a native policy OpenCode keeps its default tools, but M3
+        # cannot answer permission prompts, so each default `ask` becomes
+        # `deny`. Left on `ask`, a path outside the workspace stalls the turn
+        # until it times out.
         tools = {}
-        permissions = {}
+        permissions = {
+            "external_directory": "deny",
+            "doom_loop": "deny",
+            "read": {
+                "*": "allow",
+                "*.env": "deny",
+                "*.env.*": "deny",
+                "*.env.example": "allow",
+            },
+        }
     if dialect == "v2":
         return {
             "$schema": "https://opencode.ai/config.json",
             "mcp": {"servers": servers},
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            "permission": permissions,
         }
     if dialect == "legacy":
         return {
@@ -211,7 +225,8 @@ def opencode_configuration(
             "mcp": {
                 name: {**value, "enabled": True} for name, value in servers.items()
             },
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            "permission": permissions,
         }
     raise HarnessStartupError("unsupported OpenCode configuration dialect")
 
