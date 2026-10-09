@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import re
@@ -26,6 +27,7 @@ from typing import Any, Literal, NamedTuple, cast
 import httpx
 
 from ..agent_session import AdapterTurn
+from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
 from ..types import (
@@ -78,6 +80,8 @@ from .observations import (
     UsageObservedObservation,
 )
 
+# How often a running turn checks OpenCode for permission prompts to answer.
+_PERMISSION_POLL_SECONDS = 0.25
 _URL = re.compile(r"https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+")
 _DIALECT_PROBE_CONTROL_KEYS = frozenset(
     {"M3_OPENCODE_MODE", "M3_PROBE_MARKER", "M3_VERSION_MARKER"}
@@ -197,18 +201,24 @@ def opencode_configuration(
                 ),
             }
     else:
-        # Without a native policy OpenCode keeps its default tools, but M3
-        # cannot answer permission prompts, so each default `ask` becomes
-        # `deny`. Left on `ask`, a path outside the workspace stalls the turn
-        # until it times out.
+        # Without a native policy OpenCode keeps its default tools, and its
+        # default `ask` prompts follow the session's permission policy. Under
+        # "prompt" they stay `ask` and the adapter answers each one through
+        # the permission handler; the default policy denies them.
+        mode = (
+            launch.interactions.permission_policy.mode
+            if launch.interactions is not None
+            else "deny"
+        )
+        action = {"allow": "allow", "prompt": "ask"}.get(mode, "deny")
         tools = {}
         permissions = {
-            "external_directory": "deny",
-            "doom_loop": "deny",
+            "external_directory": action,
+            "doom_loop": action,
             "read": {
                 "*": "allow",
-                "*.env": "deny",
-                "*.env.*": "deny",
+                "*.env": action,
+                "*.env.*": action,
                 "*.env.example": "allow",
             },
         }
@@ -735,6 +745,53 @@ class OpenCodeHarnessAdapter:
             body.extend(chunk)
         return bytes(body)
 
+    async def _answer_permissions(
+        self, client: httpx.AsyncClient, session_id: str
+    ) -> None:
+        answered: set[str] = set()
+        while True:
+            await asyncio.sleep(_PERMISSION_POLL_SECONDS)
+            try:
+                response = await client.get("/permission")
+                pending = json.loads(await self._read_bounded_response(response))
+            except (httpx.HTTPError, OSError, ValueError):
+                continue
+            for item in pending if isinstance(pending, list) else ():
+                if not isinstance(item, Mapping) or item.get("sessionID") != session_id:
+                    continue
+                request_id = item.get("id")
+                if not isinstance(request_id, str) or request_id in answered:
+                    continue
+                answered.add(request_id)
+                allowed = await self._permission_allowed(item)
+                with contextlib.suppress(httpx.HTTPError, OSError):
+                    await client.post(
+                        f"/permission/{request_id}/reply",
+                        json={"reply": "once" if allowed else "reject"},
+                    )
+
+    async def _permission_allowed(self, item: Mapping[str, Any]) -> bool:
+        interactions = self._launch.interactions if self._launch else None
+        if interactions is None:
+            return False
+        patterns = item.get("patterns")
+        patterns = (
+            [str(value) for value in patterns] if isinstance(patterns, list) else []
+        )
+        metadata = item.get("metadata")
+        permission = await interactions.permission(
+            PermissionRequest(
+                f"opencode.{item.get('permission')}",
+                ",".join(patterns),
+                context={
+                    "permission": str(item.get("permission")),
+                    "patterns": patterns,
+                    "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
+                },
+            )
+        )
+        return permission.allowed
+
     async def _send(
         self, request: HarnessTurnRequest, sequence: int, session_id: str
     ) -> HarnessTurnResult:
@@ -752,6 +809,9 @@ class OpenCodeHarnessAdapter:
                 }
             ],
         }
+        # OpenCode blocks the turn on any `ask` until it is answered, so a
+        # responder answers this session's prompts while the POST is open.
+        responder = asyncio.create_task(self._answer_permissions(client, session_id))
         try:
             async with client.stream(
                 "POST",
@@ -825,6 +885,10 @@ class OpenCodeHarnessAdapter:
                 turn_started=turn_started,
                 turn_wall_time=turn_wall_time,
             )
+        finally:
+            responder.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await responder
         if not isinstance(body, Mapping):
             return self._failure_result(
                 sequence,

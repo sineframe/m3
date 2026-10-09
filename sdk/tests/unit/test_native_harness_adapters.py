@@ -38,6 +38,11 @@ from m3.harness.observations import (
     UsageObservedObservation,
 )
 from m3.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
+from m3.interaction_handlers import (
+    InteractionHandlers,
+    Interactions,
+    PermissionRequest,
+)
 from m3.server_group import (
     HarnessServerConfig,
     ServerGroupSnapshot,
@@ -56,6 +61,7 @@ from m3.types import (
     FullToolPolicy,
     NativeToolPolicy,
     OpenCode,
+    PermissionPolicy,
     RequestLink,
     RestrictiveToolPolicy,
     SecretReference,
@@ -1965,8 +1971,8 @@ async def test_opencode_native_policy_is_preflighted_and_rendered_for_each_mode(
 
 
 def test_opencode_without_native_policy_never_leaves_permissions_on_ask() -> None:
-    # M3 has no channel to answer OpenCode permission prompts, so an `ask`
-    # default (e.g. external_directory) blocks the turn until it times out.
+    # With the default (deny) permission policy no OpenCode default may stay
+    # `ask`: a prompt like external_directory would block the turn.
     configuration = HarnessServerConfig(
         key="stdio",
         transport=TransportKind.STDIO,
@@ -2949,3 +2955,126 @@ async def test_acp_empty_manifest_reference_is_forwarded_to_child(tmp_path):
     )
 
     assert environment["TOKEN"] == ""
+
+
+def _opencode_launch_with(interactions: Interactions | None) -> HarnessLaunch:
+    base = _launch()
+    return HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+        interactions,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "action"),
+    ((None, "deny"), ("deny", "deny"), ("allow", "allow"), ("prompt", "ask")),
+)
+def test_opencode_default_prompts_follow_session_permission_policy(
+    mode: str | None, action: str
+) -> None:
+    interactions = (
+        None
+        if mode is None
+        else Interactions(permission_policy=PermissionPolicy(mode=mode))  # type: ignore[arg-type]
+    )
+    launch = _opencode_launch_with(interactions)
+    for dialect in ("legacy", "v2"):
+        permission = opencode_configuration(launch, dialect=dialect)["permission"]
+        assert permission["external_directory"] == action
+        assert permission["doom_loop"] == action
+        assert permission["read"]["*.env"] == action
+        assert permission["read"]["*"] == "allow"
+
+
+class _PermissionFixture(_TurnFixture):
+    """OpenCode server whose turn blocks until its permission prompt is answered."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            {"info": {"finish": "stop"}, "parts": [{"type": "text", "text": "ok"}]}
+        )
+        self.replies: list[tuple[str, object]] = []
+        self.answered = asyncio.Event()
+        self.pending: list[dict[str, object]] = [
+            {
+                "id": "per_other",
+                "sessionID": "ses_other",
+                "permission": "external_directory",
+                "patterns": ["/elsewhere/*"],
+            },
+            {
+                "id": "per_1",
+                "sessionID": "ses_1",
+                "permission": "external_directory",
+                "patterns": ["/outside/*"],
+                "metadata": {"filepath": "/outside/note.txt"},
+            },
+        ]
+
+    def stream(self, *_args: object, **_kwargs: object) -> Any:
+        fixture = self
+
+        class _Blocking(_TurnStream):
+            async def __aenter__(self) -> _HTTPResponse:
+                await asyncio.wait_for(fixture.answered.wait(), 5)
+                return await super().__aenter__()
+
+        return _Blocking(self.response)
+
+    async def get(self, url: str, **_kwargs: object) -> _HTTPResponse:
+        assert url == "/permission"
+        return _HTTPResponse(self.pending)
+
+    async def post(self, url: str, json: object = None, **_kwargs: object) -> Any:
+        self.replies.append((url, json))
+        self.pending = [
+            item for item in self.pending if url != f"/permission/{item['id']}/reply"
+        ]
+        if url == "/permission/per_1/reply":
+            self.answered.set()
+        return _HTTPResponse({})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "allow", "reply"),
+    (
+        (None, None, "reject"),
+        ("allow", None, "once"),
+        ("prompt", True, "once"),
+        ("prompt", False, "reject"),
+    ),
+)
+async def test_opencode_answers_pending_permission_from_session_policy(
+    mode: str | None, allow: bool | None, reply: str
+) -> None:
+    seen: list[PermissionRequest] = []
+
+    def handler(request: PermissionRequest) -> bool:
+        seen.append(request)
+        return bool(allow)
+
+    interactions = (
+        None
+        if mode is None
+        else Interactions(
+            permission_policy=PermissionPolicy(mode=mode),  # type: ignore[arg-type]
+            handlers=InteractionHandlers(permission=handler),
+        )
+    )
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = _opencode_launch_with(interactions)
+    client = _PermissionFixture()
+    adapter._client = cast(Any, client)
+    result = await adapter._send(HarnessTurnRequest.from_message("hi"), 1, "ses_1")
+    assert result.status == "completed"
+    # Only this session's prompt is answered, once.
+    assert client.replies == [("/permission/per_1/reply", {"reply": reply})]
+    if mode == "prompt":
+        assert len(seen) == 1
+        assert seen[0].operation == "opencode.external_directory"
+        assert seen[0].resource == "/outside/*"
+        assert seen[0].context["metadata"] == {"filepath": "/outside/note.txt"}
