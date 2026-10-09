@@ -29,7 +29,7 @@ In `kit.agents(...)`, set `credential_env={"OPENAI_API_KEY": "MY_OPENAI_KEY"}` t
 
 When constructing `Codex`, `Pi`, `ClaudeCode`, or `OpenCode` directly, use `credential_references`. Its keys are agent environment variable names; its values are `SecretReference` objects naming the credential source.
 
-M3 also selects non-empty standard credential variables for the chosen harness and provider, such as `OPENAI_API_KEY` for Codex and `ANTHROPIC_API_KEY` for Claude Code. An explicit `credential_env` entry overrides the default for that target variable.
+M3 also selects non-empty standard credential variables for the chosen harness and provider, such as `OPENAI_API_KEY` for Codex and `ANTHROPIC_API_KEY` for Claude Code. These defaults apply only when the selection has no `credential_env`. An explicit `credential_env` is the complete set of credentials the agent receives, so `credential_env={"CLAUDE_CODE_OAUTH_TOKEN": "MY_CLAUDE_TOKEN"}` passes only `CLAUDE_CODE_OAUTH_TOKEN`, even when `ANTHROPIC_API_KEY` is set in the parent. Set `credential_env={}` to forward no credentials at all; with Codex, this lets the agent reuse the host's ChatGPT login even when `OPENAI_API_KEY` is set.
 
 For OpenCode and Pi, M3 selects a credential based on the model prefix:
 `opencode/` uses `OPENCODE_API_KEY`, `openai/` uses `OPENAI_API_KEY`, and
