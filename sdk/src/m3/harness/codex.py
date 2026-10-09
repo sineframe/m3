@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import shutil
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +15,7 @@ from typing import Any
 from ..agent_session import AdapterTurn
 from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
+from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
 from ..types import (
     Codex,
@@ -38,6 +39,7 @@ from .contracts import (
 from .native import probe_help
 from .observations import (
     HarnessObservation,
+    InteractionObservedObservation,
     MessageChunkObservation,
     MetadataObservedObservation,
     ReasoningChunkObservation,
@@ -48,6 +50,89 @@ from .observations import (
 
 # Covers Codex's own per-server MCP startup timeout (10 seconds by default).
 _THREAD_START_TIMEOUT_SECONDS = 30.0
+
+# App Server requests that wait for a user to approve a native command, file
+# change, or sandbox widening. Codex blocks the turn until each is answered.
+_NATIVE_APPROVAL_OPERATIONS = {
+    "item/commandExecution/requestApproval": "command_execution",
+    "item/fileChange/requestApproval": "file_change",
+    "item/permissions/requestApproval": "permissions",
+    "execCommandApproval": "command_execution",
+    "applyPatchApproval": "file_change",
+}
+
+
+def _approval_target(
+    params: Mapping[str, Any], item_paths: Sequence[str] = ()
+) -> tuple[str, dict[str, Any]]:
+    """Return the resource and structured context of one native approval.
+
+    Modern file-change approvals name only the item; its paths come from the
+    earlier ``item/started`` file-change item and arrive as ``item_paths``.
+    """
+    context: dict[str, Any] = {}
+    command = params.get("command")
+    if isinstance(command, list):
+        command = " ".join(str(part) for part in command)
+    if isinstance(command, str):
+        context["command"] = command
+    for key, name in (
+        ("cwd", "cwd"),
+        ("grantRoot", "grant_root"),
+        ("reason", "reason"),
+    ):
+        value = params.get(key)
+        if isinstance(value, str):
+            context[name] = value
+    network = params.get("networkApprovalContext")
+    if isinstance(network, Mapping):
+        context["network"] = _plain_json(network)
+    changes = params.get("fileChanges")
+    if isinstance(changes, Mapping):
+        context["paths"] = sorted(str(path) for path in changes)
+    elif item_paths:
+        context["paths"] = sorted(item_paths)
+    permissions = params.get("permissions")
+    if isinstance(permissions, Mapping):
+        context["permissions"] = _plain_json(permissions)
+    # `command` may not describe a managed-network request, so the host is
+    # the resource whenever Codex names one.
+    if isinstance(network, Mapping) and isinstance(network.get("host"), str):
+        resource = network["host"]
+    elif isinstance(command, str):
+        resource = command
+    elif "grant_root" in context:
+        resource = context["grant_root"]
+    elif "paths" in context:
+        resource = ",".join(context["paths"])
+    elif isinstance(permissions, Mapping):
+        resource = ",".join(sorted(str(key) for key in permissions))
+    else:
+        resource = ""
+    return resource, context
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_json(item) for item in value]
+    return value
+
+
+def _within_request(granted: Any, requested: Any) -> bool:
+    """Whether a granted permission profile asks for nothing beyond the request."""
+    if isinstance(granted, Mapping):
+        return isinstance(requested, Mapping) and all(
+            key in requested and _within_request(value, requested[key])
+            for key, value in granted.items()
+        )
+    if isinstance(granted, (list, tuple)):
+        return isinstance(requested, (list, tuple)) and all(
+            any(_within_request(item, offered) for offered in requested)
+            for item in granted
+        )
+    return bool(granted == requested or granted is None or granted is False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +323,13 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._unapproved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
         self._approved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
         self._mcp_protocol_markers: dict[str, str] = {}
+        # Native approvals answered by next_frame, keyed by request id until
+        # consume_frame records them as interaction observations.
+        self._answered_approvals: dict[
+            str | int, tuple[dict[str, Any], dict[str, Any]]
+        ] = {}
+        # Paths of started fileChange items, for the approval that follows.
+        self._file_change_paths: dict[str, list[str]] = {}
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
@@ -651,6 +743,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._streamed_item_ids.clear()
         self._unapproved_mcp_tool_items.clear()
         self._approved_mcp_tool_items.clear()
+        self._answered_approvals.clear()
+        self._file_change_paths.clear()
         text = "".join(
             block.text for block in request.message.content if hasattr(block, "text")
         )
@@ -686,8 +780,43 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         )
         text = ""
         calls: list[Mapping[str, Any]] = []
+        request_id = frame.get("id")
+        answered = (
+            self._answered_approvals.pop(request_id, None)
+            if isinstance(request_id, (str, int)) and "method" in frame
+            else None
+        )
+        if answered is not None:
+            approval_request, approval_response = answered
+            offset = max(0.0, (asyncio.get_event_loop().time() - started) * 1000)
+            observations.append(
+                InteractionObservedObservation(
+                    observation_id=f"codex-{sequence}-approval-{request_id}",
+                    harness_kind="codex",
+                    turn_sequence=sequence,
+                    wall_time=wall,
+                    monotonic_offset_ms=offset,
+                    interaction_kind="permission.request",
+                    request=approval_request,
+                )
+            )
+            observations.append(
+                InteractionObservedObservation(
+                    observation_id=f"codex-{sequence}-approval-{request_id}-response",
+                    harness_kind="codex",
+                    turn_sequence=sequence,
+                    wall_time=wall,
+                    monotonic_offset_ms=offset,
+                    interaction_kind="permission.response",
+                    response=approval_response,
+                )
+            )
+            return False, "", []
+        # Server requests carry their own id space, which can collide with the
+        # client's turn/start id.
         if (
             self._pending_turn_request is not None
+            and "method" not in frame
             and frame.get("id") == self._pending_turn_request
         ):
             result = frame.get("result")
@@ -968,6 +1097,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         frame = await self._next_action_frame(process, timeout)
         if frame is None:
             return None
+        if frame.get("method") == "item/started":
+            self._remember_file_change_paths(frame.get("params"))
         if frame.get("method") == "mcpServer/elicitation/request":
             params = frame.get("params")
             params = params if isinstance(params, Mapping) else {}
@@ -991,6 +1122,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 self._active_mrtr_action.submit_native_prompt(frame)
             else:
                 self._unscoped_elicitation_failure = True
+        elif "method" in frame and "id" in frame:
+            # Codex waits for every server request to be answered, so none may
+            # be left pending: an unanswered approval stalls the turn forever.
+            await self._answer_server_request(process, frame)
         if self._unscoped_elicitation_failure:
             await self._interrupt_turn(process)
         action = self._active_mrtr_action
@@ -1225,6 +1360,94 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     "action": "accept" if allowed else "decline",
                     **({"content": {}} if allowed else {}),
                 },
+            },
+        )
+
+    def _remember_file_change_paths(self, params: Any) -> None:
+        item = params.get("item") if isinstance(params, Mapping) else None
+        if not isinstance(item, Mapping) or item.get("type") != "fileChange":
+            return
+        item_id = item.get("id")
+        changes = item.get("changes")
+        if isinstance(item_id, str) and isinstance(changes, list):
+            self._file_change_paths[item_id] = [
+                change["path"]
+                for change in changes
+                if isinstance(change, Mapping) and isinstance(change.get("path"), str)
+            ]
+
+    async def _answer_server_request(
+        self, process: JsonRpcProcess, frame: Mapping[str, Any]
+    ) -> None:
+        request_id = frame.get("id")
+        if isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
+            return
+        method = str(frame.get("method"))
+        operation = _NATIVE_APPROVAL_OPERATIONS.get(method)
+        if operation is None:
+            await self._write_frame(
+                process,
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"M3 does not handle Codex request {method}",
+                    },
+                },
+            )
+            return
+        params = frame.get("params")
+        params = params if isinstance(params, Mapping) else {}
+        item_id = params.get("itemId")
+        resource, context = _approval_target(
+            params,
+            self._file_change_paths.get(item_id, ())
+            if isinstance(item_id, str)
+            else (),
+        )
+        # Native approvals are outside the MCP tool selection, so they follow
+        # the session's permission policy, which denies by default.
+        interactions = self._launch.interactions if self._launch else None
+        allowed = False
+        reason = "default_deny"
+        grant: Mapping[str, Any] | None = None
+        if interactions is not None:
+            permission = await interactions.permission(
+                PermissionRequest(f"codex.{operation}", resource, context=context)
+            )
+            allowed = permission.allowed
+            reason = permission.receipt.reason
+            grant = permission.grant
+        if method in {"execCommandApproval", "applyPatchApproval"}:
+            result: dict[str, Any] = {
+                "decision": "approved"
+                if allowed
+                else {"denied": {"rejection": "declined by M3 permission policy"}}
+            }
+        elif operation == "permissions":
+            requested = params.get("permissions")
+            requested = requested if isinstance(requested, Mapping) else {}
+            granted: Any = {}
+            if allowed:
+                granted = requested if grant is None else grant
+                # A handler may narrow the request but never widen it.
+                if not _within_request(granted, requested):
+                    granted, reason = {}, "grant_exceeds_request"
+            result = {"permissions": _plain_json(granted), "scope": "turn"}
+        else:
+            result = {"decision": "accept" if allowed else "decline"}
+        await self._write_frame(
+            process, {"jsonrpc": "2.0", "id": request_id, "result": result}
+        )
+        # The raw frame already carries the (redacted) command; the
+        # observation records only the decision.
+        self._answered_approvals[request_id] = (
+            {"method": method, "operation": operation},
+            {
+                "outcome": "allow" if allowed else "deny",
+                "reason": reason,
+                "reply": result,
             },
         )
 

@@ -53,16 +53,35 @@ class InteractionReceipt:
 
 @dataclass(frozen=True, slots=True)
 class PermissionRequest:
+    """One native permission prompt.
+
+    ``context`` carries the harness's structured target (working directory,
+    network host, paths, requested permissions) so handlers can scope a
+    decision instead of matching on ``resource`` text alone.
+    """
+
     operation: str
     resource: str = ""
     destructive: bool = False
+    context: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "context", MappingProxyType(dict(self.context)))
 
 
 @dataclass(frozen=True, slots=True)
 class PermissionResult:
+    """Permission decision.
+
+    ``grant`` lets a handler approve only part of a request that asks for a
+    permission profile; ``None`` grants what was requested. Harnesses never
+    grant more than was requested.
+    """
+
     allowed: bool
     receipt: InteractionReceipt
     confirmation_required: bool = False
+    grant: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +267,7 @@ class Interactions:
                     value.allowed,
                     receipt,
                     value.confirmation_required or request.destructive,
+                    value.grant,
                 )
             allowed = bool(value)
             return PermissionResult(

@@ -40,6 +40,13 @@ selection, so a Codex test needs no permission setting; a tool outside the
 selection is declined even if `permission_policy="allow"` is set. If Codex
 lists tools but makes no call, check the `tools` selection and the prompt.
 
+Codex also asks before running a command outside its sandbox, editing files
+outside the workspace, or widening sandbox permissions (for example network
+access). M3 answers these from `permission_policy`, so they are declined by
+default and the model carries on without them. The trace records each one as a
+`permission.request`/`permission.response` pair. Pass `permission_policy="allow"`
+only for a trusted agent and a scoped workspace.
+
 ACP agents are different: every permission request they send, including one
 for an MCP tool call, goes to `permission_policy`, which denies by default.
 For an ACP agent that asks before calling tools, pass

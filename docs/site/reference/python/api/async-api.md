@@ -1543,8 +1543,11 @@ m3.async_api.PermissionRequest(
     operation: str,
     resource: str = '',
     destructive: bool = False,
+    context: Mapping[str, Any] = ...,
 ) -> None
 ```
+
+One native permission prompt.
 
 ## `PermissionResult`
 
@@ -1553,8 +1556,11 @@ m3.async_api.PermissionResult(
     allowed: bool,
     receipt: InteractionReceipt,
     confirmation_required: bool = False,
+    grant: Mapping[str, Any] | None = None,
 ) -> None
 ```
+
+Permission decision.
 
 ## `PermissionHandler`
 
