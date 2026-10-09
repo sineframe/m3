@@ -137,6 +137,17 @@ def _within_request(granted: Any, requested: Any) -> bool:
     return bool(granted == requested or granted is None or granted is False)
 
 
+def _login_values(value: Any) -> set[str]:
+    """Every credential-like string in a Codex ``auth.json`` document."""
+    if isinstance(value, Mapping):
+        return {item for nested in value.values() for item in _login_values(nested)}
+    if isinstance(value, list):
+        return {item for nested in value for item in _login_values(nested)}
+    # Short values are modes and flags ("chatgpt"); redacting them would only
+    # garble ordinary words in the message.
+    return {value} if isinstance(value, str) and len(value) >= 16 else set()
+
+
 @dataclass(frozen=True, slots=True)
 class _NativeMcpToolItem:
     """Codex-owned item identity eligible for one on-request approval."""
@@ -332,6 +343,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         ] = {}
         # Paths of started fileChange items, for the approval that follows.
         self._file_change_paths: dict[str, list[str]] = {}
+        # Set when a copied native login could not be parsed for redaction.
+        self._login_unredactable = False
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
@@ -522,6 +535,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         # Preserve an existing native ChatGPT login when no API-key mapping is
         # configured. The isolated home is temporary and cleaned with the
         # execution workspace; auth material never enters the serializable spec.
+        login_secrets: set[str] = set()
+        self._login_unredactable = False
         if (
             isinstance(launch.spec.harness, Codex)
             and not launch.spec.harness.credential_references
@@ -544,7 +559,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                             os.fdopen(descriptor, "wb") as destination,
                         ):
                             descriptor = -1
-                            shutil.copyfileobj(source, destination)
+                            auth = source.read()
+                            destination.write(auth)
                     finally:
                         if descriptor != -1:
                             os.close(descriptor)
@@ -556,6 +572,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     raise HarnessStartupError(
                         "Codex native login is unavailable"
                     ) from exc
+                # Codex may echo login tokens in errors; redact them like other
+                # runtime secrets, and drop provider text if they can't be read.
+                try:
+                    login_secrets = _login_values(json.loads(auth))
+                except ValueError:
+                    self._login_unredactable = True
         environment = dict(self.environment)
         runtime_secrets: set[str] = set()
         protocol_markers: dict[str, str] = {}
@@ -593,6 +615,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                         raise HarnessStartupError("Codex MCP credential is unavailable")
                     environment[value.name] = resolved
                     runtime_secrets.add(resolved)
+        runtime_secrets |= login_secrets
         self._runtime_secrets = runtime_secrets
         self._mcp_protocol_markers = protocol_markers
         add_secrets = getattr(launch.capture, "add_secrets", None)
@@ -725,7 +748,11 @@ class CodexHarnessAdapter(NativeRPCAdapter):
 
         message = error.get("message")
         safe: Any = None
-        if isinstance(message, str) and message.strip():
+        if (
+            isinstance(message, str)
+            and message.strip()
+            and not self._login_unredactable
+        ):
             # Redact the original text: normalizing whitespace first could
             # change a secret so it no longer matches.
             try:

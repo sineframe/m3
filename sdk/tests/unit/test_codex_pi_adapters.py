@@ -938,6 +938,45 @@ async def test_codex_thread_start_error_redacts_secrets_before_collapsing_space(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("auth", "expected"),
+    (
+        (
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {"access_token": "native-auth-token-canary"},
+            },
+            "Codex thread/start failed: login rejected",
+        ),
+        # Unreadable login material cannot be redacted, so no provider text.
+        ("not json native-auth-token-canary", "Codex thread/start failed"),
+    ),
+)
+async def test_codex_thread_start_error_redacts_native_login_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth: object, expected: str
+) -> None:
+    source = tmp_path / "source-home"
+    source.mkdir()
+    (source / "auth.json").write_text(
+        auth if isinstance(auth, str) else json.dumps(auth), encoding="utf-8"
+    )
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    root = tmp_path / "root"
+    root.mkdir()
+    adapter.environment_for_launch(launch, root)
+    process = _ThreadStartErrorProcess(
+        {"code": -32603, "message": "login rejected native-auth-token-canary"}
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    message = str(exc_info.value)
+    assert "native-auth-token-canary" not in message
+    assert message.startswith(expected)
+
+
+@pytest.mark.asyncio
 async def test_codex_thread_start_error_without_message_is_generic() -> None:
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
     process = _ThreadStartErrorProcess({"code": -32603})
