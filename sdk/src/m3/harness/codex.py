@@ -386,6 +386,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             stat.st_size,
         )
 
+    async def prepare_capabilities(self) -> None:
+        """Run the version probe behind ``capabilities`` off the event loop."""
+        await asyncio.to_thread(self._ensure_mrtr_capability)
+
     def _ensure_mrtr_capability(self) -> None:
         executable_identity = self._executable_identity()
         if self._mrtr_capability_identity == executable_identity:
@@ -407,7 +411,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             else HarnessInteractionCapabilities(retry_owner="harness")
         )
         self._capabilities = replace(self._capabilities, interaction=interaction)
-        self._mrtr_capability_identity = executable_identity
+        # A failed probe (for example a timeout under load) says nothing about
+        # the version, so the next check probes again.
+        if version is not None:
+            self._mrtr_capability_identity = executable_identity
 
     def stdio_environment_defaults(self, spec: Any) -> dict[str, dict[str, str]]:
         """Supply Codex's modern MCP marker to captured stdio children.
@@ -641,7 +648,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         return environment
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        await asyncio.to_thread(self._ensure_mrtr_capability)
+        await self.prepare_capabilities()
         ready = await super().preflight(launch)
         if not ready.ready:
             return ready

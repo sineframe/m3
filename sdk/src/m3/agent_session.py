@@ -228,6 +228,13 @@ def _validate_managed_input_round_limit(
     )
 
 
+async def _prepare_capabilities(adapter: object) -> None:
+    """Let an adapter finish blocking capability probes off the event loop."""
+    prepare = getattr(adapter, "prepare_capabilities", None)
+    if callable(prepare):
+        await prepare()
+
+
 def _require_elicitation_capability(adapter: object) -> None:
     capabilities = getattr(adapter, "capabilities", None)
     interaction = getattr(capabilities, "interaction", None)
@@ -343,11 +350,11 @@ class AsyncAgentSession:
         managed_runtime = (
             getattr(getattr(spec, "harness", None), "runtime", "system") == "managed"
         )
-        # A managed harness executable is selected during startup. Defer its
-        # version-sensitive capability check until that exact binary has been
-        # acquired; system-runtime sessions retain constructor-time validation.
-        self._deferred_elicitation_capability_check = (
-            needs_elicitation and managed_runtime
+        # A managed harness executable is selected during startup, and some
+        # adapters only learn their capabilities from an async probe. Defer the
+        # check to startup for both; other sessions validate at construction.
+        self._deferred_elicitation_capability_check = needs_elicitation and (
+            managed_runtime or callable(getattr(adapter, "prepare_capabilities", None))
         )
         if needs_elicitation and not self._deferred_elicitation_capability_check:
             _require_elicitation_capability(adapter)
@@ -724,6 +731,7 @@ class AsyncAgentSession:
         # provider open can produce side effects.
         await self._prepare_managed_runtime()
         if self._deferred_elicitation_capability_check:
+            await _prepare_capabilities(self.adapter)
             _require_elicitation_capability(self.adapter)
             self._deferred_elicitation_capability_check = False
         if self._server_manager is not None:
@@ -1503,6 +1511,8 @@ class AsyncAgentSession:
             phase=LifecyclePhase.TURN,
         )
         try:
+            if elicitation is not None or self._managed_input_runtime is not None:
+                await _prepare_capabilities(self.adapter)
             if elicitation is not None:
                 _require_elicitation_capability(self.adapter)
             if self._managed_input_runtime is not None:

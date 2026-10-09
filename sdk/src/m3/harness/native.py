@@ -9,6 +9,7 @@ errors before it crosses the adapter boundary.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import shutil
@@ -298,7 +299,7 @@ PROBE_RETRY_DELAY_SECONDS = 1.0
 
 _ProbeKey = tuple[object, ...]
 _probe_results: dict[_ProbeKey, subprocess.CompletedProcess[str]] = {}
-_probe_locks: dict[_ProbeKey, threading.Lock] = {}
+_probe_inflight: dict[_ProbeKey, concurrent.futures.Future[Any]] = {}
 _probe_registry_lock = threading.Lock()
 
 
@@ -370,8 +371,9 @@ def run_probe(
     """Run a credential-free capability probe, sharing results process-wide.
 
     Results are cached per executable identity, arguments, and probe
-    environment, and concurrent callers wait for one in-flight probe.  Failed
-    probes (missing binary, timeouts) are never cached so they are retried.
+    environment.  Concurrent callers share one in-flight probe and its
+    outcome, including a failure.  Failed probes (missing binary, timeouts)
+    are never cached, so a later call probes again.
     """
 
     probe_environment = dict(environment or {})
@@ -379,15 +381,26 @@ def run_probe(
     if key is None:
         return _run_probe(executable, args, probe_environment)
     with _probe_registry_lock:
-        lock = _probe_locks.setdefault(key, threading.Lock())
-    with lock:
         cached = _probe_results.get(key)
         if cached is not None:
             return cached
-        result = _run_probe(executable, args, probe_environment)
-        if result is not None:
-            _probe_results[key] = result
+        inflight = _probe_inflight.get(key)
+        owner = inflight is None
+        if inflight is None:
+            inflight = _probe_inflight[key] = concurrent.futures.Future()
+    if not owner:
+        result: subprocess.CompletedProcess[str] | None = inflight.result()
         return result
+    result = None
+    try:
+        result = _run_probe(executable, args, probe_environment)
+    finally:
+        with _probe_registry_lock:
+            if result is not None:
+                _probe_results[key] = result
+            del _probe_inflight[key]
+        inflight.set_result(result)
+    return result
 
 
 @_timing.timed("harness.probe_help")

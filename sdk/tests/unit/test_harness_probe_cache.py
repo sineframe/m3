@@ -152,3 +152,80 @@ async def test_missing_opencode_executable_is_not_ready(tmp_path: Path) -> None:
     assert not readiness.ready
     assert readiness.reason == "executable unavailable"
     assert native_module.probe_help(str(tmp_path / "missing"), ("--help",)) is None
+
+
+def test_concurrent_callers_share_a_timed_out_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+    lock = threading.Lock()
+
+    def hanging(argv: Sequence[str], *args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        with lock:
+            calls += 1
+        time.sleep(0.2)
+        raise subprocess.TimeoutExpired(list(argv), kwargs.get("timeout") or 0)
+
+    monkeypatch.setattr(subprocess, "run", hanging)
+    executable = _executable(tmp_path / "tool")
+    barrier = threading.Barrier(8)
+
+    def call() -> str | None:
+        barrier.wait()
+        return native_module.probe_help(executable, ("--help",))
+
+    started = time.monotonic()
+    threads = [threading.Thread(target=call) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    # Callers already waiting share the failed result instead of each
+    # repeating every attempt one after another.
+    assert calls == native_module.PROBE_ATTEMPTS
+    assert time.monotonic() - started < 1.5
+
+    # A later call still retries.
+    assert native_module.probe_help(executable, ("--help",)) is None
+    assert calls == 2 * native_module.PROBE_ATTEMPTS
+
+
+def test_codex_retries_mrtr_version_probe_after_a_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.harness.codex import CodexHarnessAdapter
+
+    fake = _FakeRun(
+        {("--version",): "codex-cli 0.156.1"},
+        timeouts={("--version",): native_module.PROBE_ATTEMPTS},
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+    adapter = CodexHarnessAdapter(executable=_executable(tmp_path / "codex"))
+
+    assert not adapter.capabilities.interaction.supports_elicitation
+    # The timeout is not remembered as "unsupported": the next check probes.
+    assert adapter.capabilities.interaction.supports_elicitation
+
+
+@pytest.mark.asyncio
+async def test_codex_prepares_capabilities_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.harness import codex as codex_module
+
+    threads: list[threading.Thread] = []
+
+    def probe(executable: str, args: tuple[str, ...]) -> str:
+        threads.append(threading.current_thread())
+        return "codex-cli 0.156.1"
+
+    monkeypatch.setattr(codex_module, "probe_help", probe)
+    adapter = codex_module.CodexHarnessAdapter(
+        executable=_executable(tmp_path / "codex")
+    )
+    await adapter.prepare_capabilities()
+    assert threads and threads[0] is not threading.main_thread()
+    # Later synchronous reads use the prepared result.
+    assert adapter.capabilities.interaction.supports_elicitation
+    assert len(threads) == 1
