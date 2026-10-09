@@ -918,6 +918,26 @@ async def test_codex_thread_start_error_reports_provider_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_codex_thread_start_error_redacts_secrets_before_collapsing_space() -> (
+    None
+):
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    # Collapsing whitespace first would turn this into "secret with spaces",
+    # which no longer matches the configured secret.
+    adapter._runtime_secrets = {"secret  with\tspaces"}
+    process = _ThreadStartErrorProcess(
+        {"code": -32603, "message": "auth failed for secret  with\tspaces here"}
+    )
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    message = str(exc_info.value)
+    assert "secret with spaces" not in message
+    assert "secret  with\tspaces" not in message
+    assert message.startswith("Codex thread/start failed: auth failed for")
+
+
+@pytest.mark.asyncio
 async def test_codex_thread_start_error_without_message_is_generic() -> None:
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
     process = _ThreadStartErrorProcess({"code": -32603})

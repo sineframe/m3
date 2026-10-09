@@ -726,15 +726,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         message = error.get("message")
         safe: Any = None
         if isinstance(message, str) and message.strip():
+            # Redact the original text: normalizing whitespace first could
+            # change a secret so it no longer matches.
             try:
                 safe = redact_for_api(
-                    " ".join(message.split()),
+                    message,
                     config=RedactionConfig.from_environment(
                         secrets=self._runtime_secrets
                     ),
                 )
             except Exception:
                 safe = None
+            if isinstance(safe, str):
+                safe = " ".join(safe.split())
         if not isinstance(safe, str) or not safe:
             return HarnessStartupError("Codex thread/start failed")
         return HarnessStartupError(

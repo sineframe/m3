@@ -155,6 +155,21 @@ _SAFE_STARTUP_ERROR_TYPES = frozenset(
 )
 
 
+async def _cleanup_succeeded(
+    operation: Awaitable[object], catch: type[BaseException]
+) -> bool:
+    async def attempt() -> bool:
+        try:
+            await operation
+        except catch:
+            return False
+        return True
+
+    # A separate task keeps the caught error out of the caller's exception
+    # state, which Python 3.10 would otherwise chain onto its next raise.
+    return await asyncio.ensure_future(attempt())
+
+
 def _startup_failure_cause(error: BaseException) -> str:
     """Return a bounded, M3-authored cause for a failed session startup.
 
@@ -564,18 +579,19 @@ class AsyncAgentSession:
                 ),
                 cleanup=False,
             )
-            try:
-                await self._close_adapter()
-            except BaseException:
+            # Cleanup errors are caught inside _cleanup_succeeded: on Python
+            # 3.10 an exception caught in this coroutine would otherwise still
+            # become the sanitized startup error's __context__.
+            if not await _cleanup_succeeded(self._close_adapter(), BaseException):
                 cleanup_failure = True
             outcome = self._close_requested_outcome or (
                 ExecutionOutcome.CANCELLED
                 if isinstance(exc, asyncio.CancelledError)
                 else ExecutionOutcome.FAILED
             )
-            try:
-                await asyncio.to_thread(self._workspace.cleanup)
-            except Exception:
+            if not await _cleanup_succeeded(
+                asyncio.to_thread(self._workspace.cleanup), Exception
+            ):
                 cleanup_failure = True
             unsupported = isinstance(exc, UnsupportedFeature)
             cause = (
