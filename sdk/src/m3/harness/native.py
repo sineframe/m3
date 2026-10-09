@@ -14,6 +14,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -290,32 +292,112 @@ async def discard_bounded(
     await drain_bounded(stream, maximum=maximum)
 
 
+PROBE_TIMEOUT_SECONDS = 30.0
+PROBE_ATTEMPTS = 2
+PROBE_RETRY_DELAY_SECONDS = 1.0
+
+_ProbeKey = tuple[object, ...]
+_probe_results: dict[_ProbeKey, subprocess.CompletedProcess[str]] = {}
+_probe_locks: dict[_ProbeKey, threading.Lock] = {}
+_probe_registry_lock = threading.Lock()
+
+
+def _probe_key(
+    executable: str, args: tuple[str, ...], environment: Mapping[str, str]
+) -> _ProbeKey | None:
+    resolved = shutil.which(executable)
+    if resolved is None:
+        return None
+    try:
+        stat = os.stat(resolved)
+    except OSError:
+        return None
+    return (
+        os.path.realpath(resolved),
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_mtime_ns,
+        stat.st_size,
+        args,
+        tuple(sorted(environment.items())),
+    )
+
+
+def _run_probe(
+    executable: str, args: tuple[str, ...], environment: Mapping[str, str]
+) -> subprocess.CompletedProcess[str] | None:
+    for attempt in range(PROBE_ATTEMPTS):
+        if attempt:
+            time.sleep(PROBE_RETRY_DELAY_SECONDS * attempt)
+        with tempfile.TemporaryDirectory(prefix="m3-probe-") as root:
+            probe_environment = {
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": root,
+                "XDG_CONFIG_HOME": str(Path(root) / "config"),
+                "XDG_DATA_HOME": str(Path(root) / "data"),
+                "XDG_STATE_HOME": str(Path(root) / "state"),
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "TZ": "UTC",
+                **environment,
+            }
+            try:
+                return subprocess.run(
+                    [executable, *args],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=PROBE_TIMEOUT_SECONDS,
+                    shell=False,
+                    cwd=root,
+                    env=probe_environment,
+                )
+            except subprocess.TimeoutExpired:
+                # A slow probe under load is not evidence that the harness
+                # lacks the capability; retry before giving up.
+                continue
+            except (OSError, subprocess.SubprocessError):
+                return None
+    return None
+
+
+def run_probe(
+    executable: str,
+    args: tuple[str, ...],
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run a credential-free capability probe, sharing results process-wide.
+
+    Results are cached per executable identity, arguments, and probe
+    environment, and concurrent callers wait for one in-flight probe.  Failed
+    probes (missing binary, timeouts) are never cached so they are retried.
+    """
+
+    probe_environment = dict(environment or {})
+    key = _probe_key(executable, args, probe_environment)
+    if key is None:
+        return _run_probe(executable, args, probe_environment)
+    with _probe_registry_lock:
+        lock = _probe_locks.setdefault(key, threading.Lock())
+    with lock:
+        cached = _probe_results.get(key)
+        if cached is not None:
+            return cached
+        result = _run_probe(executable, args, probe_environment)
+        if result is not None:
+            _probe_results[key] = result
+        return result
+
+
 @_timing.timed("harness.probe_help")
 def probe_help(executable: str, args: tuple[str, ...]) -> str | None:
     """Read bounded capability help without credentials or model execution."""
 
-    with tempfile.TemporaryDirectory(prefix="m3-probe-") as root:
-        environment = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": root,
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-            "TZ": "UTC",
-        }
-        try:
-            result = subprocess.run(
-                [executable, *args],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                shell=False,
-                cwd=root,
-                env=environment,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return (result.stdout + "\n" + result.stderr).replace("\x00", " ")[:32_768]
+    result = run_probe(executable, args)
+    if result is None:
+        return None
+    return (result.stdout + "\n" + result.stderr).replace("\x00", " ")[:32_768]
 
 
 class ProcessOwner:

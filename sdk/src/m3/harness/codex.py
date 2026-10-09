@@ -641,7 +641,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         return environment
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        self._ensure_mrtr_capability()
+        await asyncio.to_thread(self._ensure_mrtr_capability)
         ready = await super().preflight(launch)
         if not ready.ready:
             return ready
