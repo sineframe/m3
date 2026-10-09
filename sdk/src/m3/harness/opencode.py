@@ -924,7 +924,10 @@ class OpenCodeHarnessAdapter:
                     # matching candidate: older same-parent parts may remain
                     # behind the provider cursor.
                     history_ambiguous = history_after.truncated
-            parts = [*parts, *supplemental_parts]
+            # Earlier same-parent steps precede the final message so the trace
+            # stays chronological; only the final message forms the answer.
+            parts = [*supplemental_parts, *parts]
+        final_parts_start = len(supplemental_parts)
         # The v2 response identifies the assistant message and repeats the
         # session identity.  A present malformed/mismatching identity is a
         # protocol failure; it must not be guessed into a successful turn.
@@ -1054,7 +1057,8 @@ class OpenCodeHarnessAdapter:
                         turn_wall_time=turn_wall_time,
                     )
                 if value:
-                    text_parts.append(value)
+                    if part_index >= final_parts_start:
+                        text_parts.append(value)
                     observations.append(
                         self._message_observation(
                             sequence,

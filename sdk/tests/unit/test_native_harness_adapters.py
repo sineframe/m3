@@ -979,6 +979,80 @@ async def test_opencode_history_cursor_attributes_new_parts_and_preserves_raw_ev
 
 
 @pytest.mark.asyncio
+async def test_opencode_history_response_text_is_final_message_only() -> None:
+    """Earlier same-parent narration stays in the trace, not in response.text."""
+
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    post = {
+        "info": {
+            "id": "assistant-final",
+            "sessionID": "session",
+            "parentID": "user-1",
+            "finish": "stop",
+        },
+        "parts": [{"type": "text", "id": "final-text", "text": "bd3d290425f6"}],
+    }
+    step = {
+        "info": {
+            "id": "assistant-step",
+            "sessionID": "session",
+            "role": "assistant",
+            "parentID": "user-1",
+        },
+        "parts": [
+            {
+                "type": "text",
+                "id": "step-text",
+                "text": "Reading the requested file to retrieve the token.",
+            },
+            {
+                "type": "tool",
+                "id": "step-tool",
+                "tool": "read",
+                "callID": "read-call",
+                "state": {"status": "completed", "output": "bd3d290425f6"},
+            },
+        ],
+    }
+    final = {"info": post["info"], "parts": post["parts"]}
+    client = _HistoryFixture(post, [step, final], [])
+    adapter._client = cast(Any, client)
+
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+
+    assert result.response is not None
+    assert result.response.text == "bd3d290425f6"
+    assert result.turn_evidence is not None
+    ordered = [
+        item.text
+        if isinstance(item, MessageChunkObservation)
+        else f"call:{item.call_id}"
+        if isinstance(item, ToolCallObservedObservation)
+        else f"result:{item.call_id}"
+        for item in result.turn_evidence.observations
+        if isinstance(
+            item,
+            MessageChunkObservation
+            | ToolCallObservedObservation
+            | ToolResultObservedObservation,
+        )
+    ]
+    assert ordered == [
+        "Reading the requested file to retrieve the token.",
+        "call:read-call",
+        "result:read-call",
+        "bd3d290425f6",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_opencode_history_matching_candidate_with_cursor_is_incomplete() -> None:
     """A matching bounded page cannot prove older same-parent parts absent."""
 
