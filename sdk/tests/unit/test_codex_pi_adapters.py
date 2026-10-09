@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timezone
 
 try:
@@ -238,6 +239,8 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
     probes: list[str] = []
 
     def fake_probe(executable: str, args: tuple[str, ...]) -> str | None:
+        # Session startup must never run a probe on the event loop.
+        assert threading.current_thread() is not threading.main_thread()
         order.append(f"probe:{executable}")
         probes.append(executable)
         if args == ("--version",) and executable == managed_executable:
@@ -298,7 +301,8 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
         await session.aclose()
 
 
-def test_codex_capability_cache_tracks_executable_identity(
+@pytest.mark.asyncio
+async def test_codex_capability_cache_tracks_executable_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     system_executable = tmp_path / "system-codex"
@@ -317,14 +321,17 @@ def test_codex_capability_cache_tracks_executable_identity(
 
     monkeypatch.setattr(codex_module, "probe_help", fake_probe)
     adapter = CodexHarnessAdapter(executable=str(system_executable))
+    await adapter.prepare_capabilities()
     assert not adapter.capabilities.interaction.supports_elicitation
 
     adapter.executable = str(managed_executable)
+    await adapter.prepare_capabilities()
     assert adapter.capabilities.interaction.supports_elicitation
     assert probes == [str(system_executable), str(managed_executable)]
 
 
-def test_codex_capability_cache_rechecks_binary_created_at_same_path(
+@pytest.mark.asyncio
+async def test_codex_capability_cache_rechecks_binary_created_at_same_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executable = tmp_path / "managed-codex"
@@ -336,9 +343,11 @@ def test_codex_capability_cache_rechecks_binary_created_at_same_path(
 
     monkeypatch.setattr(codex_module, "probe_help", fake_probe)
     adapter = CodexHarnessAdapter(executable=str(executable))
+    await adapter.prepare_capabilities()
     assert not adapter.capabilities.interaction.supports_elicitation
 
     executable.write_text("managed codex placeholder\n")
+    await adapter.prepare_capabilities()
     assert adapter.capabilities.interaction.supports_elicitation
     assert probes == [str(executable), str(executable)]
 

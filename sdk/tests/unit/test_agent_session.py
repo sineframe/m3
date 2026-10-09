@@ -1135,3 +1135,34 @@ def test_session_trace_messages_project_the_prompt_and_response(tmp_path) -> Non
         ("user", (TextContent(text="the prompt"),)),
         ("assistant", (TextContent(text="the answer"),)),
     ]
+
+
+class _PreparedElicitingHarness(ElicitingHarness):
+    """Adapter whose capabilities are only known after an async probe."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prepared = 0
+
+    async def prepare_capabilities(self) -> None:
+        self.prepared += 1
+
+    @property  # type: ignore[override]
+    def capabilities(self) -> HarnessAdapterCapabilities:
+        assert self.prepared, "capabilities read before prepare_capabilities"
+        return ElicitingHarness.capabilities
+
+
+@pytest.mark.asyncio
+async def test_session_prepares_adapter_capabilities_before_checking_them() -> None:
+    adapter = _PreparedElicitingHarness()
+    plan = expect_form("confirm").accept({"confirmed": True})
+    # Constructing the session must not read probed capabilities synchronously.
+    session = AsyncAgentSession(
+        _spec().model_copy(update={"elicitation": plan}), adapter
+    )
+    await session.__aenter__()
+    assert adapter.prepared >= 1
+    result = await session.send("continue", elicitation=plan)
+    await session.aclose()
+    assert result.snapshot.outcome is TurnOutcome.COMPLETED

@@ -13,7 +13,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from collections.abc import Mapping
@@ -63,6 +62,7 @@ from .native import (
     _text,
     probe_help,
     read_bounded_line,
+    run_probe,
     workspace_for_launch,
 )
 from .observations import (
@@ -394,7 +394,7 @@ class OpenCodeHarnessAdapter:
                 ready=False, reason="unsupported OpenCode configuration dialect"
             )
         try:
-            detected = self._detect_dialect(launch)
+            detected = await asyncio.to_thread(self._detect_dialect, launch)
         except HarnessStartupError as error:
             return Readiness(ready=False, reason=str(error))
         if (
@@ -471,36 +471,19 @@ class OpenCodeHarnessAdapter:
 
     def _detect_dialect(self, launch: HarnessLaunch) -> str:
         del launch
-        with tempfile.TemporaryDirectory(prefix="m3-opencode-probe-") as probe_root:
-            probe_environment = {
-                "PATH": os.environ.get("PATH", ""),
-                "HOME": probe_root,
-                "XDG_CONFIG_HOME": str(Path(probe_root) / "config"),
-                "XDG_DATA_HOME": str(Path(probe_root) / "data"),
-                "XDG_STATE_HOME": str(Path(probe_root) / "state"),
-                "LANG": "C.UTF-8",
-                "LC_ALL": "C.UTF-8",
-                "TZ": "UTC",
-            }
-            probe_environment.update(
-                (key, value)
+        result = run_probe(
+            self.executable,
+            ("--version",),
+            environment={
+                key: value
                 for key, value in self.environment.items()
                 if key in _DIALECT_PROBE_CONTROL_KEYS
+            },
+        )
+        if result is None:
+            raise HarnessStartupError(
+                "OpenCode configuration dialect could not be detected"
             )
-            try:
-                result = subprocess.run(
-                    (self.executable, "--version"),
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                    env=probe_environment,
-                    cwd=probe_root,
-                )
-            except (OSError, subprocess.SubprocessError):
-                raise HarnessStartupError(
-                    "OpenCode configuration dialect could not be detected"
-                ) from None
         # Stable 1.x exposes the flat `mcp` schema. Unknown versions fail
         # closed rather than receiving a potentially incompatible config.
         if result.returncode == 0 and re.search(r"\b1\.\d+", result.stdout):

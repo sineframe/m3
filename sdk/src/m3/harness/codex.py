@@ -342,9 +342,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._write_lock = asyncio.Lock()
         self._active_mrtr_action: CodexMRTRAction | None = None
         self._managed_input_runtime: Any = None
-        self._mrtr_capability_identity: (
-            tuple[str, int | None, int | None, int | None, int | None] | None
-        ) = None
+        # Interaction capabilities per executable identity, from successful
+        # version probes only.
+        self._interaction_by_executable: dict[
+            tuple[str, int | None, int | None, int | None, int | None],
+            HarnessInteractionCapabilities,
+        ] = {}
         self._action_interrupt_sent = False
         self._unscoped_elicitation_failure = False
         self._unapproved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
@@ -360,10 +363,14 @@ class CodexHarnessAdapter(NativeRPCAdapter):
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
-        # AgentSession checks capabilities before preflight, so establish the
-        # version gate lazily at the same point the declaration is inspected.
-        self._ensure_mrtr_capability()
-        return self._capabilities
+        # Never probes: reading this from async code must not block the event
+        # loop. Until prepare_capabilities() has probed the current binary,
+        # MRTR/elicitation is reported as unsupported.
+        interaction = self._interaction_by_executable.get(
+            self._executable_identity(),
+            HarnessInteractionCapabilities(retry_owner="harness"),
+        )
+        return replace(self._capabilities, interaction=interaction)
 
     def _executable_identity(
         self,
@@ -386,14 +393,20 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             stat.st_size,
         )
 
-    def _ensure_mrtr_capability(self) -> None:
-        executable_identity = self._executable_identity()
-        if self._mrtr_capability_identity == executable_identity:
+    async def prepare_capabilities(self) -> None:
+        """Probe the current binary's version off the event loop.
+
+        A successful probe is kept for that executable identity; a failed one
+        (for example a timeout under load) is not, so the next call retries.
+        """
+        identity = self._executable_identity()
+        if identity in self._interaction_by_executable:
             return
-        version = probe_help(self.executable, ("--version",))
-        version_line = version.splitlines()[0].strip() if version else ""
-        supported = version_line == "codex-cli 0.156.1"
-        interaction = (
+        version = await asyncio.to_thread(probe_help, self.executable, ("--version",))
+        if version is None:
+            return
+        supported = (version.splitlines() or [""])[0].strip() == "codex-cli 0.156.1"
+        self._interaction_by_executable[identity] = (
             HarnessInteractionCapabilities(
                 supports_elicitation=True,
                 preserves_request_keys=True,
@@ -406,8 +419,6 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if supported
             else HarnessInteractionCapabilities(retry_owner="harness")
         )
-        self._capabilities = replace(self._capabilities, interaction=interaction)
-        self._mrtr_capability_identity = executable_identity
 
     def stdio_environment_defaults(self, spec: Any) -> dict[str, dict[str, str]]:
         """Supply Codex's modern MCP marker to captured stdio children.
@@ -641,7 +652,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         return environment
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        self._ensure_mrtr_capability()
+        await self.prepare_capabilities()
         ready = await super().preflight(launch)
         if not ready.ready:
             return ready

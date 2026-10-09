@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -290,32 +291,65 @@ async def discard_bounded(
     await drain_bounded(stream, maximum=maximum)
 
 
+PROBE_TIMEOUT_SECONDS = 30.0
+PROBE_ATTEMPTS = 2
+PROBE_RETRY_DELAY_SECONDS = 1.0
+
+
+def run_probe(
+    executable: str,
+    args: tuple[str, ...],
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run a credential-free capability probe in an empty home directory.
+
+    A probe that times out is retried once: under load a slow probe is not
+    evidence that the harness lacks the capability.  Nothing is cached, so a
+    later call always probes again.
+    """
+
+    for attempt in range(PROBE_ATTEMPTS):
+        if attempt:
+            time.sleep(PROBE_RETRY_DELAY_SECONDS * attempt)
+        with tempfile.TemporaryDirectory(prefix="m3-probe-") as root:
+            probe_environment = {
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": root,
+                "XDG_CONFIG_HOME": str(Path(root) / "config"),
+                "XDG_DATA_HOME": str(Path(root) / "data"),
+                "XDG_STATE_HOME": str(Path(root) / "state"),
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "TZ": "UTC",
+                **(environment or {}),
+            }
+            try:
+                return subprocess.run(
+                    [executable, *args],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=PROBE_TIMEOUT_SECONDS,
+                    shell=False,
+                    cwd=root,
+                    env=probe_environment,
+                )
+            except subprocess.TimeoutExpired:
+                continue
+            except (OSError, subprocess.SubprocessError):
+                return None
+    return None
+
+
 @_timing.timed("harness.probe_help")
 def probe_help(executable: str, args: tuple[str, ...]) -> str | None:
     """Read bounded capability help without credentials or model execution."""
 
-    with tempfile.TemporaryDirectory(prefix="m3-probe-") as root:
-        environment = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": root,
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-            "TZ": "UTC",
-        }
-        try:
-            result = subprocess.run(
-                [executable, *args],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                shell=False,
-                cwd=root,
-                env=environment,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return (result.stdout + "\n" + result.stderr).replace("\x00", " ")[:32_768]
+    result = run_probe(executable, args)
+    if result is None:
+        return None
+    return (result.stdout + "\n" + result.stderr).replace("\x00", " ")[:32_768]
 
 
 class ProcessOwner:
