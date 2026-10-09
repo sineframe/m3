@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import stat
@@ -73,6 +74,9 @@ def test_real_adapter_declarations_remain_explicit(
     )
 
     for adapter, retry_owner in adapters:
+        prepare = getattr(adapter, "prepare_capabilities", None)
+        if prepare is not None:
+            asyncio.run(prepare())
         capabilities = adapter.capabilities.interaction
         expected = adapter.__class__ in {PiHarnessAdapter, CodexHarnessAdapter}
         assert capabilities.supports_elicitation is expected

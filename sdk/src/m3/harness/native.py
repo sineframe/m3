@@ -9,13 +9,11 @@ errors before it crosses the adapter boundary.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import os
 import shutil
 import subprocess
 import tempfile
-import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -297,36 +295,20 @@ PROBE_TIMEOUT_SECONDS = 30.0
 PROBE_ATTEMPTS = 2
 PROBE_RETRY_DELAY_SECONDS = 1.0
 
-_ProbeKey = tuple[object, ...]
-_probe_results: dict[_ProbeKey, subprocess.CompletedProcess[str]] = {}
-_probe_inflight: dict[_ProbeKey, concurrent.futures.Future[Any]] = {}
-_probe_registry_lock = threading.Lock()
 
-
-def _probe_key(
-    executable: str, args: tuple[str, ...], environment: Mapping[str, str]
-) -> _ProbeKey | None:
-    resolved = shutil.which(executable)
-    if resolved is None:
-        return None
-    try:
-        stat = os.stat(resolved)
-    except OSError:
-        return None
-    return (
-        os.path.realpath(resolved),
-        stat.st_dev,
-        stat.st_ino,
-        stat.st_mtime_ns,
-        stat.st_size,
-        args,
-        tuple(sorted(environment.items())),
-    )
-
-
-def _run_probe(
-    executable: str, args: tuple[str, ...], environment: Mapping[str, str]
+def run_probe(
+    executable: str,
+    args: tuple[str, ...],
+    *,
+    environment: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str] | None:
+    """Run a credential-free capability probe in an empty home directory.
+
+    A probe that times out is retried once: under load a slow probe is not
+    evidence that the harness lacks the capability.  Nothing is cached, so a
+    later call always probes again.
+    """
+
     for attempt in range(PROBE_ATTEMPTS):
         if attempt:
             time.sleep(PROBE_RETRY_DELAY_SECONDS * attempt)
@@ -340,7 +322,7 @@ def _run_probe(
                 "LANG": "C.UTF-8",
                 "LC_ALL": "C.UTF-8",
                 "TZ": "UTC",
-                **environment,
+                **(environment or {}),
             }
             try:
                 return subprocess.run(
@@ -354,53 +336,10 @@ def _run_probe(
                     env=probe_environment,
                 )
             except subprocess.TimeoutExpired:
-                # A slow probe under load is not evidence that the harness
-                # lacks the capability; retry before giving up.
                 continue
             except (OSError, subprocess.SubprocessError):
                 return None
     return None
-
-
-def run_probe(
-    executable: str,
-    args: tuple[str, ...],
-    *,
-    environment: Mapping[str, str] | None = None,
-) -> subprocess.CompletedProcess[str] | None:
-    """Run a credential-free capability probe, sharing results process-wide.
-
-    Results are cached per executable identity, arguments, and probe
-    environment.  Concurrent callers share one in-flight probe and its
-    outcome, including a failure.  Failed probes (missing binary, timeouts)
-    are never cached, so a later call probes again.
-    """
-
-    probe_environment = dict(environment or {})
-    key = _probe_key(executable, args, probe_environment)
-    if key is None:
-        return _run_probe(executable, args, probe_environment)
-    with _probe_registry_lock:
-        cached = _probe_results.get(key)
-        if cached is not None:
-            return cached
-        inflight = _probe_inflight.get(key)
-        owner = inflight is None
-        if inflight is None:
-            inflight = _probe_inflight[key] = concurrent.futures.Future()
-    if not owner:
-        result: subprocess.CompletedProcess[str] | None = inflight.result()
-        return result
-    result = None
-    try:
-        result = _run_probe(executable, args, probe_environment)
-    finally:
-        with _probe_registry_lock:
-            if result is not None:
-                _probe_results[key] = result
-            del _probe_inflight[key]
-        inflight.set_result(result)
-    return result
 
 
 @_timing.timed("harness.probe_help")
