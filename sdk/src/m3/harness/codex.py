@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import shutil
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -62,8 +62,14 @@ _NATIVE_APPROVAL_OPERATIONS = {
 }
 
 
-def _approval_target(params: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Return the resource and structured context of one native approval."""
+def _approval_target(
+    params: Mapping[str, Any], item_paths: Sequence[str] = ()
+) -> tuple[str, dict[str, Any]]:
+    """Return the resource and structured context of one native approval.
+
+    Modern file-change approvals name only the item; its paths come from the
+    earlier ``item/started`` file-change item and arrive as ``item_paths``.
+    """
     context: dict[str, Any] = {}
     command = params.get("command")
     if isinstance(command, list):
@@ -84,6 +90,8 @@ def _approval_target(params: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
     changes = params.get("fileChanges")
     if isinstance(changes, Mapping):
         context["paths"] = sorted(str(path) for path in changes)
+    elif item_paths:
+        context["paths"] = sorted(item_paths)
     permissions = params.get("permissions")
     if isinstance(permissions, Mapping):
         context["permissions"] = _plain_json(permissions)
@@ -95,6 +103,8 @@ def _approval_target(params: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         resource = command
     elif "grant_root" in context:
         resource = context["grant_root"]
+    elif "paths" in context:
+        resource = ",".join(context["paths"])
     elif isinstance(permissions, Mapping):
         resource = ",".join(sorted(str(key) for key in permissions))
     else:
@@ -318,6 +328,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._answered_approvals: dict[
             str | int, tuple[dict[str, Any], dict[str, Any]]
         ] = {}
+        # Paths of started fileChange items, for the approval that follows.
+        self._file_change_paths: dict[str, list[str]] = {}
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
@@ -732,6 +744,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._unapproved_mcp_tool_items.clear()
         self._approved_mcp_tool_items.clear()
         self._answered_approvals.clear()
+        self._file_change_paths.clear()
         text = "".join(
             block.text for block in request.message.content if hasattr(block, "text")
         )
@@ -1084,6 +1097,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         frame = await self._next_action_frame(process, timeout)
         if frame is None:
             return None
+        if frame.get("method") == "item/started":
+            self._remember_file_change_paths(frame.get("params"))
         if frame.get("method") == "mcpServer/elicitation/request":
             params = frame.get("params")
             params = params if isinstance(params, Mapping) else {}
@@ -1348,6 +1363,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             },
         )
 
+    def _remember_file_change_paths(self, params: Any) -> None:
+        item = params.get("item") if isinstance(params, Mapping) else None
+        if not isinstance(item, Mapping) or item.get("type") != "fileChange":
+            return
+        item_id = item.get("id")
+        changes = item.get("changes")
+        if isinstance(item_id, str) and isinstance(changes, list):
+            self._file_change_paths[item_id] = [
+                change["path"]
+                for change in changes
+                if isinstance(change, Mapping) and isinstance(change.get("path"), str)
+            ]
+
     async def _answer_server_request(
         self, process: JsonRpcProcess, frame: Mapping[str, Any]
     ) -> None:
@@ -1371,7 +1399,13 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             return
         params = frame.get("params")
         params = params if isinstance(params, Mapping) else {}
-        resource, context = _approval_target(params)
+        item_id = params.get("itemId")
+        resource, context = _approval_target(
+            params,
+            self._file_change_paths.get(item_id, ())
+            if isinstance(item_id, str)
+            else (),
+        )
         # Native approvals are outside the MCP tool selection, so they follow
         # the session's permission policy, which denies by default.
         interactions = self._launch.interactions if self._launch else None

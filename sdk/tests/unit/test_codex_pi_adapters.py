@@ -1901,3 +1901,35 @@ async def test_codex_permission_handler_can_grant_a_subset(
     assert process.written == [
         {"jsonrpc": "2.0", "id": 2, "result": {"permissions": granted, "scope": "turn"}}
     ]
+
+
+@pytest.mark.asyncio
+async def test_codex_file_change_approval_gets_paths_from_started_item() -> None:
+    adapter = CodexHarnessAdapter(executable="fixture")
+    interactions, seen = _prompting_interactions(False)
+    adapter._launch = SimpleNamespace(interactions=interactions)  # type: ignore[assignment]
+    started = {
+        "method": "item/started",
+        "params": {
+            "item": {
+                "type": "fileChange",
+                "id": "fc-1",
+                "status": "inProgress",
+                "changes": [
+                    {"path": "/w/b.py", "kind": {"type": "update"}, "diff": ""},
+                    {"path": "/w/a.py", "kind": {"type": "add"}, "diff": ""},
+                ],
+            }
+        },
+    }
+    approval = {
+        "id": 4,
+        "method": "item/fileChange/requestApproval",
+        "params": {"itemId": "fc-1", "threadId": "t", "turnId": "u"},
+    }
+    process = _ServerRequestProcess([started, approval])
+    await adapter.next_frame(process, 1.0)  # type: ignore[arg-type]
+    await adapter.next_frame(process, 1.0)  # type: ignore[arg-type]
+    assert len(seen) == 1
+    assert seen[0].resource == "/w/a.py,/w/b.py"
+    assert dict(seen[0].context) == {"paths": ["/w/a.py", "/w/b.py"]}
