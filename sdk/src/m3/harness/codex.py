@@ -15,6 +15,7 @@ from typing import Any
 from ..agent_session import AdapterTurn
 from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
+from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
 from ..types import (
     Codex,
@@ -38,6 +39,7 @@ from .contracts import (
 from .native import probe_help
 from .observations import (
     HarnessObservation,
+    InteractionObservedObservation,
     MessageChunkObservation,
     MetadataObservedObservation,
     ReasoningChunkObservation,
@@ -48,6 +50,16 @@ from .observations import (
 
 # Covers Codex's own per-server MCP startup timeout (10 seconds by default).
 _THREAD_START_TIMEOUT_SECONDS = 30.0
+
+# App Server requests that wait for a user to approve a native command, file
+# change, or sandbox widening. Codex blocks the turn until each is answered.
+_NATIVE_APPROVAL_OPERATIONS = {
+    "item/commandExecution/requestApproval": "command_execution",
+    "item/fileChange/requestApproval": "file_change",
+    "item/permissions/requestApproval": "permissions",
+    "execCommandApproval": "command_execution",
+    "applyPatchApproval": "file_change",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +250,11 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._unapproved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
         self._approved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
         self._mcp_protocol_markers: dict[str, str] = {}
+        # Native approvals answered by next_frame, keyed by request id until
+        # consume_frame records them as interaction observations.
+        self._answered_approvals: dict[
+            str | int, tuple[dict[str, Any], dict[str, Any]]
+        ] = {}
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
@@ -651,6 +668,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._streamed_item_ids.clear()
         self._unapproved_mcp_tool_items.clear()
         self._approved_mcp_tool_items.clear()
+        self._answered_approvals.clear()
         text = "".join(
             block.text for block in request.message.content if hasattr(block, "text")
         )
@@ -686,8 +704,43 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         )
         text = ""
         calls: list[Mapping[str, Any]] = []
+        request_id = frame.get("id")
+        answered = (
+            self._answered_approvals.pop(request_id, None)
+            if isinstance(request_id, (str, int)) and "method" in frame
+            else None
+        )
+        if answered is not None:
+            approval_request, approval_response = answered
+            offset = max(0.0, (asyncio.get_event_loop().time() - started) * 1000)
+            observations.append(
+                InteractionObservedObservation(
+                    observation_id=f"codex-{sequence}-approval-{request_id}",
+                    harness_kind="codex",
+                    turn_sequence=sequence,
+                    wall_time=wall,
+                    monotonic_offset_ms=offset,
+                    interaction_kind="permission.request",
+                    request=approval_request,
+                )
+            )
+            observations.append(
+                InteractionObservedObservation(
+                    observation_id=f"codex-{sequence}-approval-{request_id}-response",
+                    harness_kind="codex",
+                    turn_sequence=sequence,
+                    wall_time=wall,
+                    monotonic_offset_ms=offset,
+                    interaction_kind="permission.response",
+                    response=approval_response,
+                )
+            )
+            return False, "", []
+        # Server requests carry their own id space, which can collide with the
+        # client's turn/start id.
         if (
             self._pending_turn_request is not None
+            and "method" not in frame
             and frame.get("id") == self._pending_turn_request
         ):
             result = frame.get("result")
@@ -991,6 +1044,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 self._active_mrtr_action.submit_native_prompt(frame)
             else:
                 self._unscoped_elicitation_failure = True
+        elif "method" in frame and "id" in frame:
+            # Codex waits for every server request to be answered, so none may
+            # be left pending: an unanswered approval stalls the turn forever.
+            await self._answer_server_request(process, frame)
         if self._unscoped_elicitation_failure:
             await self._interrupt_turn(process)
         action = self._active_mrtr_action
@@ -1225,6 +1282,74 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     "action": "accept" if allowed else "decline",
                     **({"content": {}} if allowed else {}),
                 },
+            },
+        )
+
+    async def _answer_server_request(
+        self, process: JsonRpcProcess, frame: Mapping[str, Any]
+    ) -> None:
+        request_id = frame.get("id")
+        if isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
+            return
+        method = str(frame.get("method"))
+        operation = _NATIVE_APPROVAL_OPERATIONS.get(method)
+        if operation is None:
+            await self._write_frame(
+                process,
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"M3 does not handle Codex request {method}",
+                    },
+                },
+            )
+            return
+        params = frame.get("params")
+        params = params if isinstance(params, Mapping) else {}
+        command = params.get("command")
+        if isinstance(command, list):
+            command = " ".join(str(part) for part in command)
+        resource = command if isinstance(command, str) else ""
+        # Native approvals are outside the MCP tool selection, so they follow
+        # the session's permission policy, which denies by default.
+        interactions = self._launch.interactions if self._launch else None
+        allowed = False
+        reason = "default_deny"
+        if interactions is not None:
+            permission = await interactions.permission(
+                PermissionRequest(f"codex.{operation}", resource)
+            )
+            allowed = permission.allowed
+            reason = permission.receipt.reason
+        if method in {"execCommandApproval", "applyPatchApproval"}:
+            result: dict[str, Any] = {
+                "decision": "approved"
+                if allowed
+                else {"denied": {"rejection": "declined by M3 permission policy"}}
+            }
+        elif operation == "permissions":
+            requested = params.get("permissions")
+            result = {
+                "permissions": dict(requested)
+                if allowed and isinstance(requested, Mapping)
+                else {},
+                "scope": "turn",
+            }
+        else:
+            result = {"decision": "accept" if allowed else "decline"}
+        await self._write_frame(
+            process, {"jsonrpc": "2.0", "id": request_id, "result": result}
+        )
+        # The raw frame already carries the (redacted) command; the
+        # observation records only the decision.
+        self._answered_approvals[request_id] = (
+            {"method": method, "operation": operation},
+            {
+                "outcome": "allow" if allowed else "deny",
+                "reason": reason,
+                "reply": result,
             },
         )
 
