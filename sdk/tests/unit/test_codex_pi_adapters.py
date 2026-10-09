@@ -876,6 +876,106 @@ def test_provider_protocol_errors_are_not_successes() -> None:
     assert JsonRpcProcess is not None
 
 
+class _ThreadStartErrorProcess:
+    root: Path | None = None
+
+    def __init__(self, error: object) -> None:
+        self.error = error
+        self.written: list[dict[str, object]] = []
+
+    async def write(self, payload: dict[str, object]) -> None:
+        self.written.append(payload)
+
+    async def next(self, timeout: float | None = None) -> dict[str, object]:
+        request = self.written[-1]
+        if request["method"] == "initialize":
+            return {"jsonrpc": "2.0", "id": request["id"], "result": {}}
+        return {"jsonrpc": "2.0", "id": request["id"], "error": self.error}
+
+
+def _mcp_configuration(key: str, **extra: object) -> HarnessServerConfig:
+    return HarnessServerConfig(
+        key=key,
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id=f"{key}-connection",
+        command="fixture",
+        **extra,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configuration",
+    (
+        _mcp_configuration("filesystem"),
+        # A literal credential in the MCP server's environment.
+        _mcp_configuration("filesystem", environment={"API_TOKEN": "CANARY"}),
+        # A literal credential in an MCP header.
+        _mcp_configuration("filesystem", headers={"Authorization": "CANARY"}),
+    ),
+)
+async def test_codex_thread_start_error_never_includes_provider_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: object
+) -> None:
+    # Any credential Codex was started with (adapter environment, native
+    # login, MCP configuration) can come back in its error text, so the error
+    # is built only from M3-known values: the code and configured server names.
+    source = tmp_path / "source-home"
+    source.mkdir()
+    (source / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": "CANARY"}}), encoding="utf-8"
+    )
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE), environment={"OPENAI_API_KEY": "CANARY"}
+    )
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(configuration,),  # type: ignore[arg-type]
+    )
+    process = _ThreadStartErrorProcess(
+        {
+            "code": -32603,
+            "message": (
+                "error creating thread: Fatal error: Failed to initialize session: "
+                "required MCP servers failed to initialize: filesystem: handshaking "
+                "with MCP server failed: auth failed for CANARY secret  with\tspaces"
+            ),
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == (
+        "Codex thread/start failed (JSON-RPC -32603): "
+        "required MCP server failed to initialize: filesystem"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    (
+        ({"code": -32603}, "Codex thread/start failed (JSON-RPC -32603)"),
+        (
+            {"code": -32603, "message": "anything else CANARY"},
+            "Codex thread/start failed (JSON-RPC -32603)",
+        ),
+        ({"message": "no code CANARY"}, "Codex thread/start failed"),
+    ),
+)
+async def test_codex_thread_start_error_without_known_cause_is_generic(
+    error: dict[str, object], expected: str
+) -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    process = _ThreadStartErrorProcess(error)
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == expected
+
+
 @pytest.mark.asyncio
 async def test_codex_terminal_failure_is_not_projected_as_completed() -> None:
     from datetime import datetime, timezone

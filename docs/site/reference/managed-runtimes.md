@@ -268,8 +268,17 @@ message strings identify these conditions:
 In `AgentSession`, managed runtime resolution is the first startup action,
 before server startup, probes, or provider launch. Acquisition exceptions are
 recorded as a failed startup and surfaced to the caller as
-`TransportError("agent session startup failed")`; the detailed vendor error is
-not propagated as a stable session API. A missing native executable or
+`TransportError("agent session startup failed: managed runtime acquisition failed")`;
+the detailed vendor error is not propagated as a stable session API.
+
+Other startup failures carry a bounded cause in the raised message, in
+`result.error.details["cause"]`, and in a `startup_failed` trace diagnostic.
+Sanitized harness errors and readiness reasons (for example
+`harness is not ready: serve unavailable`) are kept verbatim; any other
+exception is reported only by a fixed category such as `TimeoutError`, and
+its original text is not chained onto the raised error. Unsupported
+startups are recorded with error code `unsupported`, everything else with
+`transport_error`. A missing native executable or
 provider credential is a harness startup/readiness failure, not a download
 failure. Invalid CLI selection and an exhausted cache-prune wait use
 operational exit code 2.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -17,6 +18,7 @@ from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
+from ..trace.redaction import is_sensitive_key
 from ..types import (
     Codex,
     ErrorCode,
@@ -50,6 +52,8 @@ from .observations import (
 
 # Covers Codex's own per-server MCP startup timeout (10 seconds by default).
 _THREAD_START_TIMEOUT_SECONDS = 30.0
+# Codex wording for a required MCP server that failed during thread/start.
+_MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
 
 # App Server requests that wait for a user to approve a native command, file
 # change, or sandbox widening. Codex blocks the turn until each is answered.
@@ -133,6 +137,29 @@ def _within_request(granted: Any, requested: Any) -> bool:
             for item in granted
         )
     return bool(granted == requested or granted is None or granted is False)
+
+
+def _login_values(value: Any, sensitive: bool = False) -> set[str]:
+    """Every credential-like string in a Codex ``auth.json`` document.
+
+    Values under credential-named keys (and everything under ``tokens``)
+    count whatever their length; any other long string counts too, so an
+    unrecognized token field is still covered.
+    """
+    if isinstance(value, Mapping):
+        return {
+            item
+            for key, nested in value.items()
+            for item in _login_values(
+                nested,
+                sensitive or key == "tokens" or is_sensitive_key(str(key)),
+            )
+        }
+    if isinstance(value, list):
+        return {item for nested in value for item in _login_values(nested, sensitive)}
+    if isinstance(value, str) and value and (sensitive or len(value) >= 16):
+        return {value}
+    return set()
 
 
 @dataclass(frozen=True, slots=True)
@@ -520,6 +547,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         # Preserve an existing native ChatGPT login when no API-key mapping is
         # configured. The isolated home is temporary and cleaned with the
         # execution workspace; auth material never enters the serializable spec.
+        login_secrets: set[str] = set()
         if (
             isinstance(launch.spec.harness, Codex)
             and not launch.spec.harness.credential_references
@@ -542,7 +570,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                             os.fdopen(descriptor, "wb") as destination,
                         ):
                             descriptor = -1
-                            shutil.copyfileobj(source, destination)
+                            auth = source.read()
+                            destination.write(auth)
                     finally:
                         if descriptor != -1:
                             os.close(descriptor)
@@ -554,6 +583,11 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     raise HarnessStartupError(
                         "Codex native login is unavailable"
                     ) from exc
+                # Login tokens are runtime secrets, redacted from trace evidence.
+                try:
+                    login_secrets = _login_values(json.loads(auth))
+                except ValueError:
+                    login_secrets = set()
         environment = dict(self.environment)
         runtime_secrets: set[str] = set()
         protocol_markers: dict[str, str] = {}
@@ -591,6 +625,14 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                         raise HarnessStartupError("Codex MCP credential is unavailable")
                     environment[value.name] = resolved
                     runtime_secrets.add(resolved)
+        runtime_secrets |= login_secrets
+        # Credentials the adapter passes to Codex directly (for example an
+        # OPENAI_API_KEY in its environment) are runtime secrets as well.
+        runtime_secrets |= {
+            value
+            for key, value in environment.items()
+            if value and is_sensitive_key(key)
+        }
         self._runtime_secrets = runtime_secrets
         self._mcp_protocol_markers = protocol_markers
         add_secrets = getattr(launch.capture, "add_secrets", None)
@@ -690,6 +732,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex thread could not be started")
             if frame.get("id") == self._request_id:
+                error = frame.get("error")
+                if isinstance(error, Mapping):
+                    raise self._thread_start_failure(error, launch)
                 result = frame.get("result")
                 if isinstance(result, Mapping):
                     thread = result.get("thread", result)
@@ -709,6 +754,39 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "sandbox": sandbox,
         }
         return self._thread_id
+
+    @staticmethod
+    def _thread_start_failure(
+        error: Mapping[str, Any], launch: HarnessLaunch
+    ) -> HarnessStartupError:
+        """Describe a thread/start error without Codex's free text.
+
+        Codex can echo any credential it was started with (environment, native
+        login, MCP environment or headers), so its message is never passed on.
+        The error is built from M3-known values only: the JSON-RPC code and the
+        configured MCP servers the message names as failing to start.
+        """
+
+        code = error.get("code")
+        summary = "Codex thread/start failed"
+        if isinstance(code, int) and not isinstance(code, bool):
+            summary += f" (JSON-RPC {code})"
+        message = error.get("message")
+        if isinstance(message, str):
+            _, marker, rest = message.partition(_MCP_STARTUP_FAILURE)
+            failed = sorted(
+                {
+                    config.key
+                    for config in launch.configurations
+                    if marker
+                    and re.search(rf"(?<![\w-]){re.escape(config.key)}:", rest)
+                }
+            )
+            if failed:
+                summary += (
+                    f": required MCP server failed to initialize: {', '.join(failed)}"
+                )
+        return HarnessStartupError(summary)
 
     def initial_observations(
         self, sequence: int, wall: datetime, started: float
