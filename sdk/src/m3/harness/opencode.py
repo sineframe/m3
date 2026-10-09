@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import re
@@ -26,6 +27,7 @@ from typing import Any, Literal, NamedTuple, cast
 import httpx
 
 from ..agent_session import AdapterTurn
+from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
 from ..types import (
@@ -78,6 +80,8 @@ from .observations import (
     UsageObservedObservation,
 )
 
+# How often a running turn checks OpenCode for permission prompts to answer.
+_PERMISSION_POLL_SECONDS = 0.25
 _URL = re.compile(r"https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+")
 _DIALECT_PROBE_CONTROL_KEYS = frozenset(
     {"M3_OPENCODE_MODE", "M3_PROBE_MARKER", "M3_VERSION_MARKER"}
@@ -197,13 +201,33 @@ def opencode_configuration(
                 ),
             }
     else:
+        # Without a native policy OpenCode keeps its default tools, and its
+        # default `ask` prompts follow the session's permission policy. Under
+        # "prompt" they stay `ask` and the adapter answers each one through
+        # the permission handler; the default policy denies them.
+        mode = (
+            launch.interactions.permission_policy.mode
+            if launch.interactions is not None
+            else "deny"
+        )
+        action = {"allow": "allow", "prompt": "ask"}.get(mode, "deny")
         tools = {}
-        permissions = {}
+        permissions = {
+            "external_directory": action,
+            "doom_loop": action,
+            "read": {
+                "*": "allow",
+                "*.env": action,
+                "*.env.*": action,
+                "*.env.example": "allow",
+            },
+        }
     if dialect == "v2":
         return {
             "$schema": "https://opencode.ai/config.json",
             "mcp": {"servers": servers},
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            "permissions": _v2_permission_rules(permissions),
         }
     if dialect == "legacy":
         return {
@@ -211,9 +235,28 @@ def opencode_configuration(
             "mcp": {
                 name: {**value, "enabled": True} for name, value in servers.items()
             },
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            "permission": permissions,
         }
     raise HarnessStartupError("unsupported OpenCode configuration dialect")
+
+
+def _v2_permission_rules(permissions: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Render a V1 ``permission`` block as V2's ordered ``permissions`` rules.
+
+    Both resolve the last matching rule, so V1 order carries over. V2 has no
+    ``doom_loop`` action.
+    """
+    rules: list[dict[str, str]] = []
+    for action, value in permissions.items():
+        if action == "doom_loop":
+            continue
+        patterns = value if isinstance(value, Mapping) else {"*": value}
+        rules.extend(
+            {"action": action, "resource": resource, "effect": effect}
+            for resource, effect in patterns.items()
+        )
+    return rules
 
 
 def _opencode_config_value(key: str, value: Any) -> str:
@@ -720,6 +763,93 @@ class OpenCodeHarnessAdapter:
             body.extend(chunk)
         return bytes(body)
 
+    async def _answer_permissions(
+        self, client: httpx.AsyncClient, session_id: str
+    ) -> None:
+        # Decisions are kept apart from delivery so a failed reply is retried
+        # without asking the handler again.
+        decisions: dict[str, bool] = {}
+        delivered: set[str] = set()
+        # Task subagents run in child sessions; their prompts block this turn
+        # too. Parent links are cached per session for the turn.
+        parents: dict[str, str | None] = {}
+        while True:
+            await asyncio.sleep(_PERMISSION_POLL_SECONDS)
+            try:
+                response = await client.get("/permission")
+                pending = json.loads(await self._read_bounded_response(response))
+            except (httpx.HTTPError, OSError, ValueError):
+                continue
+            for item in pending if isinstance(pending, list) else ():
+                if not isinstance(item, Mapping):
+                    continue
+                request_id = item.get("id")
+                if not isinstance(request_id, str) or request_id in delivered:
+                    continue
+                if request_id not in decisions:
+                    owner = item.get("sessionID")
+                    if not isinstance(owner, str) or not await self._in_session_tree(
+                        client, owner, session_id, parents
+                    ):
+                        continue
+                    decisions[request_id] = await self._permission_allowed(item)
+                try:
+                    reply = await client.post(
+                        f"/permission/{request_id}/reply",
+                        json={"reply": "once" if decisions[request_id] else "reject"},
+                    )
+                except (httpx.HTTPError, OSError):
+                    continue
+                if reply.status_code < 400:
+                    delivered.add(request_id)
+
+    async def _in_session_tree(
+        self,
+        client: httpx.AsyncClient,
+        session: str,
+        root: str,
+        parents: dict[str, str | None],
+    ) -> bool:
+        seen: set[str] = set()
+        current: str | None = session
+        while current is not None and current not in seen:
+            if current == root:
+                return True
+            seen.add(current)
+            if current not in parents:
+                try:
+                    response = await client.get(f"/session/{current}")
+                    info = json.loads(await self._read_bounded_response(response))
+                except (httpx.HTTPError, OSError, ValueError):
+                    # Unknown for now; ask again on the next poll.
+                    return False
+                parent = info.get("parentID") if isinstance(info, Mapping) else None
+                parents[current] = parent if isinstance(parent, str) else None
+            current = parents[current]
+        return False
+
+    async def _permission_allowed(self, item: Mapping[str, Any]) -> bool:
+        interactions = self._launch.interactions if self._launch else None
+        if interactions is None:
+            return False
+        patterns = item.get("patterns")
+        patterns = (
+            [str(value) for value in patterns] if isinstance(patterns, list) else []
+        )
+        metadata = item.get("metadata")
+        permission = await interactions.permission(
+            PermissionRequest(
+                f"opencode.{item.get('permission')}",
+                ",".join(patterns),
+                context={
+                    "permission": str(item.get("permission")),
+                    "patterns": patterns,
+                    "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
+                },
+            )
+        )
+        return permission.allowed
+
     async def _send(
         self, request: HarnessTurnRequest, sequence: int, session_id: str
     ) -> HarnessTurnResult:
@@ -737,6 +867,9 @@ class OpenCodeHarnessAdapter:
                 }
             ],
         }
+        # OpenCode blocks the turn on any `ask` until it is answered, so a
+        # responder answers this session's prompts while the POST is open.
+        responder = asyncio.create_task(self._answer_permissions(client, session_id))
         try:
             async with client.stream(
                 "POST",
@@ -810,6 +943,10 @@ class OpenCodeHarnessAdapter:
                 turn_started=turn_started,
                 turn_wall_time=turn_wall_time,
             )
+        finally:
+            responder.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await responder
         if not isinstance(body, Mapping):
             return self._failure_result(
                 sequence,
