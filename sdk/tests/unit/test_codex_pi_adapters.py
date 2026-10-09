@@ -45,7 +45,12 @@ from m3.harness.pi_extension.bridge import (
     MCPBridge,
     qualified_tool_name,
 )
-from m3.interaction_handlers import Interactions
+from m3.interaction_handlers import (
+    InteractionHandlers,
+    Interactions,
+    PermissionRequest,
+    PermissionResult,
+)
 from m3.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
 from m3.transport.capture_proxy import McpCaptureManager
@@ -1771,3 +1776,128 @@ async def test_codex_declined_command_approval_does_not_hang_the_turn() -> None:
         "reason": "default_deny",
         "reply": {"decision": "decline"},
     }
+
+
+def _prompting_interactions(
+    decide: object,
+) -> tuple[Interactions, list[PermissionRequest]]:
+    seen: list[PermissionRequest] = []
+
+    def handler(request: PermissionRequest) -> object:
+        seen.append(request)
+        return decide(request) if callable(decide) else decide
+
+    return (
+        Interactions(
+            permission_policy=PermissionPolicy(mode="prompt"),
+            handlers=InteractionHandlers(permission=handler),
+        ),
+        seen,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "resource", "context"),
+    [
+        (
+            "item/commandExecution/requestApproval",
+            {
+                "command": "curl -sS http://127.0.0.1:8000/",
+                "cwd": "/work",
+                "reason": "needs network",
+                "networkApprovalContext": {"host": "127.0.0.1", "protocol": "http"},
+            },
+            "127.0.0.1",
+            {
+                "command": "curl -sS http://127.0.0.1:8000/",
+                "cwd": "/work",
+                "reason": "needs network",
+                "network": {"host": "127.0.0.1", "protocol": "http"},
+            },
+        ),
+        (
+            "item/fileChange/requestApproval",
+            {"grantRoot": "/outside", "reason": "write outside"},
+            "/outside",
+            {"grant_root": "/outside", "reason": "write outside"},
+        ),
+        (
+            "item/permissions/requestApproval",
+            {
+                "cwd": "/work",
+                "permissions": {"network": {"enabled": True}},
+            },
+            "network",
+            {"cwd": "/work", "permissions": {"network": {"enabled": True}}},
+        ),
+        (
+            "execCommandApproval",
+            {"command": ["ls", "/x"], "cwd": "/work"},
+            "ls /x",
+            {"command": "ls /x", "cwd": "/work"},
+        ),
+        (
+            "applyPatchApproval",
+            {"fileChanges": {"/x/a.py": {}, "/x/b.py": {}}, "grantRoot": "/x"},
+            "/x",
+            {"grant_root": "/x", "paths": ["/x/a.py", "/x/b.py"]},
+        ),
+    ],
+)
+async def test_codex_approval_handler_receives_the_target(
+    method: str,
+    params: dict[str, object],
+    resource: str,
+    context: dict[str, object],
+) -> None:
+    adapter = CodexHarnessAdapter(executable="fixture")
+    interactions, seen = _prompting_interactions(False)
+    adapter._launch = SimpleNamespace(interactions=interactions)  # type: ignore[assignment]
+    process = _ServerRequestProcess([{"id": 1, "method": method, "params": params}])
+    await adapter.next_frame(process, 1.0)  # type: ignore[arg-type]
+    assert len(seen) == 1
+    assert seen[0].resource == resource
+    assert dict(seen[0].context) == context
+
+
+_REQUESTED = {
+    "network": {"enabled": True},
+    "fileSystem": {"write": ["/a", "/b"], "read": ["/c"]},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("grant", "granted"),
+    [
+        (None, _REQUESTED),
+        ({"fileSystem": {"write": ["/a"]}}, {"fileSystem": {"write": ["/a"]}}),
+        ({"network": {"enabled": True}}, {"network": {"enabled": True}}),
+        # Anything beyond the request is refused outright.
+        ({"fileSystem": {"write": ["/a", "/etc"]}}, {}),
+        ({"network": {"enabled": True}, "extra": {}}, {}),
+    ],
+)
+async def test_codex_permission_handler_can_grant_a_subset(
+    grant: dict[str, object] | None, granted: dict[str, object]
+) -> None:
+    adapter = CodexHarnessAdapter(executable="fixture")
+    interactions, _ = _prompting_interactions(
+        # Interactions replaces the handler's receipt with its own.
+        lambda request: PermissionResult(True, None, grant=grant)  # type: ignore[arg-type]
+    )
+    adapter._launch = SimpleNamespace(interactions=interactions)  # type: ignore[assignment]
+    process = _ServerRequestProcess(
+        [
+            {
+                "id": 2,
+                "method": "item/permissions/requestApproval",
+                "params": {"cwd": "/work", "permissions": _REQUESTED},
+            }
+        ]
+    )
+    await adapter.next_frame(process, 1.0)  # type: ignore[arg-type]
+    assert process.written == [
+        {"jsonrpc": "2.0", "id": 2, "result": {"permissions": granted, "scope": "turn"}}
+    ]

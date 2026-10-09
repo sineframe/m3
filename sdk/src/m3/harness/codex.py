@@ -62,6 +62,69 @@ _NATIVE_APPROVAL_OPERATIONS = {
 }
 
 
+def _approval_target(params: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Return the resource and structured context of one native approval."""
+    context: dict[str, Any] = {}
+    command = params.get("command")
+    if isinstance(command, list):
+        command = " ".join(str(part) for part in command)
+    if isinstance(command, str):
+        context["command"] = command
+    for key, name in (
+        ("cwd", "cwd"),
+        ("grantRoot", "grant_root"),
+        ("reason", "reason"),
+    ):
+        value = params.get(key)
+        if isinstance(value, str):
+            context[name] = value
+    network = params.get("networkApprovalContext")
+    if isinstance(network, Mapping):
+        context["network"] = _plain_json(network)
+    changes = params.get("fileChanges")
+    if isinstance(changes, Mapping):
+        context["paths"] = sorted(str(path) for path in changes)
+    permissions = params.get("permissions")
+    if isinstance(permissions, Mapping):
+        context["permissions"] = _plain_json(permissions)
+    # `command` may not describe a managed-network request, so the host is
+    # the resource whenever Codex names one.
+    if isinstance(network, Mapping) and isinstance(network.get("host"), str):
+        resource = network["host"]
+    elif isinstance(command, str):
+        resource = command
+    elif "grant_root" in context:
+        resource = context["grant_root"]
+    elif isinstance(permissions, Mapping):
+        resource = ",".join(sorted(str(key) for key in permissions))
+    else:
+        resource = ""
+    return resource, context
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_json(item) for item in value]
+    return value
+
+
+def _within_request(granted: Any, requested: Any) -> bool:
+    """Whether a granted permission profile asks for nothing beyond the request."""
+    if isinstance(granted, Mapping):
+        return isinstance(requested, Mapping) and all(
+            key in requested and _within_request(value, requested[key])
+            for key, value in granted.items()
+        )
+    if isinstance(granted, (list, tuple)):
+        return isinstance(requested, (list, tuple)) and all(
+            any(_within_request(item, offered) for offered in requested)
+            for item in granted
+        )
+    return bool(granted == requested or granted is None or granted is False)
+
+
 @dataclass(frozen=True, slots=True)
 class _NativeMcpToolItem:
     """Codex-owned item identity eligible for one on-request approval."""
@@ -1308,21 +1371,20 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             return
         params = frame.get("params")
         params = params if isinstance(params, Mapping) else {}
-        command = params.get("command")
-        if isinstance(command, list):
-            command = " ".join(str(part) for part in command)
-        resource = command if isinstance(command, str) else ""
+        resource, context = _approval_target(params)
         # Native approvals are outside the MCP tool selection, so they follow
         # the session's permission policy, which denies by default.
         interactions = self._launch.interactions if self._launch else None
         allowed = False
         reason = "default_deny"
+        grant: Mapping[str, Any] | None = None
         if interactions is not None:
             permission = await interactions.permission(
-                PermissionRequest(f"codex.{operation}", resource)
+                PermissionRequest(f"codex.{operation}", resource, context=context)
             )
             allowed = permission.allowed
             reason = permission.receipt.reason
+            grant = permission.grant
         if method in {"execCommandApproval", "applyPatchApproval"}:
             result: dict[str, Any] = {
                 "decision": "approved"
@@ -1331,12 +1393,14 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             }
         elif operation == "permissions":
             requested = params.get("permissions")
-            result = {
-                "permissions": dict(requested)
-                if allowed and isinstance(requested, Mapping)
-                else {},
-                "scope": "turn",
-            }
+            requested = requested if isinstance(requested, Mapping) else {}
+            granted: Any = {}
+            if allowed:
+                granted = requested if grant is None else grant
+                # A handler may narrow the request but never widen it.
+                if not _within_request(granted, requested):
+                    granted, reason = {}, "grant_exceeds_request"
+            result = {"permissions": _plain_json(granted), "scope": "turn"}
         else:
             result = {"decision": "accept" if allowed else "decline"}
         await self._write_frame(
