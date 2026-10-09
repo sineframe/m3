@@ -810,7 +810,7 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
         items[:] = kept
         if deselected:
             config.hook.pytest_deselected(items=deselected)
-    _warn_unrepeated_trials(config, items)
+    _check_trials(config, items)
 
     for item in items:
         callspec = getattr(item, "callspec", None)
@@ -841,40 +841,39 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
             )
 
 
-def _warn_unrepeated_trials(config: _Any, items: list[_Any]) -> None:
-    """Say once when --trials did not repeat some selected tests."""
+def _check_trials(config: _Any, items: list[_Any]) -> None:
+    """Flag trial settings that cannot repeat anything.
+
+    Trials expand only the ``agent`` fixture.  ``--trials N`` that matched no
+    such test had no effect, so say so once.  ``m3(trials=N)`` written on a
+    test that does not request ``agent`` is a mistake; module and class markers
+    may cover other tests and are left alone.
+    """
+    for item in items:
+        for marker in getattr(item, "own_markers", ()):
+            if (
+                marker.name == "m3"
+                and marker.kwargs.get("trials") is not None
+                and "agent" not in getattr(item, "fixturenames", ())
+            ):
+                raise _pytest.UsageError(
+                    f"m3(trials=...) on {item.name} has no effect: trials only "
+                    "repeat tests that request the `agent` fixture. Request "
+                    "`agent`, or pass trials= to kit.agents() in the test body."
+                )
     trials = config.getoption("--trials")
     if trials is None or trials <= 1 or not items:
         return
-
-    def repeated(item: _Any) -> bool:
-        return "agent" in getattr(getattr(item, "callspec", None), "params", {})
-
-    hint = (
-        "Only tests that request the `agent` fixture run once per trial; "
-        "add an `agent` parameter to the test (kit.agents() in the test body "
-        "keeps its own trials= argument)."
-    )
-    if not any(repeated(item) for item in items):
-        _warnings.warn(
-            _pytest.PytestWarning(
-                f"--trials {trials} had no effect: no selected test requests "
-                f"the `agent` fixture, so each test ran once. {hint}"
-            ),
-            stacklevel=1,
-        )
-        return
-    once = [
-        item
+    if not any(
+        "agent" in getattr(getattr(item, "callspec", None), "params", {})
         for item in items
-        if item.get_closest_marker("m3") is not None and not repeated(item)
-    ]
-    if once:
+    ):
         _warnings.warn(
             _pytest.PytestWarning(
-                f"--trials {trials} only repeats tests that request the `agent` "
-                f"fixture; {len(once)} M3 test(s) ran once, e.g. "
-                f"{once[0].nodeid}. {hint}"
+                f"--trials {trials} had no effect: no selected test requests the "
+                "`agent` fixture, so each test ran once. Only tests that request "
+                "`agent` run once per trial (kit.agents() in the test body takes "
+                "its own trials= argument)."
             ),
             stacklevel=1,
         )

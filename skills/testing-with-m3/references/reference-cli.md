@@ -71,7 +71,7 @@ Run pytest in the project environment and save M3 history.
 | `--runtime system\|managed` | `system`. |
 | `--harness-cache-dir PATH` | Managed harness cache root; otherwise use `M3_HARNESS_CACHE_DIR` or the OS default. |
 | `--server …` | Add an HTTP or stdio server selection. Repeatable groups. |
-| `--trials N` | Independent executions per selected combination. Only tests that request the `agent` fixture repeat; other tests run once, with a warning. See [trials](reference-pytest.md#trials). |
+| `--trials N` | Independent executions per selected combination. Only tests that request the `agent` fixture repeat; other tests run once, and the run warns if no test requests it. See [trials](reference-pytest.md#trials). |
 | `-n`, `--num-processes N\|auto` | Run tests in N pytest-xdist worker processes; `auto` uses one per CPU. Off by default. Cannot be combined with `-n` after `--`. See [parallel runs](reference-pytest.md#parallel-runs). |
 | `--suite NAME` | Select tests already carrying this suite name. |
 | `--execution-timeout SECONDS` | Deadline for each selected agent execution. Defaults to 180. A `timeout=` passed to `agent.run()`, `agent.submit()`, or `agent.session()` takes precedence over this flag. |

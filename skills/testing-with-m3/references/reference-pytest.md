@@ -76,9 +76,11 @@ m3 test --harness codex=gpt-5.6-sol --trials 5 -- tests
 
 A test that builds agents in its body with `m3_kit.agents([...])` is collected
 once and is not repeated by `--trials`; pass `trials=N` to `agents()` instead,
-which runs N executions inside that one test. When `--trials` is above 1 and a
-selected M3 test does not request `agent`, the plugin emits one pytest warning
-naming an example test.
+which returns N trial selections for the test to run. When `--trials` is above
+1 but no selected test requests `agent`, the option has no effect and the
+plugin emits one pytest warning. `m3(trials=N)` written directly on a test that
+does not request `agent` is a usage error; on a module or class it only applies
+to the tests there that do.
 
 ## Step timings
 
