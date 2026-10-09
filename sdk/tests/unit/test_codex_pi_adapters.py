@@ -876,6 +876,56 @@ def test_provider_protocol_errors_are_not_successes() -> None:
     assert JsonRpcProcess is not None
 
 
+class _ThreadStartErrorProcess:
+    root: Path | None = None
+
+    def __init__(self, error: object) -> None:
+        self.error = error
+        self.written: list[dict[str, object]] = []
+
+    async def write(self, payload: dict[str, object]) -> None:
+        self.written.append(payload)
+
+    async def next(self, timeout: float | None = None) -> dict[str, object]:
+        request = self.written[-1]
+        if request["method"] == "initialize":
+            return {"jsonrpc": "2.0", "id": request["id"], "result": {}}
+        return {"jsonrpc": "2.0", "id": request["id"], "error": self.error}
+
+
+@pytest.mark.asyncio
+async def test_codex_thread_start_error_reports_provider_message() -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    adapter._runtime_secrets = {"sk-thread-secret"}
+    process = _ThreadStartErrorProcess(
+        {
+            "code": -32603,
+            "message": (
+                "error creating thread: required MCP servers failed to "
+                "initialize: filesystem: token sk-thread-secret rejected\n" + "x" * 2000
+            ),
+        }
+    )
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    message = str(exc_info.value)
+    assert message.startswith("Codex thread/start failed: error creating thread")
+    assert "required MCP servers failed to initialize" in message
+    assert "sk-thread-secret" not in message
+    assert "\n" not in message
+    assert len(message) <= 300
+
+
+@pytest.mark.asyncio
+async def test_codex_thread_start_error_without_message_is_generic() -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    process = _ThreadStartErrorProcess({"code": -32603})
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    with pytest.raises(HarnessStartupError, match=r"^Codex thread/start failed$"):
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+
+
 @pytest.mark.asyncio
 async def test_codex_terminal_failure_is_not_projected_as_completed() -> None:
     from datetime import datetime, timezone

@@ -18,19 +18,23 @@ from m3.errors import (
     ModelValidationError,
     SessionBusy,
     SessionStillOpen,
+    TransportError,
     UnsupportedFeature,
 )
 from m3.harness.contracts import (
     HarnessAdapterCapabilities,
     HarnessInteractionCapabilities,
+    HarnessStartupError,
 )
 from m3.sync_api import MCPTestKit
 from m3.types import (
     ACPAgent,
     ArtifactPolicy,
     ErrorCode,
+    EventKind,
     ExecutionOutcome,
     Pi,
+    Readiness,
     ServerBinding,
     SessionForkRequest,
     StdioServer,
@@ -378,6 +382,21 @@ class PreflightFailureHarness(FakeHarness):
     async def preflight(self, launch: object) -> object:
         self.workspace_root = Path(str(launch.workspace_root))
         raise UnsupportedFeature("preflight unavailable")
+
+
+class NotReadyHarness(FakeHarness):
+    async def preflight(self, launch: object) -> Readiness:
+        return Readiness(ready=False, reason="serve unavailable")
+
+
+class FailingStartHarness(FakeHarness):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    async def start(self, spec: AgentSpec) -> None:
+        self.started += 1
+        raise self.error
 
 
 class FatalStartup(BaseException):
@@ -828,6 +847,8 @@ async def test_preflight_failure_retains_workspace_owner_for_cleanup_retry(
     with pytest.raises(UnsupportedFeature) as exc_info:
         await session.__aenter__()
     assert "workspace-startup-secret" not in repr(exc_info.value)
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
     assert adapter.workspace_root is not None and adapter.workspace_root.exists()
     assert session._closed is False
     assert session.result.error is not None
@@ -837,6 +858,75 @@ async def test_preflight_failure_retains_workspace_owner_for_cleanup_retry(
     assert session._closed is True
     assert not adapter.workspace_root.exists()
     assert attempts == 2
+
+
+def _startup_diagnostics(session: AsyncAgentSession) -> list[Mapping[str, object]]:
+    return [
+        event.payload
+        for event in session._trace_recorder.events()
+        if event.kind is EventKind.DIAGNOSTIC
+        and event.payload.get("code") == "startup_failed"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_startup_reports_its_cause_and_code() -> None:
+    session = AsyncAgentSession(_spec(), PreflightFailureHarness())
+    with pytest.raises(UnsupportedFeature, match="preflight unavailable"):
+        await session.__aenter__()
+    error = session.result.error
+    assert error is not None
+    assert error.code is ErrorCode.UNSUPPORTED
+    assert "preflight unavailable" in error.message
+    assert error.details.get("cause") == "preflight unavailable"
+    assert [item.get("error_code") for item in _startup_diagnostics(session)] == [
+        "unsupported"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_not_ready_preflight_keeps_readiness_reason() -> None:
+    session = AsyncAgentSession(_spec(), NotReadyHarness())
+    with pytest.raises(UnsupportedFeature, match="serve unavailable"):
+        await session.__aenter__()
+    error = session.result.error
+    assert error is not None and error.code is ErrorCode.UNSUPPORTED
+    assert "serve unavailable" in error.details.get("cause", "")
+
+
+@pytest.mark.asyncio
+async def test_harness_startup_error_message_is_reported() -> None:
+    adapter = FailingStartHarness(
+        HarnessStartupError("Codex thread identity was unavailable")
+    )
+    session = AsyncAgentSession(_spec(), adapter)
+    with pytest.raises(
+        TransportError, match="Codex thread identity was unavailable"
+    ) as exc_info:
+        await session.__aenter__()
+    assert exc_info.value.__context__ is None
+    error = session.result.error
+    assert error is not None and error.code is ErrorCode.TRANSPORT_ERROR
+    assert error.details.get("cause") == "Codex thread identity was unavailable"
+    diagnostics = _startup_diagnostics(session)
+    assert len(diagnostics) == 1
+    assert "Codex thread identity was unavailable" in str(diagnostics[0]["message"])
+
+
+@pytest.mark.asyncio
+async def test_untrusted_startup_error_reports_only_its_category() -> None:
+    adapter = FailingStartHarness(RuntimeError("provider-startup-secret"))
+    session = AsyncAgentSession(_spec(), adapter)
+    with pytest.raises(TransportError, match="RuntimeError") as exc_info:
+        await session.__aenter__()
+    assert "provider-startup-secret" not in repr(exc_info.value)
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+    error = session.result.error
+    assert error is not None and error.code is ErrorCode.TRANSPORT_ERROR
+    assert error.details.get("cause") == "RuntimeError"
+    assert "provider-startup-secret" not in repr(error)
+    assert "provider-startup-secret" not in repr(_startup_diagnostics(session))
 
 
 @pytest.mark.asyncio

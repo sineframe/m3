@@ -17,6 +17,7 @@ from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
+from ..trace.redaction import RedactionConfig, redact_for_api
 from ..types import (
     Codex,
     ErrorCode,
@@ -50,6 +51,7 @@ from .observations import (
 
 # Covers Codex's own per-server MCP startup timeout (10 seconds by default).
 _THREAD_START_TIMEOUT_SECONDS = 30.0
+_THREAD_START_ERROR_LIMIT = 200
 
 # App Server requests that wait for a user to approve a native command, file
 # change, or sandbox widening. Codex blocks the turn until each is answered.
@@ -690,6 +692,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex thread could not be started")
             if frame.get("id") == self._request_id:
+                error = frame.get("error")
+                if isinstance(error, Mapping):
+                    raise self._thread_start_failure(error)
                 result = frame.get("result")
                 if isinstance(result, Mapping):
                     thread = result.get("thread", result)
@@ -709,6 +714,32 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "sandbox": sandbox,
         }
         return self._thread_id
+
+    def _thread_start_failure(self, error: Mapping[str, Any]) -> HarnessStartupError:
+        """Keep a redacted, bounded prefix of Codex's thread/start error.
+
+        The text is Codex-authored (for example, which required MCP server
+        failed its handshake) and is the only actionable startup evidence, so
+        it is kept after runtime-secret redaction and truncation.
+        """
+
+        message = error.get("message")
+        safe: Any = None
+        if isinstance(message, str) and message.strip():
+            try:
+                safe = redact_for_api(
+                    " ".join(message.split()),
+                    config=RedactionConfig.from_environment(
+                        secrets=self._runtime_secrets
+                    ),
+                )
+            except Exception:
+                safe = None
+        if not isinstance(safe, str) or not safe:
+            return HarnessStartupError("Codex thread/start failed")
+        return HarnessStartupError(
+            f"Codex thread/start failed: {safe[:_THREAD_START_ERROR_LIMIT]}"
+        )
 
     def initial_observations(
         self, sequence: int, wall: datetime, started: float

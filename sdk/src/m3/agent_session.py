@@ -149,6 +149,35 @@ class _ElicitationSender(Protocol):
     ) -> TurnResponse | AdapterTurn: ...
 
 
+_STARTUP_CAUSE_LIMIT = 256
+_SAFE_STARTUP_ERROR_TYPES = frozenset(
+    {"TimeoutError", "ValueError", "OSError", "RuntimeError"}
+)
+
+
+def _startup_failure_cause(error: BaseException) -> str:
+    """Return a bounded, M3-authored cause for a failed session startup.
+
+    Adapter errors and unsupported-feature rejections carry sanitized
+    messages written by M3 or its adapters.  Any other exception may hold
+    provider-controlled text, so only a fixed category is reported for it.
+    """
+
+    from .harness.contracts import HarnessAdapterError
+    from .runtime.core import RuntimeErrorBase
+
+    if isinstance(error, (HarnessAdapterError, UnsupportedFeature)):
+        text = " ".join(str(error).split())
+        if text:
+            return text[:_STARTUP_CAUSE_LIMIT]
+    if isinstance(error, RuntimeErrorBase):
+        return "managed runtime acquisition failed"
+    name = type(error).__name__
+    if type(error).__module__ == "builtins" and name in _SAFE_STARTUP_ERROR_TYPES:
+        return name
+    return "unexpected error"
+
+
 def _validate_elicitation_arguments(
     elicitation: ElicitationPlan | None, elicitation_round_limit: int
 ) -> None:
@@ -506,6 +535,7 @@ class AsyncAgentSession:
             except asyncio.CancelledError:
                 raise
             return self
+        startup_error: MCPError | None = None
         try:
             await asyncio.to_thread(self._workspace.create)
             with _timing.span("session.start", key=self._policy_harness_name):
@@ -547,17 +577,35 @@ class AsyncAgentSession:
                 await asyncio.to_thread(self._workspace.cleanup)
             except Exception:
                 cleanup_failure = True
-            code = (
-                ErrorCode.CANCELLED
-                if outcome is ExecutionOutcome.CANCELLED
-                else ErrorCode.TRANSPORT_ERROR
+            unsupported = isinstance(exc, UnsupportedFeature)
+            cause = (
+                None
+                if isinstance(exc, asyncio.CancelledError)
+                else _startup_failure_cause(exc)
             )
+            if outcome is ExecutionOutcome.CANCELLED:
+                code, message = ErrorCode.CANCELLED, "session startup cancelled"
+            elif unsupported:
+                code = ErrorCode.UNSUPPORTED
+                message = f"session startup unsupported: {cause}"
+            else:
+                code = ErrorCode.TRANSPORT_ERROR
+                message = f"session startup failed: {cause}"
+            if cause is not None:
+                self._emit_event(
+                    EventKind.DIAGNOSTIC,
+                    {
+                        "code": "startup_failed",
+                        "error_code": code.value,
+                        "message": message,
+                    },
+                    phase=LifecyclePhase.STARTUP,
+                )
             await self._finish(
                 outcome,
                 code,
-                "session startup cancelled"
-                if outcome is ExecutionOutcome.CANCELLED
-                else "session startup failed",
+                message,
+                details=None if cause is None else {"cause": cause},
             )
             if cleanup_failure:
                 # Keep the terminal result and all unfinished owners visible
@@ -575,18 +623,29 @@ class AsyncAgentSession:
                 if self._close_requested_outcome is not None:
                     raise KitClosed("agent session is closing") from None
                 raise
-            if isinstance(exc, UnsupportedFeature):
-                # Policy/attachment capability rejection is a caller-visible
-                # preflight result, not an opaque transport failure.  Do not
-                # propagate provider-controlled exception text.
-                raise UnsupportedFeature("session startup unsupported") from None
             if not isinstance(exc, Exception):
                 raise
-            raise TransportError("agent session startup failed") from None
+            # Policy/attachment capability rejection is a caller-visible
+            # preflight result, not an opaque transport failure.  Only the
+            # bounded cause is surfaced; the original exception is raised
+            # outside this handler so provider-controlled text does not
+            # survive as ``__context__``.
+            details = {"cause": cause}
+            startup_error = (
+                UnsupportedFeature(
+                    f"session startup unsupported: {cause}", details=details
+                )
+                if unsupported
+                else TransportError(
+                    f"agent session startup failed: {cause}", details=details
+                )
+            )
         finally:
             async with self._state_lock:
                 if self._startup_task is asyncio.current_task():
                     self._startup_task = None
+        if startup_error is not None:
+            raise startup_error
         return self
 
     async def __aexit__(
@@ -607,6 +666,10 @@ class AsyncAgentSession:
         if inspect.isawaitable(readiness):
             readiness = await readiness
         if not getattr(readiness, "ready", True):
+            reason = getattr(readiness, "reason", None)
+            if isinstance(reason, str) and reason.strip():
+                # Readiness reasons are adapter-authored capability summaries.
+                raise UnsupportedFeature(f"harness is not ready: {reason}")
             raise UnsupportedFeature("requested harness policy is unavailable")
         evidence = getattr(self.adapter, "last_policy_evidence", None)
         if not isinstance(evidence, ToolPolicyEvidence):
@@ -2315,7 +2378,12 @@ class AsyncAgentSession:
             pass
 
     async def _finish(
-        self, outcome: ExecutionOutcome, code: ErrorCode, message: str
+        self,
+        outcome: ExecutionOutcome,
+        code: ErrorCode,
+        message: str,
+        *,
+        details: Mapping[str, Any] | None = None,
     ) -> None:
         async with self._state_lock:
             if self._terminal_outcome is not None:
@@ -2349,7 +2417,7 @@ class AsyncAgentSession:
             self._terminal_error = (
                 None
                 if outcome is ExecutionOutcome.COMPLETED
-                else ErrorInfo(code=code, message=message)
+                else ErrorInfo(code=code, message=message, details=details or {})
             )
             self._emit_event(
                 EventKind.SESSION_STATE_CHANGED,
