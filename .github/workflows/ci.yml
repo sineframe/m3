@@ -453,6 +453,9 @@ jobs:
       - name: Check generated Python API reference
         run: uv run --no-sync python scripts/render_docs_api_reference.py --check
 
+      - name: Check harness version references
+        run: uv run --no-sync python scripts/check_harness_versions.py --check
+
       - name: Verify lockfile
         run: uv lock --check
 

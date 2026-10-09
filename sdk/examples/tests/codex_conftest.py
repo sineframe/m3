@@ -24,19 +24,22 @@ from m3 import MCPTestKit
 from m3.agent_session import AdapterTurn
 from m3.elicitation import ElicitationPlan
 from m3.harness import HarnessAdapterRegistry, HarnessLaunch
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION
 from m3.harness.codex import CodexHarnessAdapter
 from m3.harness.observations import HarnessObservation
 from m3.types import Codex, HarnessSpec, StdioServer
 
 SDK_ROOT = Path(__file__).parents[2]
 EXAMPLES_ROOT = SDK_ROOT / "examples"
-_EXPECTED_CODEX_VERSION = "codex-cli 0.156.1"
+_EXPECTED_CODEX_VERSION = f"codex-cli {CODEX_VERIFIED_VERSION}"
 
 
 def _require_codex() -> str:
     executable = os.environ.get("M3_CODEX_EXECUTABLE") or shutil.which("codex")
     if executable is None:
-        pytest.fail("Codex 0.156.1 is required; set M3_CODEX_EXECUTABLE")
+        pytest.fail(
+            f"Codex {CODEX_VERIFIED_VERSION} is required; set M3_CODEX_EXECUTABLE"
+        )
     try:
         version = subprocess.run(
             [executable, "--version"],
@@ -46,7 +49,7 @@ def _require_codex() -> str:
             timeout=5,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        pytest.fail("Codex 0.156.1 could not be executed")
+        pytest.fail(f"Codex {CODEX_VERIFIED_VERSION} could not be executed")
     expected = _EXPECTED_CODEX_VERSION
     if version != expected:
         pytest.fail(f"expected {expected!r}, found {version!r}")

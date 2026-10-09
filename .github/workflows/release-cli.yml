@@ -64,6 +64,8 @@ jobs:
           uv run --isolated --python 3.13 --locked --all-packages --no-dev \
             --group lint --group typecheck \
             python scripts/render_docs_api_reference.py --check
+      - name: Check harness version references
+        run: uv run --no-sync python scripts/check_harness_versions.py --check
       - name: Run source and lock checks
         run: |
           set -euo pipefail

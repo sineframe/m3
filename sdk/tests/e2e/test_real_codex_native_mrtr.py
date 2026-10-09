@@ -20,6 +20,8 @@ from fixtures.codex_responses_provider import (
     wait_for_requests,
 )
 
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION
+
 pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
 _SDK_ROOT = Path(__file__).parents[2]
@@ -255,7 +257,7 @@ async def test_real_codex_negotiates_modern_mcp_and_surfaces_a_form(
     assert discovery_meta["io.modelcontextprotocol/clientInfo"] == {
         "name": "codex-mcp-client",
         "title": "Codex",
-        "version": "0.156.1",
+        "version": CODEX_VERIFIED_VERSION,
     }
     assert discovery_meta["io.modelcontextprotocol/clientCapabilities"] == {
         "experimental": {"codex/auth-change": {}},
