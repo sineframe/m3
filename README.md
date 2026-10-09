@@ -134,7 +134,9 @@ Put `ANTHROPIC_API_KEY` in `.env` at the project root, then run the tests:
 m3 test -- tests
 ```
 
-Run the same tests with another agent, or several times to get a pass rate:
+Run the same tests with another agent, or several times to get a pass rate.
+`--trials` repeats tests that take the `agent` fixture, like the ones above;
+other tests run once.
 
 ```sh
 m3 test --harness codex=gpt-5.6-sol -- tests

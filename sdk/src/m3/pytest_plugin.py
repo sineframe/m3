@@ -10,6 +10,7 @@ import os as _os
 import re as _re
 import shutil as _shutil
 import time as _time
+import warnings as _warnings
 from collections.abc import Iterator as _Iterator
 from collections.abc import Mapping as _Mapping
 from contextvars import ContextVar as _ContextVar
@@ -809,6 +810,7 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
         items[:] = kept
         if deselected:
             config.hook.pytest_deselected(items=deselected)
+    _warn_unrepeated_trials(config, items)
 
     for item in items:
         callspec = getattr(item, "callspec", None)
@@ -837,6 +839,45 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
             raise _pytest.UsageError(
                 "server fixture requires --server selections or m3(servers=[...])"
             )
+
+
+def _warn_unrepeated_trials(config: _Any, items: list[_Any]) -> None:
+    """Say once when --trials did not repeat some selected tests."""
+    trials = config.getoption("--trials")
+    if trials is None or trials <= 1 or not items:
+        return
+
+    def repeated(item: _Any) -> bool:
+        return "agent" in getattr(getattr(item, "callspec", None), "params", {})
+
+    hint = (
+        "Only tests that request the `agent` fixture run once per trial; "
+        "add an `agent` parameter to the test (kit.agents() in the test body "
+        "keeps its own trials= argument)."
+    )
+    if not any(repeated(item) for item in items):
+        _warnings.warn(
+            _pytest.PytestWarning(
+                f"--trials {trials} had no effect: no selected test requests "
+                f"the `agent` fixture, so each test ran once. {hint}"
+            ),
+            stacklevel=1,
+        )
+        return
+    once = [
+        item
+        for item in items
+        if item.get_closest_marker("m3") is not None and not repeated(item)
+    ]
+    if once:
+        _warnings.warn(
+            _pytest.PytestWarning(
+                f"--trials {trials} only repeats tests that request the `agent` "
+                f"fixture; {len(once)} M3 test(s) ran once, e.g. "
+                f"{once[0].nodeid}. {hint}"
+            ),
+            stacklevel=1,
+        )
 
 
 def pytest_unconfigure(config: _Any) -> None:

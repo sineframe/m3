@@ -66,6 +66,74 @@ def test_one(case, agent):
     assert "opencode-provider/b-opencode-trial-2" in result.stdout
 
 
+def _run_with_trials(tmp_path: Path, source: str, trials: str) -> str:
+    test_file = tmp_path / "test_trials_warning.py"
+    test_file.write_text(source, encoding="utf-8")
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "m3.pytest_plugin",
+            "--harness",
+            "opencode=provider/a",
+            "--trials",
+            trials,
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
+
+
+def test_trials_warns_once_when_marked_tests_skip_agent_fixture(
+    tmp_path: Path,
+) -> None:
+    output = _run_with_trials(
+        tmp_path,
+        """
+import pytest
+pytestmark = pytest.mark.m3
+def test_body_agents(m3_kit): pass
+def test_also_body(m3_kit): pass
+def test_repeated(agent): pass
+""",
+        "3",
+    )
+    assert "5 passed" in output
+    assert output.count("--trials 3 only repeats tests that request") == 1
+    assert "2 M3 test(s) ran once" in output
+    assert "test_body_agents" in output
+
+
+def test_trials_warns_when_no_test_requests_agent(tmp_path: Path) -> None:
+    output = _run_with_trials(tmp_path, "def test_plain(): pass\n", "2")
+    assert "1 passed" in output
+    assert "--trials 2 had no effect" in output
+
+
+def test_trials_does_not_warn_when_every_marked_test_requests_agent(
+    tmp_path: Path,
+) -> None:
+    output = _run_with_trials(
+        tmp_path,
+        "import pytest\n@pytest.mark.m3\ndef test_repeated(agent): pass\n"
+        "def test_plain(): pass\n",
+        "2",
+    )
+    assert "3 passed" in output
+    assert "--trials" not in output
+
+
 @pytest.mark.parametrize(
     "arguments",
     (
