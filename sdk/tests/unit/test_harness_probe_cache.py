@@ -191,7 +191,8 @@ def test_concurrent_callers_share_a_timed_out_probe(
     assert calls == 2 * native_module.PROBE_ATTEMPTS
 
 
-def test_codex_retries_mrtr_version_probe_after_a_timeout(
+@pytest.mark.asyncio
+async def test_codex_retries_mrtr_version_probe_after_a_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from m3.harness.codex import CodexHarnessAdapter
@@ -203,9 +204,17 @@ def test_codex_retries_mrtr_version_probe_after_a_timeout(
     monkeypatch.setattr(subprocess, "run", fake)
     adapter = CodexHarnessAdapter(executable=_executable(tmp_path / "codex"))
 
+    await adapter.prepare_capabilities()
+    # Reading the result of that preparation must not probe again on the
+    # caller's thread (the event loop, in a session).
     assert not adapter.capabilities.interaction.supports_elicitation
-    # The timeout is not remembered as "unsupported": the next check probes.
+    assert fake.calls[("--version",)] == native_module.PROBE_ATTEMPTS
+
+    # A later preparation retries, so a transient timeout is not remembered as
+    # an unsupported version.
+    await adapter.prepare_capabilities()
     assert adapter.capabilities.interaction.supports_elicitation
+    assert fake.calls[("--version",)] == native_module.PROBE_ATTEMPTS + 1
 
 
 @pytest.mark.asyncio

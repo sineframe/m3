@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timezone
 
 try:
@@ -238,6 +239,8 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
     probes: list[str] = []
 
     def fake_probe(executable: str, args: tuple[str, ...]) -> str | None:
+        # Session startup must never run a probe on the event loop.
+        assert threading.current_thread() is not threading.main_thread()
         order.append(f"probe:{executable}")
         probes.append(executable)
         if args == ("--version",) and executable == managed_executable:

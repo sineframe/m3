@@ -345,6 +345,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._mrtr_capability_identity: (
             tuple[str, int | None, int | None, int | None, int | None] | None
         ) = None
+        # Last binary a version probe was attempted for, successful or not.
+        self._mrtr_attempted_identity: (
+            tuple[str, int | None, int | None, int | None, int | None] | None
+        ) = None
         self._action_interrupt_sent = False
         self._unscoped_elicitation_failure = False
         self._unapproved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
@@ -360,9 +364,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
-        # AgentSession checks capabilities before preflight, so establish the
-        # version gate lazily at the same point the declaration is inspected.
-        self._ensure_mrtr_capability()
+        # Probe lazily only for a binary that was never checked. Once any
+        # attempt was made, even a failed one, return its result: retrying is
+        # prepare_capabilities()'s job, which keeps the probe off the event
+        # loop for sessions.
+        if self._mrtr_attempted_identity != self._executable_identity():
+            self._ensure_mrtr_capability()
         return self._capabilities
 
     def _executable_identity(
@@ -413,6 +420,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._capabilities = replace(self._capabilities, interaction=interaction)
         # A failed probe (for example a timeout under load) says nothing about
         # the version, so the next check probes again.
+        self._mrtr_attempted_identity = executable_identity
         if version is not None:
             self._mrtr_capability_identity = executable_identity
 
