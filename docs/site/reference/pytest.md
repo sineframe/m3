@@ -63,13 +63,18 @@ an explicit kit store takes precedence.
 ## Trials
 
 `--trials N` (or marker `trials=N`) expands the `agent` fixture, so only tests
-that request `agent` run N times. Each trial is its own test case with its own
-pass or fail:
+that request `agent` run N times. Trials share one logical case identity; each
+trial is a separately collected pytest item with its own pass/fail:
 
 ```python
+@pytest.fixture
+def orders_server():
+    return StdioServer(name="orders", command="python", args=("orders_server.py",))
+
+
 @pytest.mark.m3
-def test_lookup(agent):
-    result = agent.run("Find order 42.", server=server)
+def test_lookup(agent, orders_server):
+    result = agent.run("Find order 42.", server=orders_server)
     expect(result).to_have_tool_calls(["get_order"])
 ```
 

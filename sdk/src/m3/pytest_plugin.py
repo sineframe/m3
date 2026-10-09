@@ -865,7 +865,8 @@ def _check_trials(config: _Any, items: list[_Any]) -> None:
     if trials is None or trials <= 1 or not items:
         return
     if not any(
-        "agent" in getattr(getattr(item, "callspec", None), "params", {})
+        item.get_closest_marker("m3") is not None
+        and "agent" in getattr(getattr(item, "callspec", None), "params", {})
         for item in items
     ):
         _warnings.warn(

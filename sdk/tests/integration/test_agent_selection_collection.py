@@ -102,6 +102,22 @@ def test_trials_warns_when_no_test_requests_agent(tmp_path: Path) -> None:
     assert "--trials 2 had no effect" in output
 
 
+def test_trials_warns_when_only_an_unrelated_agent_parameter_exists(
+    tmp_path: Path,
+) -> None:
+    # A parametrized argument that happens to be named `agent` is not M3's
+    # fixture and must not hide that --trials had no effect.
+    output = _run_with_trials(
+        tmp_path,
+        "import pytest\n"
+        "@pytest.mark.parametrize('agent', ['a'])\n"
+        "def test_other(agent): pass\n",
+        "2",
+    )
+    assert "1 passed" in output
+    assert "--trials 2 had no effect" in output
+
+
 def test_trials_does_not_warn_when_some_test_requests_agent(tmp_path: Path) -> None:
     # --trials had an effect, so tests that build agents in their body or are
     # not agent tests at all are left alone.
