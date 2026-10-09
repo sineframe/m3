@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -17,7 +18,7 @@ from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
-from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
+from ..trace.redaction import is_sensitive_key
 from ..types import (
     Codex,
     ErrorCode,
@@ -51,7 +52,8 @@ from .observations import (
 
 # Covers Codex's own per-server MCP startup timeout (10 seconds by default).
 _THREAD_START_TIMEOUT_SECONDS = 30.0
-_THREAD_START_ERROR_LIMIT = 200
+# Codex wording for a required MCP server that failed during thread/start.
+_MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
 
 # App Server requests that wait for a user to approve a native command, file
 # change, or sandbox widening. Codex blocks the turn until each is answered.
@@ -355,8 +357,6 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         ] = {}
         # Paths of started fileChange items, for the approval that follows.
         self._file_change_paths: dict[str, list[str]] = {}
-        # Set when a copied native login could not be parsed for redaction.
-        self._login_unredactable = False
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
@@ -548,7 +548,6 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         # configured. The isolated home is temporary and cleaned with the
         # execution workspace; auth material never enters the serializable spec.
         login_secrets: set[str] = set()
-        self._login_unredactable = False
         if (
             isinstance(launch.spec.harness, Codex)
             and not launch.spec.harness.credential_references
@@ -584,12 +583,11 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     raise HarnessStartupError(
                         "Codex native login is unavailable"
                     ) from exc
-                # Codex may echo login tokens in errors; redact them like other
-                # runtime secrets, and drop provider text if they can't be read.
+                # Login tokens are runtime secrets, redacted from trace evidence.
                 try:
                     login_secrets = _login_values(json.loads(auth))
                 except ValueError:
-                    self._login_unredactable = True
+                    login_secrets = set()
         environment = dict(self.environment)
         runtime_secrets: set[str] = set()
         protocol_markers: dict[str, str] = {}
@@ -736,7 +734,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if frame.get("id") == self._request_id:
                 error = frame.get("error")
                 if isinstance(error, Mapping):
-                    raise self._thread_start_failure(error)
+                    raise self._thread_start_failure(error, launch)
                 result = frame.get("result")
                 if isinstance(result, Mapping):
                     thread = result.get("thread", result)
@@ -757,39 +755,38 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         }
         return self._thread_id
 
-    def _thread_start_failure(self, error: Mapping[str, Any]) -> HarnessStartupError:
-        """Keep a redacted, bounded prefix of Codex's thread/start error.
+    @staticmethod
+    def _thread_start_failure(
+        error: Mapping[str, Any], launch: HarnessLaunch
+    ) -> HarnessStartupError:
+        """Describe a thread/start error without Codex's free text.
 
-        The text is Codex-authored (for example, which required MCP server
-        failed its handshake) and is the only actionable startup evidence, so
-        it is kept after runtime-secret redaction and truncation.
+        Codex can echo any credential it was started with (environment, native
+        login, MCP environment or headers), so its message is never passed on.
+        The error is built from M3-known values only: the JSON-RPC code and the
+        configured MCP servers the message names as failing to start.
         """
 
+        code = error.get("code")
+        summary = "Codex thread/start failed"
+        if isinstance(code, int) and not isinstance(code, bool):
+            summary += f" (JSON-RPC {code})"
         message = error.get("message")
-        safe: Any = None
-        if (
-            isinstance(message, str)
-            and message.strip()
-            and not self._login_unredactable
-        ):
-            # Redact the original text: normalizing whitespace first could
-            # change a secret so it no longer matches.
-            try:
-                safe = redact_for_api(
-                    message,
-                    config=RedactionConfig.from_environment(
-                        secrets=self._runtime_secrets
-                    ),
+        if isinstance(message, str):
+            _, marker, rest = message.partition(_MCP_STARTUP_FAILURE)
+            failed = sorted(
+                {
+                    config.key
+                    for config in launch.configurations
+                    if marker
+                    and re.search(rf"(?<![\w-]){re.escape(config.key)}:", rest)
+                }
+            )
+            if failed:
+                summary += (
+                    f": required MCP server failed to initialize: {', '.join(failed)}"
                 )
-            except Exception:
-                safe = None
-            if isinstance(safe, str):
-                safe = " ".join(safe.split())
-        if not isinstance(safe, str) or not safe:
-            return HarnessStartupError("Codex thread/start failed")
-        return HarnessStartupError(
-            f"Codex thread/start failed: {safe[:_THREAD_START_ERROR_LIMIT]}"
-        )
+        return HarnessStartupError(summary)
 
     def initial_observations(
         self, sequence: int, wall: datetime, started: float

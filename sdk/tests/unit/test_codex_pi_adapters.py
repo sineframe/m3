@@ -893,137 +893,87 @@ class _ThreadStartErrorProcess:
         return {"jsonrpc": "2.0", "id": request["id"], "error": self.error}
 
 
+def _mcp_configuration(key: str, **extra: object) -> HarnessServerConfig:
+    return HarnessServerConfig(
+        key=key,
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id=f"{key}-connection",
+        command="fixture",
+        **extra,
+    )
+
+
 @pytest.mark.asyncio
-async def test_codex_thread_start_error_reports_provider_message() -> None:
-    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
-    adapter._runtime_secrets = {"sk-thread-secret"}
+@pytest.mark.parametrize(
+    "configuration",
+    (
+        _mcp_configuration("filesystem"),
+        # A literal credential in the MCP server's environment.
+        _mcp_configuration("filesystem", environment={"API_TOKEN": "CANARY"}),
+        # A literal credential in an MCP header.
+        _mcp_configuration("filesystem", headers={"Authorization": "CANARY"}),
+    ),
+)
+async def test_codex_thread_start_error_never_includes_provider_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: object
+) -> None:
+    # Any credential Codex was started with (adapter environment, native
+    # login, MCP configuration) can come back in its error text, so the error
+    # is built only from M3-known values: the code and configured server names.
+    source = tmp_path / "source-home"
+    source.mkdir()
+    (source / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": "CANARY"}}), encoding="utf-8"
+    )
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE), environment={"OPENAI_API_KEY": "CANARY"}
+    )
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(configuration,),  # type: ignore[arg-type]
+    )
     process = _ThreadStartErrorProcess(
         {
             "code": -32603,
             "message": (
-                "error creating thread: required MCP servers failed to "
-                "initialize: filesystem: token sk-thread-secret rejected\n" + "x" * 2000
+                "error creating thread: Fatal error: Failed to initialize session: "
+                "required MCP servers failed to initialize: filesystem: handshaking "
+                "with MCP server failed: auth failed for CANARY secret  with\tspaces"
             ),
         }
     )
-    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
     with pytest.raises(HarnessStartupError) as exc_info:
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
-    message = str(exc_info.value)
-    assert message.startswith("Codex thread/start failed: error creating thread")
-    assert "required MCP servers failed to initialize" in message
-    assert "sk-thread-secret" not in message
-    assert "\n" not in message
-    assert len(message) <= 300
-
-
-@pytest.mark.asyncio
-async def test_codex_thread_start_error_redacts_secrets_before_collapsing_space() -> (
-    None
-):
-    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
-    # Collapsing whitespace first would turn this into "secret with spaces",
-    # which no longer matches the configured secret.
-    adapter._runtime_secrets = {"secret  with\tspaces"}
-    process = _ThreadStartErrorProcess(
-        {"code": -32603, "message": "auth failed for secret  with\tspaces here"}
+    assert str(exc_info.value) == (
+        "Codex thread/start failed (JSON-RPC -32603): "
+        "required MCP server failed to initialize: filesystem"
     )
-    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
-    with pytest.raises(HarnessStartupError) as exc_info:
-        await adapter.initialize(process, launch)  # type: ignore[arg-type]
-    message = str(exc_info.value)
-    assert "secret with spaces" not in message
-    assert "secret  with\tspaces" not in message
-    assert message.startswith("Codex thread/start failed: auth failed for")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("auth", "expected"),
+    ("error", "expected"),
     (
+        ({"code": -32603}, "Codex thread/start failed (JSON-RPC -32603)"),
         (
-            {
-                "auth_mode": "chatgpt",
-                "tokens": {"access_token": "native-auth-token-canary"},
-            },
-            "Codex thread/start failed: login rejected",
+            {"code": -32603, "message": "anything else CANARY"},
+            "Codex thread/start failed (JSON-RPC -32603)",
         ),
-        # Unreadable login material cannot be redacted, so no provider text.
-        ("not json native-auth-token-canary", "Codex thread/start failed"),
+        ({"message": "no code CANARY"}, "Codex thread/start failed"),
     ),
 )
-async def test_codex_thread_start_error_redacts_native_login_tokens(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth: object, expected: str
+async def test_codex_thread_start_error_without_known_cause_is_generic(
+    error: dict[str, object], expected: str
 ) -> None:
-    source = tmp_path / "source-home"
-    source.mkdir()
-    (source / "auth.json").write_text(
-        auth if isinstance(auth, str) else json.dumps(auth), encoding="utf-8"
-    )
-    monkeypatch.setenv("CODEX_HOME", str(source))
-    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
-    root = tmp_path / "root"
-    root.mkdir()
-    adapter.environment_for_launch(launch, root)
-    process = _ThreadStartErrorProcess(
-        {"code": -32603, "message": "login rejected native-auth-token-canary"}
-    )
+    process = _ThreadStartErrorProcess(error)
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
     with pytest.raises(HarnessStartupError) as exc_info:
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
-    message = str(exc_info.value)
-    assert "native-auth-token-canary" not in message
-    assert message.startswith(expected)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("adapter_environment", "auth"),
-    (
-        # Credentials the adapter itself hands to Codex.
-        ({"OPENAI_API_KEY": "sk-test-key"}, None),
-        # Short login values are credentials too, whatever their length.
-        ({}, {"OPENAI_API_KEY": "sk-test-key", "tokens": {"account_id": "acct"}}),
-    ),
-)
-async def test_codex_thread_start_error_redacts_every_child_credential(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    adapter_environment: dict[str, str],
-    auth: dict[str, object] | None,
-) -> None:
-    source = tmp_path / "source-home"
-    source.mkdir()
-    if auth is not None:
-        (source / "auth.json").write_text(json.dumps(auth), encoding="utf-8")
-    monkeypatch.setenv("CODEX_HOME", str(source))
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
-    adapter = CodexHarnessAdapter(
-        executable=str(CODEX_FIXTURE), environment=adapter_environment
-    )
-    root = tmp_path / "root"
-    root.mkdir()
-    adapter.environment_for_launch(launch, root)
-    process = _ThreadStartErrorProcess(
-        {"code": -32603, "message": "rejected sk-test-key for acct"}
-    )
-    with pytest.raises(HarnessStartupError) as exc_info:
-        await adapter.initialize(process, launch)  # type: ignore[arg-type]
-    message = str(exc_info.value)
-    assert "sk-test-key" not in message
-    assert message.startswith("Codex thread/start failed: rejected")
-    if auth is not None:
-        assert "acct" not in message
-
-
-@pytest.mark.asyncio
-async def test_codex_thread_start_error_without_message_is_generic() -> None:
-    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
-    process = _ThreadStartErrorProcess({"code": -32603})
-    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
-    with pytest.raises(HarnessStartupError, match=r"^Codex thread/start failed$"):
-        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == expected
 
 
 @pytest.mark.asyncio
