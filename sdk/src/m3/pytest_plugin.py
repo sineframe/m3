@@ -1554,6 +1554,29 @@ def _save_feedback_counters(
         for test in feedback.tests:
             verdict = str(test.get("effective_verdict", test.get("verdict", "unknown")))
             verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+        # Keyed by suite id so readers can attach per-suite counts to the
+        # suites they list. Tests without a registered suite are not attributed.
+        suite_counts: dict[str, dict[str, _Any]] = {}
+        for test in feedback.tests:
+            if test.get("suite_id") is None:
+                continue
+            entry = suite_counts.setdefault(
+                str(test["suite_id"]),
+                {
+                    "test_count": 0,
+                    "test_outcome_counts": {},
+                    "effective_verdict_counts": {},
+                },
+            )
+            entry["test_count"] += 1
+            for field, value in (
+                ("test_outcome_counts", test.get("outcome", "unknown")),
+                (
+                    "effective_verdict_counts",
+                    test.get("effective_verdict", test.get("verdict", "unknown")),
+                ),
+            ):
+                entry[field][str(value)] = entry[field].get(str(value), 0) + 1
         return not _save_manifest(
             config,
             store,
@@ -1561,6 +1584,7 @@ def _save_feedback_counters(
             {
                 "test_outcome_counts": outcome_counts,
                 "effective_verdict_counts": verdict_counts,
+                "suite_counts": suite_counts,
             },
             terminal_status=int(getattr(session, "exitstatus", exitstatus)),
             session=session,

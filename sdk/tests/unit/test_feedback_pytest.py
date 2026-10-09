@@ -210,6 +210,13 @@ def test_caught_without_execution(m3_kit):
         assert exported_manifest["exit_status"] == 1
         assert exported_manifest["test_outcome_counts"] == {"passed": 1}
         assert exported_manifest["effective_verdict_counts"] == {"incomplete": 1}
+        assert exported_manifest["suite_counts"] == {
+            str(test["suite_id"]): {
+                "test_count": 1,
+                "test_outcome_counts": {"passed": 1},
+                "effective_verdict_counts": {"incomplete": 1},
+            }
+        }
     finally:
         store.close()
 
