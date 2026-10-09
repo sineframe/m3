@@ -227,7 +227,7 @@ def opencode_configuration(
             "$schema": "https://opencode.ai/config.json",
             "mcp": {"servers": servers},
             **({"tools": tools} if tools else {}),
-            "permission": permissions,
+            "permissions": _v2_permission_rules(permissions),
         }
     if dialect == "legacy":
         return {
@@ -239,6 +239,24 @@ def opencode_configuration(
             "permission": permissions,
         }
     raise HarnessStartupError("unsupported OpenCode configuration dialect")
+
+
+def _v2_permission_rules(permissions: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Render a V1 ``permission`` block as V2's ordered ``permissions`` rules.
+
+    Both resolve the last matching rule, so V1 order carries over. V2 has no
+    ``doom_loop`` action.
+    """
+    rules: list[dict[str, str]] = []
+    for action, value in permissions.items():
+        if action == "doom_loop":
+            continue
+        patterns = value if isinstance(value, Mapping) else {"*": value}
+        rules.extend(
+            {"action": action, "resource": resource, "effect": effect}
+            for resource, effect in patterns.items()
+        )
+    return rules
 
 
 def _opencode_config_value(key: str, value: Any) -> str:
@@ -748,7 +766,13 @@ class OpenCodeHarnessAdapter:
     async def _answer_permissions(
         self, client: httpx.AsyncClient, session_id: str
     ) -> None:
-        answered: set[str] = set()
+        # Decisions are kept apart from delivery so a failed reply is retried
+        # without asking the handler again.
+        decisions: dict[str, bool] = {}
+        delivered: set[str] = set()
+        # Task subagents run in child sessions; their prompts block this turn
+        # too. Parent links are cached per session for the turn.
+        parents: dict[str, str | None] = {}
         while True:
             await asyncio.sleep(_PERMISSION_POLL_SECONDS)
             try:
@@ -757,18 +781,52 @@ class OpenCodeHarnessAdapter:
             except (httpx.HTTPError, OSError, ValueError):
                 continue
             for item in pending if isinstance(pending, list) else ():
-                if not isinstance(item, Mapping) or item.get("sessionID") != session_id:
+                if not isinstance(item, Mapping):
                     continue
                 request_id = item.get("id")
-                if not isinstance(request_id, str) or request_id in answered:
+                if not isinstance(request_id, str) or request_id in delivered:
                     continue
-                answered.add(request_id)
-                allowed = await self._permission_allowed(item)
-                with contextlib.suppress(httpx.HTTPError, OSError):
-                    await client.post(
+                if request_id not in decisions:
+                    owner = item.get("sessionID")
+                    if not isinstance(owner, str) or not await self._in_session_tree(
+                        client, owner, session_id, parents
+                    ):
+                        continue
+                    decisions[request_id] = await self._permission_allowed(item)
+                try:
+                    reply = await client.post(
                         f"/permission/{request_id}/reply",
-                        json={"reply": "once" if allowed else "reject"},
+                        json={"reply": "once" if decisions[request_id] else "reject"},
                     )
+                except (httpx.HTTPError, OSError):
+                    continue
+                if reply.status_code < 400:
+                    delivered.add(request_id)
+
+    async def _in_session_tree(
+        self,
+        client: httpx.AsyncClient,
+        session: str,
+        root: str,
+        parents: dict[str, str | None],
+    ) -> bool:
+        seen: set[str] = set()
+        current: str | None = session
+        while current is not None and current not in seen:
+            if current == root:
+                return True
+            seen.add(current)
+            if current not in parents:
+                try:
+                    response = await client.get(f"/session/{current}")
+                    info = json.loads(await self._read_bounded_response(response))
+                except (httpx.HTTPError, OSError, ValueError):
+                    # Unknown for now; ask again on the next poll.
+                    return False
+                parent = info.get("parentID") if isinstance(info, Mapping) else None
+                parents[current] = parent if isinstance(parent, str) else None
+            current = parents[current]
+        return False
 
     async def _permission_allowed(self, item: Mapping[str, Any]) -> bool:
         interactions = self._launch.interactions if self._launch else None
