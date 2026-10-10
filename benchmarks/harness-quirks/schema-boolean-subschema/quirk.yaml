@@ -1,0 +1,23 @@
+id: schema-boolean-subschema
+backlog_id: Q04
+title: Boolean property subschema in one tool hides the whole server
+question: "Does one tool with a boolean property schema (`\"payload\": true`) stop its innocent sibling tool from being callable?"
+category: schema-acceptance
+spec: "JSON Schema 2020-12 allows `true`/`false` as a subschema; backlog row Q04 (schema-boolean-subschema)"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:ping with msg='hi'.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: ping
+  arguments: {msg: hi}
+error_strings:
+  - "Failed to get tools"
+issues:
+  - https://github.com/anomalyco/opencode/issues/49464
+  - https://github.com/anthropics/claude-code/issues/92900
+workaround: >-
+  Replace boolean subschemas by `{}` (any value) or `{"not": {}}` (never).
+workaround_verified: false

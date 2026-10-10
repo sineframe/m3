@@ -1,0 +1,23 @@
+id: schema-size-compaction
+backlog_id: Q28
+title: Required nested constants in a 14 KB input schema
+question: Are required nested fields preserved when a large input schema is projected for the model?
+category: schema-fidelity
+spec: Input schema contains a valid nested object contract and 56 optional shallow enum properties.
+server: server.py
+synthetic_nonce: true
+prompt: >-
+  Use only the control and quirk MCP servers. First call control:echo with text='ok'.
+  Then call quirk:submit_payload using an input that satisfies its required nested
+  request schema. Derive every required key and fixed value from the declared schema;
+  do not ask for clarification. Make at most two submit_payload calls. If the schema
+  does not expose the required fields or fixed values, report that limitation instead
+  of guessing. Report the returned marker when available.
+expectation:
+  tool: submit_payload
+  arguments: {request: {r7: {m4: {v9: synthetic-leaf-6d2a}}}}
+  status: success
+  markers: ["COMPACTION_MARKER_{nonce}"]
+issues:
+  - https://github.com/openai/codex/issues/43902
+source: https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/tools/src/json_schema/compaction.rs

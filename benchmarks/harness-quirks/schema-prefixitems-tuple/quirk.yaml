@@ -1,0 +1,23 @@
+id: schema-prefixitems-tuple
+backlog_id: Q38
+title: Tuple schema with prefixItems
+question: Does a mixed-type tuple declared with prefixItems keep its element types for the model?
+category: schema-acceptance
+spec: "JSON Schema 2020-12 prefixItems (tuple validation)"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Read the quirk tool's input schema to find the exact parameter names and allowed values. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:set_pair to store the setting named 'retries' with the integer value 3.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: set_pair
+  arguments: {pair: [retries, 3]}
+error_strings:
+  - "pair must be [string, integer]"
+issues:
+  - https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/tools/src/json_schema.rs
+workaround: >-
+  Use two named properties (`name`, `value`) instead of a tuple, or declare
+  `items` as an `anyOf` of the element types.
+workaround_verified: false

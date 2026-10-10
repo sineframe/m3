@@ -1,0 +1,25 @@
+id: args-omit-optional-default
+backlog_id: Q08
+title: Omitting optional parameters that have a default
+question: Can the agent call a tool while leaving out optional params that have defaults?
+category: argument-fidelity
+spec: "JSON Schema `default` is an annotation; omitting a non-required property is valid"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:search with query='x' and no other arguments.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: search
+  # Partial match: defaults the client fills in still count as works.
+  arguments: {query: x}
+error_strings:
+  - "expected nonoptional, received undefined"
+issues:
+  - https://github.com/anthropics/claude-code/issues/95212
+  - https://github.com/anthropics/claude-code/issues/94718
+  - https://github.com/anthropics/claude-code/issues/95239
+workaround: >-
+  Drop `default` from the schema and apply defaults in the handler.
+workaround_verified: false

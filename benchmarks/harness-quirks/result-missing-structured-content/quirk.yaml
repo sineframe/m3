@@ -1,0 +1,25 @@
+id: result-missing-structured-content
+backlog_id: Q45
+title: Tool declares outputSchema but the result has no structuredContent
+question: Is a successful tool result that carries only text delivered when the tool declared an outputSchema?
+category: result-handling
+spec: "MCP 2025-06-18+: servers MUST return conforming structuredContent when outputSchema is declared, clients SHOULD validate; this probes what a client does with the non-conforming (text-only) result"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:get_item with id='1'.
+  Then reply with one line: the item's exact name as returned by get_item, or the name of any tool you could not find.
+expectation:
+  tool: get_item
+  arguments: {id: "1"}
+  # Only in the text block; must appear in the final answer.
+  marker: item-OS77
+error_strings:
+  - "has an output schema but did not return structured content"
+issues:
+  - https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/client/src/client/client.ts
+workaround: >-
+  Return structuredContent that matches outputSchema (and keep the text block
+  as a JSON copy of it), or drop outputSchema from tools that cannot honour it.
+workaround_verified: false

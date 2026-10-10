@@ -1,0 +1,20 @@
+id: result-text-and-structured
+backlog_id: Q26
+title: Tool result contains text and structured marker values
+question: Does the model receive both content and structuredContent markers from a tool result?
+category: result-handling
+spec: MCP CallToolResult permits unstructured content and structuredContent together.
+server: server.py
+synthetic_nonce: true
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:emit_both_markers with no arguments.
+  Then reply with both literal marker strings from the result, preserving the content marker and structured marker.
+expectation:
+  tool: emit_both_markers
+  arguments: {}
+  status: success
+  markers: ["CONTENT_MARKER_{nonce}", "STRUCTURED_MARKER_{nonce}"]
+issues:
+  - https://github.com/openai/codex/issues/10334

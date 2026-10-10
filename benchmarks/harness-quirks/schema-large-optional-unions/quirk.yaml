@@ -1,0 +1,24 @@
+id: schema-large-optional-unions
+backlog_id: Q37
+title: Large schema whose enum sits inside an anyOf
+question: Do the allowed values of an enum inside anyOf stay visible in a tool schema larger than 5 KB?
+category: schema-acceptance
+spec: "JSON Schema 2020-12 anyOf/oneOf; Pydantic emits anyOf [T, null] for every Optional[T]"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Read the quirk tool's input schema to find the exact parameter names and allowed values. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:create_ticket with title='Printer down' and the most urgent severity the tool allows.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: create_ticket
+  arguments: {title: Printer down, severity: sev-1-urgent}
+error_strings:
+  - "invalid or missing severity"
+issues:
+  - https://github.com/openai/codex/issues/43902
+  - https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/tools/src/json_schema/compaction.rs
+workaround: >-
+  Keep tool schemas under 5,000 bytes of compact JSON, or declare enums
+  directly on the property (`type: string, enum: [...]`) with no anyOf.
+workaround_verified: false
