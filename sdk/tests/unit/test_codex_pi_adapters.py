@@ -648,6 +648,53 @@ def test_codex_config_is_bounded() -> None:
     assert "mcp_servers" in codex_configuration(launch)
 
 
+@pytest.mark.parametrize("api_key_auth", [False, True], ids=["subscription", "api-key"])
+def test_codex_disables_apps_and_plugins_without_removing_declared_mcp_servers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, api_key_auth: bool
+) -> None:
+    source_home = tmp_path / "source-home"
+    source_home.mkdir()
+    source_auth = source_home / "auth.json"
+    source_auth.write_text(
+        json.dumps({"tokens": {"access_token": "fixture-login"}}), encoding="utf-8"
+    )
+    monkeypatch.setenv("CODEX_HOME", str(source_home))
+    monkeypatch.setenv("M3_TEST_CODEX_API_KEY", "fixture-api-key")
+    harness = Codex(
+        model="fixture",
+        credential_references=(
+            {
+                "OPENAI_API_KEY": SecretReference(
+                    source="environment", name="M3_TEST_CODEX_API_KEY"
+                )
+            }
+            if api_key_auth
+            else {}
+        ),
+    )
+    server = HarnessServerConfig(
+        "fixture", TransportKind.STDIO, True, True, "fixture-1", command="fixture"
+    )
+    launch = _launch(harness, configurations=(server,))
+    configuration = codex_configuration(launch)
+    rendered = tomllib.loads(render_codex_config(launch))
+    for feature in ("apps", "plugins", "remote_plugin"):
+        assert configuration["features"][feature] is False
+    assert rendered == configuration
+    assert configuration["mcp_servers"]["fixture"]["command"] == "fixture"
+
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    environment = CodexHarnessAdapter().environment_for_launch(launch, runtime_root)
+    runtime_home = Path(environment["CODEX_HOME"])
+    written = tomllib.loads((runtime_home / "config.toml").read_text())
+    for feature in ("apps", "plugins", "remote_plugin"):
+        assert written["features"][feature] is False
+    assert written["mcp_servers"] == configuration["mcp_servers"]
+    if not api_key_auth:
+        assert (runtime_home / "auth.json").read_bytes() == source_auth.read_bytes()
+
+
 @pytest.mark.parametrize("required", [True, False])
 def test_codex_config_preserves_server_requirement(required: bool) -> None:
     config = HarnessServerConfig(

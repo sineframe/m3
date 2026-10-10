@@ -242,12 +242,31 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 **({"http_headers": literal_headers} if literal_headers else {}),
                 **({"env_http_headers": env_headers} if env_headers else {}),
             }
-    return {"features": {"mcp_2026_07_28": True}, "mcp_servers": servers}
+    # A ChatGPT login can expose account-connected apps even in an isolated
+    # home. Disable apps and plugins so managed tests do not inherit tools,
+    # skills, or hooks from account-connected or installed integrations.
+    return {
+        "features": {
+            "apps": False,
+            "plugins": False,
+            "remote_plugin": False,
+            "mcp_2026_07_28": True,
+        },
+        "mcp_servers": servers,
+    }
 
 
 def render_codex_config(launch: HarnessLaunch) -> str:
     """Render a minimal TOML config without embedding credential values."""
-    lines = ["[features]", "mcp_2026_07_28 = true", "", "[mcp_servers]"]
+    lines = [
+        "[features]",
+        "apps = false",
+        "plugins = false",
+        "remote_plugin = false",
+        "mcp_2026_07_28 = true",
+        "",
+        "[mcp_servers]",
+    ]
     for name, server in codex_configuration(launch)["mcp_servers"].items():
         # TOML quoted keys preserve arbitrary valid server aliases verbatim.
         # json.dumps emits the required escapes for quotes, backslashes, and
