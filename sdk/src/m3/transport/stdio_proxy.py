@@ -23,6 +23,9 @@ _MAX_OBSERVATION_QUEUE_BYTES = 16 * 1024 * 1024
 _OBSERVATION_CONNECT_TIMEOUT_SECONDS = 0.25
 _OBSERVATION_SEND_TIMEOUT_SECONDS = 0.5
 _OBSERVATION_CLOSE_TIMEOUT_SECONDS = 2.0
+_CHILD_EXIT_TIMEOUT_SECONDS = 0.25
+_CHILD_TERMINATE_TIMEOUT_SECONDS = 0.25
+_CHILD_KILL_TIMEOUT_SECONDS = 0.25
 
 
 def _read_handoff(path: Path) -> Any:
@@ -308,6 +311,7 @@ def _relay_policy(
     direction: str,
     policy: ProxyToolPolicy | None,
     observer: _ObservationChannel | None = None,
+    input_closed: threading.Event | None = None,
 ) -> None:
     """Relay stdin while denying tools/call before writing to the child."""
 
@@ -470,6 +474,33 @@ def _relay_policy(
             destination.close()
         except OSError:
             pass
+        if input_closed is not None:
+            input_closed.set()
+
+
+def _wait_for_child(
+    process: subprocess.Popen[bytes], input_closed: threading.Event
+) -> int:
+    """Reap the child, escalating after the harness closes proxy stdin."""
+
+    while process.poll() is None and not input_closed.wait(0.05):
+        pass
+    if process.returncode is not None:
+        return process.returncode
+    try:
+        return process.wait(timeout=_CHILD_EXIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        with suppress(OSError):
+            process.terminate()
+    try:
+        return process.wait(timeout=_CHILD_TERMINATE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        with suppress(OSError):
+            process.kill()
+    try:
+        return process.wait(timeout=_CHILD_KILL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return 1
 
 
 def main() -> int:
@@ -575,6 +606,7 @@ def main() -> int:
         env=environment,
     )
     assert process.stdin is not None and process.stdout is not None
+    input_closed = threading.Event()
     inbound = threading.Thread(
         target=_relay_policy,
         args=(
@@ -584,6 +616,7 @@ def main() -> int:
             "client_to_server",
             policy,
             observer,
+            input_closed,
         ),
         daemon=True,
     )
@@ -601,7 +634,7 @@ def main() -> int:
     )
     inbound.start()
     outbound.start()
-    return_code = process.wait()
+    return_code = _wait_for_child(process, input_closed)
     outbound.join(timeout=1)
     if observer is not None:
         observer.close()

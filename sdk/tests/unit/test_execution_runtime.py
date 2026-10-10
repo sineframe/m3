@@ -15,11 +15,12 @@ from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCRequest, JSONRPCResponse
 
 from m3._types.specs import AgentSpec
-from m3.agent_session import AdapterTurn
+from m3.agent_session import AdapterTurn, AsyncAgentSession
 from m3.async_api import AsyncExecutionHandle, AsyncMCPTestKit
 from m3.elicitation import expect_form
-from m3.errors import OperationTimeout
+from m3.errors import CleanupError, OperationTimeout
 from m3.execution_runtime import AsyncExecutionController, _activity_health
+from m3.execution_trace import TraceFinalizationConflict
 from m3.harness import HarnessAdapterRegistry
 from m3.storage import SQLiteExecutionStore
 from m3.sync_api import ExecutionHandle, MCPTestKit
@@ -144,6 +145,26 @@ class _SlowHarness:
 
     async def close(self) -> None:
         return None
+
+
+class _HangingCloseHarness(_ToolEvidenceHarness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_calls = 0
+        self.active_close_calls = 0
+        self.max_active_close_calls = 0
+        self.release_close = asyncio.Event()
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        self.active_close_calls += 1
+        self.max_active_close_calls = max(
+            self.max_active_close_calls, self.active_close_calls
+        )
+        try:
+            await self.release_close.wait()
+        finally:
+            self.active_close_calls -= 1
 
 
 @pytest.mark.asyncio
@@ -615,6 +636,122 @@ async def test_agent_deadline_identifies_harness_response_wait() -> None:
         if item.code == "stage_started" and item.stage == "waiting_for_harness_response"
     )
     assert started < diagnostics.index(timeout)
+
+
+@pytest.mark.asyncio
+async def test_agent_deadline_during_cleanup_still_finalizes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("m3.agent_session._CANCELLED_CLEANUP_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("m3.agent_session._CLEANUP_COMPONENT_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr("m3.agent_session._CLEANUP_ATTEMPT_TIMEOUT_SECONDS", 0.05)
+    emit_captured_wire_events = AsyncAgentSession._emit_captured_wire_events
+
+    def reject_post_finalization_emit(session: AsyncAgentSession, turn_id: Any) -> None:
+        if session._cleanup_terminalized:
+            raise TraceFinalizationConflict("cannot append after finalization")
+        emit_captured_wire_events(session, turn_id)
+
+    monkeypatch.setattr(
+        AsyncAgentSession,
+        "_emit_captured_wire_events",
+        reject_post_finalization_emit,
+    )
+    adapter = _HangingCloseHarness()
+    registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
+    spec = AgentSpec(
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+        harness=ClaudeCode(model="test-model"),
+        message=UserMessage(content=(TextContent(text="done"),)),
+        timeout_seconds=0.05,
+    )
+    store = SQLiteExecutionStore(tmp_path / "cleanup-timeout.sqlite")
+
+    try:
+        async with AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/m3-no-project",
+            adapter_registry=registry,
+            store=store,
+        ) as kit:
+            result = await asyncio.wait_for(kit.run(spec), timeout=1)
+            assert len(kit._active_sessions) == 1
+            session = next(iter(kit._active_sessions))
+            workspace_root = session._workspace.root
+            assert workspace_root.exists()
+            assert not session._closed
+            assert not session._adapter_closed
+            await asyncio.sleep(0.15)
+            assert session._server_manager_closed
+            assert not workspace_root.exists()
+            assert adapter.close_calls == 1
+            assert adapter.max_active_close_calls == 1
+
+            adapter.release_close.set()
+            await asyncio.wait_for(kit.aclose(), timeout=1)
+
+        persisted = store.get_snapshot(result.snapshot.execution_id)
+        assert persisted is not None
+        assert persisted.lifecycle.value == "finished"
+        assert persisted.outcome is ExecutionOutcome.TIMED_OUT
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED
+                for event in store.events(result.snapshot.execution_id)
+            )
+            == 1
+        )
+        assert result.error is not None and result.error.code is ErrorCode.TIMEOUT
+        assert result.trace is not None
+        assert "cleanup_failed" in result.trace.limitations
+        assert adapter.close_calls == 1
+        assert adapter.max_active_close_calls == 1
+        assert session._closed
+        assert session._adapter_closed
+        assert session._server_manager_closed
+        assert not workspace_root.exists()
+        assert not kit._active_sessions
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_kit_cleanup_retry_is_bounded_and_does_not_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("m3.agent_session._CANCELLED_CLEANUP_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("m3.agent_session._CLEANUP_COMPONENT_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr("m3.agent_session._CLEANUP_ATTEMPT_TIMEOUT_SECONDS", 0.05)
+    adapter = _HangingCloseHarness()
+    registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
+    spec = AgentSpec(
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+        harness=ClaudeCode(model="test-model"),
+        message=UserMessage(content=(TextContent(text="done"),)),
+        timeout_seconds=0.05,
+    )
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project", adapter_registry=registry)
+
+    result = await asyncio.wait_for(kit.run(spec), timeout=1)
+    assert result.snapshot.outcome is ExecutionOutcome.TIMED_OUT
+    session = next(iter(kit._active_sessions))
+    workspace_root = session._workspace.root
+
+    with pytest.raises(CleanupError):
+        await asyncio.wait_for(kit.aclose(), timeout=1)
+
+    assert adapter.close_calls == 1
+    assert adapter.max_active_close_calls == 1
+    assert session._server_manager_closed
+    assert not workspace_root.exists()
+    assert not session._closed
+
+    adapter.release_close.set()
+    await asyncio.wait_for(kit.aclose(), timeout=1)
+    assert adapter.close_calls == 1
+    assert adapter.max_active_close_calls == 1
+    assert session._closed
 
 
 @pytest.mark.asyncio
