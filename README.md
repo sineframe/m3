@@ -9,6 +9,9 @@
 M3 tests MCP servers and the agents that use them. It runs Python and pytest
 tests, captures MCP evidence, and can save runs for inspection and comparison.
 
+<img width="2150" height="1568" alt="demo" src="https://github.com/user-attachments/assets/786c68d9-d2d0-4fa6-92c8-4f4ba5d62f5c" />
+
+
 <p><strong>Test your MCP with</strong></p>
 
 <table>
