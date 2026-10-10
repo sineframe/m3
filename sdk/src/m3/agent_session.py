@@ -87,7 +87,9 @@ class HarnessAdapter(Protocol):
     ``start`` and ``close`` are called at most once.  ``send`` must use the
     already-open conversation and MCP connections; it must not implement a
     one-shot resume fallback.  Adapters may optionally expose
-    ``supported_content_kinds`` or ``supports_content`` for preflight.
+    ``supported_content_kinds`` or ``supports_content`` for preflight, and
+    ``take_partial_turn_evidence()`` returning the :class:`TurnEvidence`
+    observed by a turn the session timed out or cancelled.
     """
 
     async def start(self, spec: AgentSpec) -> None: ...
@@ -1654,13 +1656,21 @@ class AsyncAgentSession:
                         )
             self._turns.append(result)
             if self._terminal_requested(raw):
-                await self._finish(
-                    ExecutionOutcome.FAILED,
-                    ErrorCode.TRANSPORT_ERROR,
-                    "session lost during turn",
-                )
+                if result.snapshot.outcome is TurnOutcome.TIMED_OUT:
+                    await self._finish(
+                        ExecutionOutcome.TIMED_OUT,
+                        ErrorCode.TIMEOUT,
+                        "session timed out",
+                    )
+                else:
+                    await self._finish(
+                        ExecutionOutcome.FAILED,
+                        ErrorCode.TRANSPORT_ERROR,
+                        "session lost during turn",
+                    )
             return result
         except asyncio.TimeoutError:
+            self._record_partial_turn_evidence(turn_id)
             await self._cancel_adapter_safely()
             result = self._failure_turn(
                 turn_id, TurnOutcome.TIMED_OUT, ErrorCode.TIMEOUT, "turn timed out"
@@ -1672,6 +1682,7 @@ class AsyncAgentSession:
             )
             return result
         except asyncio.CancelledError:
+            self._record_partial_turn_evidence(turn_id)
             await self._cancel_adapter_safely()
             result = self._failure_turn(
                 turn_id, TurnOutcome.CANCELLED, ErrorCode.CANCELLED, "turn cancelled"
@@ -2193,30 +2204,57 @@ class AsyncAgentSession:
         except Exception:
             return {"evidence_state": "unavailable"}
 
+    def _record_turn_evidence(self, turn_id: TurnId, typed_evidence: object) -> None:
+        """Persist typed adapter observations through the failure-safe sink.
+
+        Provider adapters use the typed boundary, so finalized TraceView
+        contains provider output without making the session state machine
+        understand schemas.
+        """
+
+        from .harness.observation_sink import HarnessObservationSink
+        from .harness.observations import TurnEvidence
+
+        if not isinstance(typed_evidence, TurnEvidence):
+            return
+        sink = HarnessObservationSink(
+            self._trace_recorder,
+            turn_id=turn_id,
+            monotonic_origin=typed_evidence.monotonic_origin,
+        )
+        for observation in typed_evidence.observations:
+            sink.emit(observation)
+        for limitation in (*typed_evidence.limitations, *sink.limitations):
+            if limitation not in self._trace_limitations:
+                self._trace_limitations = (*self._trace_limitations, limitation)
+
+    def _record_partial_turn_evidence(self, turn_id: TurnId) -> None:
+        """Keep what a timed-out or cancelled turn observed before it stopped.
+
+        The session deadline cancels the adapter call, so the adapter never
+        returns its evidence; adapters that can, hand it over afterwards.
+        """
+
+        take = getattr(self.adapter, "take_partial_turn_evidence", None)
+        if not callable(take):
+            return
+        try:
+            evidence = take()
+        except Exception:
+            evidence = None
+        if evidence is None:
+            if "capture_incomplete" not in self._trace_limitations:
+                self._trace_limitations = (
+                    *self._trace_limitations,
+                    "capture_incomplete",
+                )
+            return
+        self._record_turn_evidence(turn_id, evidence)
+
     def _turn_result(self, turn_id: TurnId, raw: object) -> TurnResult:
         typed_evidence = getattr(raw, "turn_evidence", None)
         if typed_evidence is not None:
-            # Provider adapters use the typed boundary. Persist those
-            # observations through the same failure-safe sink as direct
-            # capture, so finalized TraceView contains provider output
-            # without making the session state machine understand schemas.
-            from .harness.observation_sink import HarnessObservationSink
-            from .harness.observations import TurnEvidence
-
-            if isinstance(typed_evidence, TurnEvidence):
-                sink = HarnessObservationSink(
-                    self._trace_recorder,
-                    turn_id=turn_id,
-                    monotonic_origin=typed_evidence.monotonic_origin,
-                )
-                for observation in typed_evidence.observations:
-                    sink.emit(observation)
-                for limitation in (*typed_evidence.limitations, *sink.limitations):
-                    if limitation not in self._trace_limitations:
-                        self._trace_limitations = (
-                            *self._trace_limitations,
-                            limitation,
-                        )
+            self._record_turn_evidence(turn_id, typed_evidence)
         if isinstance(raw, AdapterTurn):
             response, error, outcome = raw.response, raw.error, raw.outcome
         elif isinstance(raw, TurnResponse):
@@ -2242,6 +2280,8 @@ class AsyncAgentSession:
                 code=error.code,
                 message="tool error"
                 if not self._terminal_requested(raw)
+                else "turn timed out"
+                if outcome is TurnOutcome.TIMED_OUT
                 else "turn failed",
                 retryable=error.retryable,
             )
