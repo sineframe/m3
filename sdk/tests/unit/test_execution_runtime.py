@@ -146,6 +146,17 @@ class _SlowHarness:
         return None
 
 
+class _HangingCloseHarness(_ToolEvidenceHarness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        if self.close_calls == 1:
+            await asyncio.Event().wait()
+
+
 @pytest.mark.asyncio
 async def test_async_submit_publishes_only_committed_ordered_events() -> None:
     async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
@@ -615,6 +626,51 @@ async def test_agent_deadline_identifies_harness_response_wait() -> None:
         if item.code == "stage_started" and item.stage == "waiting_for_harness_response"
     )
     assert started < diagnostics.index(timeout)
+
+
+@pytest.mark.asyncio
+async def test_agent_deadline_during_cleanup_still_finalizes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("m3.agent_session._CANCELLED_CLEANUP_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("m3.agent_session._CANCELLED_CLEANUP_SETTLE_SECONDS", 0.01)
+    adapter = _HangingCloseHarness()
+    registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
+    spec = AgentSpec(
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+        harness=ClaudeCode(model="test-model"),
+        message=UserMessage(content=(TextContent(text="done"),)),
+        timeout_seconds=0.05,
+    )
+    store = SQLiteExecutionStore(tmp_path / "cleanup-timeout.sqlite")
+
+    try:
+        async with AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/m3-no-project",
+            adapter_registry=registry,
+            store=store,
+        ) as kit:
+            result = await asyncio.wait_for(kit.run(spec), timeout=1)
+
+        persisted = store.get_snapshot(result.snapshot.execution_id)
+        assert persisted is not None
+        assert persisted.lifecycle.value == "finished"
+        assert persisted.outcome is ExecutionOutcome.TIMED_OUT
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED
+                for event in store.events(result.snapshot.execution_id)
+            )
+            == 1
+        )
+        assert result.error is not None and result.error.code is ErrorCode.TIMEOUT
+        assert result.trace is not None
+        assert "cleanup_failed" in result.trace.limitations
+        assert adapter.close_calls == 1
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio

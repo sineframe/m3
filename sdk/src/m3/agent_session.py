@@ -150,6 +150,8 @@ class _ElicitationSender(Protocol):
 
 
 _STARTUP_CAUSE_LIMIT = 256
+_CANCELLED_CLEANUP_GRACE_SECONDS = 3.0
+_CANCELLED_CLEANUP_SETTLE_SECONDS = 0.1
 _SAFE_STARTUP_ERROR_TYPES = frozenset(
     {"TimeoutError", "ValueError", "OSError", "RuntimeError"}
 )
@@ -2667,11 +2669,30 @@ class AsyncAgentSession:
         task = asyncio.create_task(self._complete_close(outcome))
         try:
             await asyncio.shield(task)
-        except BaseException:
-            try:
-                await asyncio.shield(task)
-            except BaseException:
-                pass
+        except asyncio.CancelledError:
+            done, _ = await asyncio.wait(
+                (task,), timeout=_CANCELLED_CLEANUP_GRACE_SECONDS
+            )
+            if not done:
+                self._cleanup_failed = True
+                task.cancel()
+                await asyncio.wait((task,), timeout=_CANCELLED_CLEANUP_SETTLE_SECONDS)
+
+                def consume_failure(completed: asyncio.Task[None]) -> None:
+                    if not completed.cancelled():
+                        completed.exception()
+
+                task.add_done_callback(consume_failure)
+                if self._terminal_outcome is None:
+                    await self._finish(
+                        ExecutionOutcome.FAILED,
+                        ErrorCode.CLEANUP_FAILED,
+                        "session cleanup timed out",
+                    )
+                self._finalize_result(cleanup_succeeded=False)
+                self._closed = True
+                if self._on_close:
+                    self._on_close(self)
             raise
 
     async def cancel(self) -> None:
