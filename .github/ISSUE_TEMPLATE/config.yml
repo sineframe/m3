@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/sineframe/m3/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.
+  - name: Documentation
+    url: https://m3.sineframe.com/docs/
+    about: Guides and reference for the CLI and Python SDK.
