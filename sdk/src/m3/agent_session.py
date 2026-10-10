@@ -494,6 +494,10 @@ class AsyncAgentSession:
         # when a later close succeeds; otherwise a retry would falsely claim
         # complete evidence.
         self._cleanup_failed = False
+        # A forced cleanup deadline may publish the terminal result before all
+        # owned resources have closed. Retain ownership for a later retry,
+        # but do not append evidence to or finalize that result a second time.
+        self._cleanup_terminalized = False
         # A terminal adapter failure can leave the provider's final protocol
         # exchange unknowable even when our own cleanup succeeds.  Preserve
         # that distinction in the finalized trace instead of calling it
@@ -1324,7 +1328,11 @@ class AsyncAgentSession:
                 self._emit_event(kind, payload, turn_id=turn_id, phase=phase)
 
     async def _collect_workspace(
-        self, outcome: ExecutionOutcome, *, cleanup: bool = True
+        self,
+        outcome: ExecutionOutcome,
+        *,
+        cleanup: bool = True,
+        emit_event: bool = True,
     ) -> bool:
         """Collect workspace evidence before removing the owned root."""
 
@@ -1338,17 +1346,18 @@ class AsyncAgentSession:
             capture = await asyncio.to_thread(self._workspace.capture, outcome)
             self._workspace_capture = capture
             self._workspace_artifacts = capture.artifacts
-            self._emit_event(
-                EventKind.WORKSPACE_CHANGED,
-                {
-                    "diff": capture.diff.as_payload(),
-                    "artifacts": tuple(
-                        ref.model_dump(mode="json") for ref in capture.artifacts
-                    ),
-                    "limitations": capture.limitations,
-                },
-                phase=LifecyclePhase.CLEANUP,
-            )
+            if emit_event:
+                self._emit_event(
+                    EventKind.WORKSPACE_CHANGED,
+                    {
+                        "diff": capture.diff.as_payload(),
+                        "artifacts": tuple(
+                            ref.model_dump(mode="json") for ref in capture.artifacts
+                        ),
+                        "limitations": capture.limitations,
+                    },
+                    phase=LifecyclePhase.CLEANUP,
+                )
         except Exception:
             capture_failure = True
         if cleanup:
@@ -2619,16 +2628,23 @@ class AsyncAgentSession:
         # Capture while the native harness still has its SDK workspace.  The
         # adapter's close path may terminate a provider that removes files;
         # cleanup of our workspace itself happens only after that close.
-        cleanup_failure = await self._collect_workspace(outcome, cleanup=False)
+        emit_cleanup_events = not self._cleanup_terminalized
+        cleanup_failure = await self._collect_workspace(
+            outcome,
+            cleanup=False,
+            emit_event=emit_cleanup_events,
+        )
         # Project completed MCP exchanges before releasing the server group's
         # capture object.  The manager intentionally drops that object after
         # close, while activity health still needs its wire-level outcomes.
-        self._emit_captured_wire_events(None)
+        if emit_cleanup_events:
+            self._emit_captured_wire_events(None)
         try:
             await self._close_adapter()
         except Exception:
             cleanup_failure = True
-        self._emit_captured_wire_events(None)
+        if emit_cleanup_events:
+            self._emit_captured_wire_events(None)
         try:
             await asyncio.to_thread(self._workspace.cleanup)
         except Exception:
@@ -2655,12 +2671,15 @@ class AsyncAgentSession:
             )
         if cleanup_failure:
             self._record_cleanup_failure()
+            if not self._trace_owner:
+                self._cleanup_terminalized = True
             # Keep ownership until every child has actually closed.  The
             # terminal result remains readable, while ``_closing`` prevents
             # reopening or accepting new turns.  A later close retries only
             # the components whose completion flags are still false.
             raise CleanupError("session cleanup failed") from None
-        self._finalize_result(cleanup_succeeded=not self._cleanup_failed)
+        if not self._cleanup_terminalized:
+            self._finalize_result(cleanup_succeeded=not self._cleanup_failed)
         self._closed = True
         if self._on_close:
             self._on_close(self)
@@ -2690,9 +2709,7 @@ class AsyncAgentSession:
                         "session cleanup timed out",
                     )
                 self._finalize_result(cleanup_succeeded=False)
-                self._closed = True
-                if self._on_close:
-                    self._on_close(self)
+                self._cleanup_terminalized = True
             raise
 
     async def cancel(self) -> None:

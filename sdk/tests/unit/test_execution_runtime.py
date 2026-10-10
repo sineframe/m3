@@ -653,6 +653,13 @@ async def test_agent_deadline_during_cleanup_still_finalizes(
             store=store,
         ) as kit:
             result = await asyncio.wait_for(kit.run(spec), timeout=1)
+            assert len(kit._active_sessions) == 1
+            session = next(iter(kit._active_sessions))
+            workspace_root = session._workspace.root
+            assert workspace_root.exists()
+            assert not session._closed
+            assert not session._adapter_closed
+            assert not session._server_manager_closed
 
         persisted = store.get_snapshot(result.snapshot.execution_id)
         assert persisted is not None
@@ -668,7 +675,12 @@ async def test_agent_deadline_during_cleanup_still_finalizes(
         assert result.error is not None and result.error.code is ErrorCode.TIMEOUT
         assert result.trace is not None
         assert "cleanup_failed" in result.trace.limitations
-        assert adapter.close_calls == 1
+        assert adapter.close_calls == 2
+        assert session._closed
+        assert session._adapter_closed
+        assert session._server_manager_closed
+        assert not workspace_root.exists()
+        assert not kit._active_sessions
     finally:
         store.close()
 
