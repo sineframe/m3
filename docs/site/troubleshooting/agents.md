@@ -41,7 +41,8 @@ login was refused by the model provider. See
 A failed agent turn ends the execution with the harness's own reason in
 `result.error.message` and `result.error.details["cause"]`. Codex failures add
 `reason` and `http_status` to the details. `session lost during turn` means the
-harness gave no reason.
+harness gave no reason. A turn that timed out, was cancelled, or was
+interrupted ends the execution with that same outcome rather than `failed`.
 
 ## Tool call was denied
 

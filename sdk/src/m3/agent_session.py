@@ -193,6 +193,29 @@ def _startup_failure_cause(error: BaseException) -> str:
     return "unexpected error"
 
 
+# How a terminal turn that was not a plain failure ends the execution, and the
+# error reported when the adapter gives no reason of its own.
+_TERMINAL_TURN_ENDINGS: dict[
+    TurnOutcome | None, tuple[ExecutionOutcome, ErrorCode, str]
+] = {
+    TurnOutcome.TIMED_OUT: (
+        ExecutionOutcome.TIMED_OUT,
+        ErrorCode.TIMEOUT,
+        "session timed out",
+    ),
+    TurnOutcome.CANCELLED: (
+        ExecutionOutcome.CANCELLED,
+        ErrorCode.CANCELLED,
+        "session cancelled",
+    ),
+    TurnOutcome.INTERRUPTED: (
+        ExecutionOutcome.INTERRUPTED,
+        ErrorCode.CANCELLED,
+        "session interrupted",
+    ),
+}
+
+
 def _terminal_turn_error(error: object) -> ErrorInfo | None:
     """Return the session error for an adapter turn that ended the session.
 
@@ -1685,20 +1708,26 @@ class AsyncAgentSession:
                         )
             self._turns.append(result)
             if self._terminal_requested(raw):
+                ending_outcome, ending_code, ending_message = (
+                    _TERMINAL_TURN_ENDINGS.get(
+                        result.snapshot.outcome,
+                        (
+                            ExecutionOutcome.FAILED,
+                            ErrorCode.TRANSPORT_ERROR,
+                            "session lost during turn",
+                        ),
+                    )
+                )
                 terminal_error = _terminal_turn_error(getattr(raw, "error", None))
                 if terminal_error is not None:
                     await self._finish(
-                        ExecutionOutcome.FAILED,
+                        ending_outcome,
                         terminal_error.code,
                         terminal_error.message,
                         details=terminal_error.details,
                     )
                 else:
-                    await self._finish(
-                        ExecutionOutcome.FAILED,
-                        ErrorCode.TRANSPORT_ERROR,
-                        "session lost during turn",
-                    )
+                    await self._finish(ending_outcome, ending_code, ending_message)
             return result
         except asyncio.TimeoutError:
             await self._cancel_adapter_safely()
