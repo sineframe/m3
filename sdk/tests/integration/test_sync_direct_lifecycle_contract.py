@@ -153,16 +153,22 @@ def test_sync_close_from_another_thread_is_safe_and_not_false_closed() -> None:
 def test_sync_timeout_and_exception_cleanup_do_not_escape_async_state() -> None:
     _SLOW_STARTED.clear()
     _SLOW_RELEASE.clear()
-    with MCPTestKit(env={}, cwd=str(_ROOT)) as kit:
-        with cast(Any, kit.direct(_in_process_binding(), timeout=0.05)) as client:
-            with pytest.raises(OperationTimeout) as timeout_error:
-                client.call_tool("slow", {}, timeout=0.01)
-            assert not inspect.iscoroutine(timeout_error.value)
-            # A per-operation timeout does not close the direct session.
-            failure = client.call_tool("failure", {})
-            assert failure.is_error is True
-            assert client.ping() is not None
-    _SLOW_RELEASE.set()
+    try:
+        with MCPTestKit(env={}, cwd=str(_ROOT)) as kit:
+            # Only the deliberately blocked call needs a short deadline.
+            # Recovery calls use the normal deadline and return immediately
+            # when their responses arrive, without racing CI scheduling.
+            with cast(Any, kit.direct(_in_process_binding())) as client:
+                with pytest.raises(OperationTimeout) as timeout_error:
+                    client.call_tool("slow", {}, timeout=0.01)
+                assert not inspect.iscoroutine(timeout_error.value)
+                _SLOW_RELEASE.set()
+                # A per-operation timeout does not close the direct session.
+                failure = client.call_tool("failure", {})
+                assert failure.is_error is True
+                assert client.ping() is not None
+    finally:
+        _SLOW_RELEASE.set()
 
 
 def test_twenty_concurrent_direct_portals_are_reaped() -> None:
