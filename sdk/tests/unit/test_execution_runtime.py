@@ -15,11 +15,12 @@ from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCRequest, JSONRPCResponse
 
 from m3._types.specs import AgentSpec
-from m3.agent_session import AdapterTurn
+from m3.agent_session import AdapterTurn, AsyncAgentSession
 from m3.async_api import AsyncExecutionHandle, AsyncMCPTestKit
 from m3.elicitation import expect_form
 from m3.errors import CleanupError, OperationTimeout
 from m3.execution_runtime import AsyncExecutionController, _activity_health
+from m3.execution_trace import TraceFinalizationConflict
 from m3.harness import HarnessAdapterRegistry
 from m3.storage import SQLiteExecutionStore
 from m3.sync_api import ExecutionHandle, MCPTestKit
@@ -645,6 +646,18 @@ async def test_agent_deadline_during_cleanup_still_finalizes(
     monkeypatch.setattr("m3.agent_session._CANCELLED_CLEANUP_GRACE_SECONDS", 0.01)
     monkeypatch.setattr("m3.agent_session._CLEANUP_COMPONENT_TIMEOUT_SECONDS", 0.1)
     monkeypatch.setattr("m3.agent_session._CLEANUP_ATTEMPT_TIMEOUT_SECONDS", 0.05)
+    emit_captured_wire_events = AsyncAgentSession._emit_captured_wire_events
+
+    def reject_post_finalization_emit(session: AsyncAgentSession, turn_id: Any) -> None:
+        if session._cleanup_terminalized:
+            raise TraceFinalizationConflict("cannot append after finalization")
+        emit_captured_wire_events(session, turn_id)
+
+    monkeypatch.setattr(
+        AsyncAgentSession,
+        "_emit_captured_wire_events",
+        reject_post_finalization_emit,
+    )
     adapter = _HangingCloseHarness()
     registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
     spec = AgentSpec(

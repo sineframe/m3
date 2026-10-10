@@ -1398,7 +1398,7 @@ class AsyncAgentSession:
             capture = await asyncio.to_thread(self._workspace.capture, outcome)
             self._workspace_capture = capture
             self._workspace_artifacts = capture.artifacts
-            if emit_event:
+            if emit_event and not self._cleanup_terminalized:
                 self._emit_event(
                     EventKind.WORKSPACE_CHANGED,
                     {
@@ -2689,13 +2689,15 @@ class AsyncAgentSession:
         # Project completed MCP exchanges before releasing the server group's
         # capture object.  The manager intentionally drops that object after
         # close, while activity health still needs its wire-level outcomes.
-        if emit_cleanup_events:
+        # Re-read terminalization after each await: the execution deadline may
+        # finalize the shared recorder while cleanup continues in this task.
+        if emit_cleanup_events and not self._cleanup_terminalized:
             self._emit_captured_wire_events(None)
         try:
             await self._close_adapter()
         except Exception:
             cleanup_failure = True
-        if emit_cleanup_events:
+        if emit_cleanup_events and not self._cleanup_terminalized:
             self._emit_captured_wire_events(None)
         try:
             await asyncio.to_thread(self._workspace.cleanup)
