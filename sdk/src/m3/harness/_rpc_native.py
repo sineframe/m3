@@ -246,6 +246,9 @@ class NativeRPCAdapter:
         self._terminal_status: Literal["failed", "cancelled", "interrupted"] | None = (
             None
         )
+        # Why the provider failed the turn, when the adapter can say so from
+        # structured protocol fields; otherwise the failure stays generic.
+        self._terminal_error: ErrorInfo | None = None
         self.last_policy_evidence: ToolPolicyEvidence | None = None
         self._runtime_secrets: set[str] = set()
         self._process_observed = False
@@ -420,6 +423,7 @@ class NativeRPCAdapter:
         started = time.monotonic()
         self._cancel_requested = False
         self._terminal_status = None
+        self._terminal_error = None
         wall = datetime.now(timezone.utc)
         observations: list[HarnessObservation] = list(
             self.initial_observations(sequence, wall, started)
@@ -540,6 +544,8 @@ class NativeRPCAdapter:
                 response=response if status == "completed" else None,
                 error=None
                 if status == "completed"
+                else self._terminal_error
+                if status == "failed" and self._terminal_error is not None
                 else ErrorInfo(
                     code=ErrorCode.CANCELLED
                     if status in {"cancelled", "interrupted"}

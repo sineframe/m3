@@ -1054,6 +1054,327 @@ async def test_codex_completed_mcp_item_without_started_event_reports_a_call() -
     )
 
 
+class _AccountProcess:
+    """Fake App Server that answers startup requests from a per-method table."""
+
+    root: Path | None = None
+
+    def __init__(self, replies: dict[str, dict[str, object]]) -> None:
+        self.replies = {
+            "initialize": {"result": {}},
+            "account/read": {
+                "result": {"account": {"type": "apiKey"}, "requiresOpenaiAuth": True}
+            },
+            "thread/start": {"result": {"thread": {"id": "thread"}}},
+            **replies,
+        }
+        self.written: list[dict[str, object]] = []
+
+    async def write(self, payload: dict[str, object]) -> None:
+        self.written.append(payload)
+
+    async def next(self, timeout: float | None = None) -> dict[str, object]:
+        request = self.written[-1]
+        return {
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            **self.replies[str(request["method"])],
+        }
+
+    @property
+    def methods(self) -> list[object]:
+        return [frame["method"] for frame in self.written]
+
+
+def _api_key_launch(*targets: str) -> HarnessLaunch:
+    return _launch(
+        Codex(
+            model="fixture",
+            credential_references={
+                target: SecretReference(source="environment", name=f"SOURCE_{target}")
+                for target in targets
+            },
+        )
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("targets", "expected"),
+    (
+        (("OPENAI_API_KEY",), "openai-key"),
+        (("CODEX_API_KEY",), "codex-key"),
+        # Codex itself prefers CODEX_API_KEY when both are set.
+        (("OPENAI_API_KEY", "CODEX_API_KEY"), "codex-key"),
+    ),
+)
+async def test_codex_mapped_api_key_signs_in_before_thread_start(
+    tmp_path: Path, targets: tuple[str, ...], expected: str
+) -> None:
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE),
+        environment={
+            "SOURCE_OPENAI_API_KEY": " openai-key\n",
+            "SOURCE_CODEX_API_KEY": "codex-key",
+        },
+    )
+    launch = _api_key_launch(*targets)
+    environment = adapter.environment_for_launch(launch, tmp_path)
+    assert not (tmp_path / "codex-home" / "auth.json").exists()
+    config = tomllib.loads(
+        (tmp_path / "codex-home" / "config.toml").read_text(encoding="utf-8")
+    )
+    # The App Server keeps the key in memory instead of writing auth.json.
+    assert config["cli_auth_credentials_store"] == "ephemeral"
+    for target in targets:
+        assert environment[target]
+    process = _AccountProcess({"account/login/start": {"result": {"type": "apiKey"}}})
+    assert await adapter.initialize(process, launch) == "thread"  # type: ignore[arg-type]
+    assert process.methods == [
+        "initialize",
+        "initialized",
+        "account/login/start",
+        "account/read",
+        "thread/start",
+    ]
+    assert process.written[2]["params"] == {"type": "apiKey", "apiKey": expected}
+    # The key is only held until it is sent.
+    assert adapter._api_key_login is None
+
+
+@pytest.mark.asyncio
+async def test_codex_without_mapped_key_does_not_sign_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _launch(Codex(model="fixture"))
+    adapter.environment_for_launch(launch, tmp_path)
+    config = tomllib.loads(
+        (tmp_path / "codex-home" / "config.toml").read_text(encoding="utf-8")
+    )
+    # A copied host login must stay readable from auth.json.
+    assert "cli_auth_credentials_store" not in config
+    process = _AccountProcess({})
+    await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert "account/login/start" not in process.methods
+
+
+@pytest.mark.asyncio
+async def test_codex_rejected_api_key_login_fails_startup_without_codex_text(
+    tmp_path: Path,
+) -> None:
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE),
+        environment={"SOURCE_OPENAI_API_KEY": "CANARY"},
+    )
+    launch = _api_key_launch("OPENAI_API_KEY")
+    adapter.environment_for_launch(launch, tmp_path)
+    process = _AccountProcess(
+        {
+            "account/login/start": {
+                "error": {"code": -32600, "message": "bad key CANARY"}
+            }
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == "Codex API key login failed (JSON-RPC -32600)"
+    assert "thread/start" not in process.methods
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("targets", "expected"),
+    (
+        (
+            (),
+            "Codex has no login: map an OpenAI API key with credential_env "
+            "or sign in to Codex",
+        ),
+        (("OPENAI_API_KEY",), "Codex API key login was not applied"),
+    ),
+)
+async def test_codex_without_an_account_fails_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    targets: tuple[str, ...],
+    expected: str,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE),
+        environment={"SOURCE_OPENAI_API_KEY": "key"},
+    )
+    launch = _api_key_launch(*targets)
+    adapter.environment_for_launch(launch, tmp_path)
+    process = _AccountProcess(
+        {
+            "account/login/start": {"result": {"type": "apiKey"}},
+            "account/read": {"result": {"account": None, "requiresOpenaiAuth": True}},
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == expected
+    assert "thread/start" not in process.methods
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    (
+        # An App Server without account/read.
+        {"error": {"code": -32600, "message": "unknown variant"}},
+        # A provider that needs no OpenAI login.
+        {"result": {"account": None, "requiresOpenaiAuth": False}},
+    ),
+)
+async def test_codex_account_check_only_blocks_a_known_missing_login(
+    reply: dict[str, object],
+) -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _launch(Codex(model="fixture"))
+    process = _AccountProcess({"account/read": reply})
+    assert await adapter.initialize(process, launch) == "thread"  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_codex_fixture_session_signs_in_with_api_key() -> None:
+    launch = _launch(
+        Codex(
+            model="fixture",
+            executable=str(CODEX_FIXTURE),
+            credential_references={
+                "OPENAI_API_KEY": SecretReference(
+                    source="environment", name="SOURCE_KEY"
+                )
+            },
+        )
+    )
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE),
+        environment={"SOURCE_KEY": "sk-fixture", "M3_CODEX_FIXTURE_ACCOUNT": "none"},
+    )
+    session = await adapter.open(launch)
+    try:
+        result = await session.send(HarnessTurnRequest.from_message("one"))
+        assert result.status == "completed"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_fixture_session_without_login_fails_to_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE),
+        environment={"M3_CODEX_FIXTURE_ACCOUNT": "none"},
+    )
+    with pytest.raises(HarnessStartupError, match="Codex has no login"):
+        await adapter.open(launch)
+
+
+@pytest.mark.parametrize(
+    ("error", "message", "details"),
+    (
+        (
+            {
+                "message": "unexpected status 401 Unauthorized: CANARY",
+                "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 401}},
+            },
+            "Codex turn failed: model provider rejected the credentials (HTTP 401)",
+            {"harness": "codex", "reason": "httpConnectionFailed", "http_status": 401},
+        ),
+        (
+            {"message": "CANARY", "codexErrorInfo": "unauthorized"},
+            "Codex turn failed: model provider rejected the credentials",
+            {"harness": "codex", "reason": "unauthorized"},
+        ),
+        (
+            {"codexErrorInfo": "contextWindowExceeded"},
+            "Codex turn failed: context window exceeded",
+            {"harness": "codex", "reason": "contextWindowExceeded"},
+        ),
+        (
+            {"codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": 502}}},
+            "Codex turn failed: model response stream disconnected (HTTP 502)",
+            {
+                "harness": "codex",
+                "reason": "responseStreamDisconnected",
+                "http_status": 502,
+            },
+        ),
+        # Unknown variants and out-of-range statuses are not echoed.
+        (
+            {"codexErrorInfo": {"CANARY": {"httpStatusCode": 9999}}},
+            "Codex turn failed",
+            {"harness": "codex"},
+        ),
+        ({"message": "CANARY"}, "Codex turn failed", {"harness": "codex"}),
+        (None, "Codex turn failed", {"harness": "codex"}),
+    ),
+)
+@pytest.mark.asyncio
+async def test_codex_failed_turn_reason_comes_from_structured_fields(
+    error: object, message: str, details: dict[str, object]
+) -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    terminal, _, _ = adapter.consume_frame(
+        {
+            "method": "turn/completed",
+            "params": {"turn": {"id": "t", "status": "failed", "error": error}},
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        [],
+    )
+    assert terminal is True
+    failure = adapter._terminal_error
+    assert failure is not None
+    assert failure.code.value == "transport_error"
+    assert failure.message == message
+    assert dict(failure.details) == details
+
+
+@pytest.mark.asyncio
+async def test_codex_failed_turn_reason_reaches_the_turn_result() -> None:
+    adapter = CodexHarnessAdapter(executable="fixture")
+    process = _ServerRequestProcess(
+        [
+            {"jsonrpc": "2.0", "id": 2, "result": {"turn": {"id": "t"}}},
+            {
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "id": "t",
+                        "status": "failed",
+                        "error": {"codexErrorInfo": "unauthorized"},
+                    }
+                },
+            },
+        ]
+    )
+    adapter._thread_id = "thread"
+    adapter._request_id = 1
+    adapter._process = process  # type: ignore[assignment]
+    result = await NativeRPCAdapter._send(
+        adapter,
+        HarnessTurnRequest.from_message("one"),
+        1,
+        process,  # type: ignore[arg-type]
+    )
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.message == (
+        "Codex turn failed: model provider rejected the credentials"
+    )
+
+
 def test_codex_secret_source_is_mapped_to_target_environment_name(
     tmp_path: Path,
 ) -> None:

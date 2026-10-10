@@ -31,6 +31,7 @@ from m3.types import (
     ACPAgent,
     ArtifactPolicy,
     ErrorCode,
+    ErrorInfo,
     EventKind,
     ExecutionOutcome,
     Pi,
@@ -669,6 +670,53 @@ async def test_hostile_adapter_error_is_value_free_and_terminal_when_declared() 
         assert result.error is not None
         assert "secret" not in repr(result)
         assert session.result.snapshot.outcome is ExecutionOutcome.FAILED
+
+
+@pytest.mark.asyncio
+async def test_terminal_turn_error_becomes_the_bounded_session_error() -> None:
+    class ProviderRejected(FakeHarness):
+        async def send(self, message, *, timeout=None, metadata=None):
+            return AdapterTurn(
+                error=ErrorInfo(
+                    code=ErrorCode.TRANSPORT_ERROR,
+                    message="Codex turn failed:\n rejected " + "x" * 400,
+                    details={
+                        "reason": "unauthorized",
+                        "http_status": 401,
+                        "payload": {"nested": "dropped"},
+                        "cause": "overridden",
+                    },
+                ),
+                terminal=True,
+                outcome=TurnOutcome.FAILED,
+            )
+
+    async with AsyncAgentSession(_spec(), ProviderRejected()) as session:
+        turn = await session.send("x")
+        assert turn.error is not None and turn.error.message == "turn failed"
+    error = session.result.error
+    assert session.result.snapshot.outcome is ExecutionOutcome.FAILED
+    assert error is not None and error.code is ErrorCode.TRANSPORT_ERROR
+    assert error.message.startswith("Codex turn failed: rejected xxx")
+    assert len(error.message) == 256
+    assert dict(error.details) == {
+        "cause": error.message,
+        "reason": "unauthorized",
+        "http_status": 401,
+    }
+
+
+@pytest.mark.asyncio
+async def test_terminal_turn_without_error_is_reported_as_session_loss() -> None:
+    class Lost(FakeHarness):
+        async def send(self, message, *, timeout=None, metadata=None):
+            return AdapterTurn(terminal=True, outcome=TurnOutcome.FAILED)
+
+    async with AsyncAgentSession(_spec(), Lost()) as session:
+        await session.send("x")
+    error = session.result.error
+    assert error is not None and error.code is ErrorCode.TRANSPORT_ERROR
+    assert error.message == "session lost during turn"
 
 
 @pytest.mark.asyncio
