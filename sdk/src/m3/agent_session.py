@@ -151,7 +151,8 @@ class _ElicitationSender(Protocol):
 
 _STARTUP_CAUSE_LIMIT = 256
 _CANCELLED_CLEANUP_GRACE_SECONDS = 3.0
-_CANCELLED_CLEANUP_SETTLE_SECONDS = 0.1
+_CLEANUP_COMPONENT_TIMEOUT_SECONDS = 3.0
+_CLEANUP_ATTEMPT_TIMEOUT_SECONDS = 10.0
 _SAFE_STARTUP_ERROR_TYPES = frozenset(
     {"TimeoutError", "ValueError", "OSError", "RuntimeError"}
 )
@@ -474,6 +475,10 @@ class AsyncAgentSession:
         self._adapter_session: HarnessSession | None = None
         self._adapter_closed = False
         self._server_manager_closed = False
+        self._adapter_close_task: asyncio.Task[None] | None = None
+        self._server_manager_close_task: asyncio.Task[None] | None = None
+        self._runtime_lease_close_task: asyncio.Task[None] | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
         self._startup_task: asyncio.Task[Any] | None = None
         self._tool_policy_evidence: ToolPolicyEvidence | None = None
         self._workspace = WorkspaceManager(
@@ -1162,50 +1167,97 @@ class AsyncAgentSession:
             policy.allowed_tools or policy.denied_tools
         )
 
+    @staticmethod
+    def _consume_task_failure(task: asyncio.Task[None]) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    @staticmethod
+    async def _wait_for_cleanup_component(task: asyncio.Task[None]) -> bool:
+        done, _ = await asyncio.wait(
+            (task,), timeout=_CLEANUP_COMPONENT_TIMEOUT_SECONDS
+        )
+        if not done:
+            return False
+        try:
+            task.result()
+        except BaseException:
+            return False
+        return True
+
+    async def _close_harness(self) -> None:
+        close = getattr(self.adapter, "close", None) or getattr(
+            self.adapter, "aclose", None
+        )
+        with _timing.span("harness.close"):
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            else:
+                exit_method = getattr(self.adapter, "__aexit__", None)
+                if exit_method is not None:
+                    result = exit_method(None, None, None)
+                    if inspect.isawaitable(result):
+                        await result
+        self._adapter_closed = True
+
+    async def _close_server_manager(self) -> None:
+        assert self._server_manager is not None
+        await self._server_manager.close()
+        self._server_manager_closed = True
+
+    async def _release_runtime_lease(self, lease: Any) -> None:
+        release = getattr(lease, "release", None) or getattr(lease, "close", None)
+        if callable(release):
+            with _timing.span("runtime.release"):
+                value = release()
+                if inspect.isawaitable(value):
+                    await value
+        if self._runtime_lease is lease:
+            self._runtime_lease = None
+
     async def _close_adapter(self) -> None:
-        failure: BaseException | None = None
+        """Bound each owner independently and retain in-flight close tasks."""
+
+        cleanup_failed = False
         if not self._adapter_closed:
-            try:
-                close = getattr(self.adapter, "close", None) or getattr(
-                    self.adapter, "aclose", None
-                )
-                with _timing.span("harness.close"):
-                    if close is not None:
-                        result = close()
-                        if inspect.isawaitable(result):
-                            await result
-                    else:
-                        exit_method = getattr(self.adapter, "__aexit__", None)
-                        if exit_method is not None:
-                            result = exit_method(None, None, None)
-                            if inspect.isawaitable(result):
-                                await result
-                self._adapter_closed = True
-            except Exception as exc:
-                failure = exc
+            task = self._adapter_close_task
+            if task is None or task.done():
+                task = asyncio.create_task(self._close_harness())
+                task.add_done_callback(self._consume_task_failure)
+                self._adapter_close_task = task
+            if not await self._wait_for_cleanup_component(task):
+                cleanup_failed = True
+                if task.done():
+                    self._adapter_close_task = None
+
         if self._server_manager is not None and not self._server_manager_closed:
-            try:
-                await self._server_manager.close()
-                self._server_manager_closed = True
-            except Exception as exc:
-                if failure is None:
-                    failure = exc
+            task = self._server_manager_close_task
+            if task is None or task.done():
+                task = asyncio.create_task(self._close_server_manager())
+                task.add_done_callback(self._consume_task_failure)
+                self._server_manager_close_task = task
+            if not await self._wait_for_cleanup_component(task):
+                cleanup_failed = True
+                if task.done():
+                    self._server_manager_close_task = None
+
         if self._runtime_lease is not None:
-            try:
-                release = getattr(self._runtime_lease, "release", None) or getattr(
-                    self._runtime_lease, "close", None
+            task = self._runtime_lease_close_task
+            if task is None or task.done():
+                task = asyncio.create_task(
+                    self._release_runtime_lease(self._runtime_lease)
                 )
-                if callable(release):
-                    with _timing.span("runtime.release"):
-                        value = release()
-                        if inspect.isawaitable(value):
-                            await value
-                self._runtime_lease = None
-            except Exception as exc:
-                if failure is None:
-                    failure = exc
-        if failure is not None:
-            raise failure
+                task.add_done_callback(self._consume_task_failure)
+                self._runtime_lease_close_task = task
+            if not await self._wait_for_cleanup_component(task):
+                cleanup_failed = True
+                if task.done():
+                    self._runtime_lease_close_task = None
+
+        if cleanup_failed:
+            raise CleanupError("session child cleanup failed")
 
     @_timing.timed("session.wire_replay")
     def _emit_captured_wire_events(self, turn_id: TurnId | None) -> None:
@@ -2684,33 +2736,41 @@ class AsyncAgentSession:
         if self._on_close:
             self._on_close(self)
 
+    async def _terminalize_cleanup_timeout(self) -> None:
+        self._cleanup_failed = True
+        if self._terminal_outcome is None:
+            await self._finish(
+                ExecutionOutcome.FAILED,
+                ErrorCode.CLEANUP_FAILED,
+                "session cleanup timed out",
+            )
+        if not self._cleanup_terminalized:
+            self._finalize_result(cleanup_succeeded=False)
+            self._cleanup_terminalized = True
+
     async def _run_close_safely(self, outcome: ExecutionOutcome) -> None:
-        task = asyncio.create_task(self._complete_close(outcome))
+        task = self._cleanup_task
+        if task is None or task.done():
+            if self._closed:
+                return
+            task = asyncio.create_task(self._complete_close(outcome))
+            task.add_done_callback(self._consume_task_failure)
+            self._cleanup_task = task
         try:
-            await asyncio.shield(task)
+            done, _ = await asyncio.wait(
+                (task,), timeout=_CLEANUP_ATTEMPT_TIMEOUT_SECONDS
+            )
         except asyncio.CancelledError:
             done, _ = await asyncio.wait(
                 (task,), timeout=_CANCELLED_CLEANUP_GRACE_SECONDS
             )
             if not done:
-                self._cleanup_failed = True
-                task.cancel()
-                await asyncio.wait((task,), timeout=_CANCELLED_CLEANUP_SETTLE_SECONDS)
-
-                def consume_failure(completed: asyncio.Task[None]) -> None:
-                    if not completed.cancelled():
-                        completed.exception()
-
-                task.add_done_callback(consume_failure)
-                if self._terminal_outcome is None:
-                    await self._finish(
-                        ExecutionOutcome.FAILED,
-                        ErrorCode.CLEANUP_FAILED,
-                        "session cleanup timed out",
-                    )
-                self._finalize_result(cleanup_succeeded=False)
-                self._cleanup_terminalized = True
+                await self._terminalize_cleanup_timeout()
             raise
+        if not done:
+            await self._terminalize_cleanup_timeout()
+            raise CleanupError("session cleanup timed out")
+        task.result()
 
     async def cancel(self) -> None:
         async with self._close_lock:
