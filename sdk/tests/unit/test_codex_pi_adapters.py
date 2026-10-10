@@ -649,7 +649,7 @@ def test_codex_config_is_bounded() -> None:
 
 
 @pytest.mark.parametrize("api_key_auth", [False, True], ids=["subscription", "api-key"])
-def test_codex_disables_apps_without_removing_declared_mcp_servers(
+def test_codex_disables_apps_and_plugins_without_removing_declared_mcp_servers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, api_key_auth: bool
 ) -> None:
     source_home = tmp_path / "source-home"
@@ -678,7 +678,8 @@ def test_codex_disables_apps_without_removing_declared_mcp_servers(
     launch = _launch(harness, configurations=(server,))
     configuration = codex_configuration(launch)
     rendered = tomllib.loads(render_codex_config(launch))
-    assert configuration["features"]["apps"] is False
+    for feature in ("apps", "plugins", "remote_plugin"):
+        assert configuration["features"][feature] is False
     assert rendered == configuration
     assert configuration["mcp_servers"]["fixture"]["command"] == "fixture"
 
@@ -687,7 +688,8 @@ def test_codex_disables_apps_without_removing_declared_mcp_servers(
     environment = CodexHarnessAdapter().environment_for_launch(launch, runtime_root)
     runtime_home = Path(environment["CODEX_HOME"])
     written = tomllib.loads((runtime_home / "config.toml").read_text())
-    assert written["features"]["apps"] is False
+    for feature in ("apps", "plugins", "remote_plugin"):
+        assert written["features"][feature] is False
     assert written["mcp_servers"] == configuration["mcp_servers"]
     if not api_key_auth:
         assert (runtime_home / "auth.json").read_bytes() == source_auth.read_bytes()

@@ -243,9 +243,15 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 **({"env_http_headers": env_headers} if env_headers else {}),
             }
     # A ChatGPT login can expose account-connected apps even in an isolated
-    # home. Managed tests must explicitly disable that ambient tool access.
+    # home. Disable apps and plugins so managed tests do not inherit tools,
+    # skills, or hooks from account-connected or installed integrations.
     return {
-        "features": {"apps": False, "mcp_2026_07_28": True},
+        "features": {
+            "apps": False,
+            "plugins": False,
+            "remote_plugin": False,
+            "mcp_2026_07_28": True,
+        },
         "mcp_servers": servers,
     }
 
@@ -255,6 +261,8 @@ def render_codex_config(launch: HarnessLaunch) -> str:
     lines = [
         "[features]",
         "apps = false",
+        "plugins = false",
+        "remote_plugin = false",
         "mcp_2026_07_28 = true",
         "",
         "[mcp_servers]",
