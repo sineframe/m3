@@ -193,6 +193,60 @@ def _startup_failure_cause(error: BaseException) -> str:
     return "unexpected error"
 
 
+# How a terminal turn that was not a plain failure ends the execution, and the
+# error reported when the adapter gives no reason of its own.
+_TERMINAL_TURN_ENDINGS: dict[
+    TurnOutcome | None, tuple[ExecutionOutcome, ErrorCode, str]
+] = {
+    TurnOutcome.TIMED_OUT: (
+        ExecutionOutcome.TIMED_OUT,
+        ErrorCode.TIMEOUT,
+        "session timed out",
+    ),
+    TurnOutcome.CANCELLED: (
+        ExecutionOutcome.CANCELLED,
+        ErrorCode.CANCELLED,
+        "session cancelled",
+    ),
+    TurnOutcome.INTERRUPTED: (
+        ExecutionOutcome.INTERRUPTED,
+        ErrorCode.CANCELLED,
+        "session interrupted",
+    ),
+}
+
+
+def _terminal_turn_error(error: object) -> ErrorInfo | None:
+    """Return the session error for an adapter turn that ended the session.
+
+    The turn result itself only reports "turn failed", but the session
+    error keeps the adapter's reason, bounded like a startup cause.
+    Adapters write these messages themselves, the same trust rule as
+    ``_startup_failure_cause``. Only scalar details are kept, because
+    adapter details may hold nested provider payloads.
+    """
+
+    if not isinstance(error, ErrorInfo):
+        return None
+    cause = " ".join(error.message.split())[:_STARTUP_CAUSE_LIMIT]
+    if not cause:
+        return None
+    details: dict[str, Any] = {"cause": cause}
+    for key, value in error.details.items():
+        if key == "cause" or not isinstance(key, str):
+            continue
+        if isinstance(value, str):
+            details[key] = " ".join(value.split())[:_STARTUP_CAUSE_LIMIT]
+        elif value is None or isinstance(value, (bool, int, float)):
+            details[key] = value
+    return ErrorInfo(
+        code=error.code,
+        message=cause,
+        retryable=error.retryable,
+        details=details,
+    )
+
+
 def _validate_elicitation_arguments(
     elicitation: ElicitationPlan | None, elicitation_round_limit: int
 ) -> None:
@@ -1654,11 +1708,26 @@ class AsyncAgentSession:
                         )
             self._turns.append(result)
             if self._terminal_requested(raw):
-                await self._finish(
-                    ExecutionOutcome.FAILED,
-                    ErrorCode.TRANSPORT_ERROR,
-                    "session lost during turn",
+                ending_outcome, ending_code, ending_message = (
+                    _TERMINAL_TURN_ENDINGS.get(
+                        result.snapshot.outcome,
+                        (
+                            ExecutionOutcome.FAILED,
+                            ErrorCode.TRANSPORT_ERROR,
+                            "session lost during turn",
+                        ),
+                    )
                 )
+                terminal_error = _terminal_turn_error(getattr(raw, "error", None))
+                if terminal_error is not None:
+                    await self._finish(
+                        ending_outcome,
+                        terminal_error.code,
+                        terminal_error.message,
+                        details=terminal_error.details,
+                    )
+                else:
+                    await self._finish(ending_outcome, ending_code, ending_message)
             return result
         except asyncio.TimeoutError:
             await self._cancel_adapter_safely()

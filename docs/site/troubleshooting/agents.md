@@ -28,6 +28,22 @@ without a harness. See [the pytest plugin reference](../reference/pytest.md).
 Use `m3 doctor --require harness:NAME` for a system runtime, or select a managed
 runtime/version supported on the current OS and CPU.
 
+## Codex has no login or rejects the credentials
+
+Codex needs either an API key or a ChatGPT subscription login. Startup fails
+with `Codex has no login` when it has neither: map a key with
+`--credential-env codex:OPENAI_API_KEY=SOURCE`, or sign in to Codex on the host
+and run without a mapped key. When a turn fails with `Codex turn failed: model
+provider rejected the credentials (HTTP 401)`, the mapped key or the copied
+login was refused by the model provider. See
+[credentials](../reference/credentials.md#native-harnesses).
+
+A failed agent turn ends the execution with the harness's own reason in
+`result.error.message` and `result.error.details["cause"]`. Codex failures add
+`reason` and `http_status` to the details. `session lost during turn` means the
+harness gave no reason. A turn that timed out, was cancelled, or was
+interrupted ends the execution with that same outcome rather than `failed`.
+
 ## Tool call was denied
 
 Approval is separate from MCP elicitation. The test's tool selection decides

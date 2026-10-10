@@ -55,6 +55,13 @@ _THREAD_START_TIMEOUT_SECONDS = 30.0
 # Codex wording for a required MCP server that failed during thread/start.
 _MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
 
+# Credential targets that hold an OpenAI API key, in the order Codex itself
+# prefers them. The App Server reads neither from its environment, so M3 signs
+# it in with the key over the protocol.
+_CODEX_API_KEY_TARGETS = ("CODEX_API_KEY", "OPENAI_API_KEY")
+# Bounds one account request during startup; both are local to the App Server.
+_ACCOUNT_REQUEST_TIMEOUT_SECONDS = 15.0
+
 # App Server requests that wait for a user to approve a native command, file
 # change, or sandbox widening. Codex blocks the turn until each is answered.
 _NATIVE_APPROVAL_OPERATIONS = {
@@ -336,6 +343,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._turn_id: str | None = None
         self._pending_turn_request: int | None = None
         self._session_metadata: dict[str, str] = {}
+        # API key for account/login/start, held only between launch and login.
+        self._api_key_login: str | None = None
         self._deferred_frames: list[Mapping[str, Any]] = []
         self._observed_tool_call_ids: set[str] = set()
         self._streamed_item_ids: set[str] = set()
@@ -550,8 +559,15 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         home = root / "codex-home"
         home.mkdir(mode=0o700, exist_ok=True)
         config = home / "config.toml"
+        root_settings = "check_for_update_on_startup = false\n"
+        if isinstance(launch.spec.harness, Codex) and any(
+            target in _CODEX_API_KEY_TARGETS
+            for target in launch.spec.harness.credential_references
+        ):
+            # account/login/start would otherwise write the key to auth.json.
+            root_settings += 'cli_auth_credentials_store = "ephemeral"\n'
         config.write_text(
-            "check_for_update_on_startup = false\n\n" + render_codex_config(launch),
+            root_settings + "\n" + render_codex_config(launch),
             encoding="utf-8",
         )
         config.chmod(0o600)
@@ -603,8 +619,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         runtime_secrets: set[str] = set()
         protocol_markers: dict[str, str] = {}
         environment["CODEX_HOME"] = str(home)
+        self._api_key_login = None
         harness = launch.spec.harness
         if isinstance(harness, Codex):
+            api_keys: dict[str, str] = {}
             for target, reference in harness.credential_references.items():
                 value = environment.get(reference.name) or os.environ.get(
                     reference.name
@@ -613,6 +631,17 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     raise HarnessStartupError("Codex credential is unavailable")
                 environment[target] = value
                 runtime_secrets.add(value)
+                if target in _CODEX_API_KEY_TARGETS and value.strip():
+                    api_keys[target] = value.strip()
+                    runtime_secrets.add(value.strip())
+            self._api_key_login = next(
+                (
+                    api_keys[target]
+                    for target in _CODEX_API_KEY_TARGETS
+                    if target in api_keys
+                ),
+                None,
+            )
         for configuration in launch.configurations:
             for key, value in configuration.environment.items():
                 if isinstance(value, SecretReference):
@@ -687,6 +716,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         return ready
 
     async def initialize(self, process: JsonRpcProcess, launch: HarnessLaunch) -> str:
+        api_key, self._api_key_login = self._api_key_login, None
         self._request_id = 1
         await self._write_frame(
             process,
@@ -710,6 +740,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         await self._write_frame(
             process, {"jsonrpc": "2.0", "method": "initialized", "params": {}}
         )
+        await self._authenticate(process, api_key)
         self._request_id += 1
         workspace = launch.workspace_root or str(process.root or Path.cwd())
         sandbox = (
@@ -765,6 +796,69 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "sandbox": sandbox,
         }
         return self._thread_id
+
+    async def _startup_request(
+        self, process: JsonRpcProcess, method: str, params: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Send one startup request and return its response frame.
+
+        Frames that arrive first are kept for the turn loop, as during
+        initialize and thread/start.
+        """
+
+        self._request_id += 1
+        request_id = self._request_id
+        await self._write_frame(
+            process,
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+        )
+        while True:
+            try:
+                frame = await process.next(_ACCOUNT_REQUEST_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                raise HarnessStartupError(f"Codex {method} timed out") from None
+            if frame is None or frame.get("__invalid_frame__"):
+                raise HarnessStartupError(f"Codex {method} failed")
+            if "method" not in frame and frame.get("id") == request_id:
+                return frame
+            self._deferred_frames.append(frame)
+
+    async def _authenticate(self, process: JsonRpcProcess, api_key: str | None) -> None:
+        """Sign Codex in with a mapped API key and require a usable account.
+
+        ``codex app-server`` reads neither ``OPENAI_API_KEY`` nor
+        ``CODEX_API_KEY`` from its environment, so a mapped key takes effect
+        only through account/login/start. Without a login every model request
+        fails with HTTP 401 mid-turn, so a missing account fails startup.
+        """
+
+        if api_key is not None:
+            response = await self._startup_request(
+                process, "account/login/start", {"type": "apiKey", "apiKey": api_key}
+            )
+            error = response.get("error")
+            if error is not None or not isinstance(response.get("result"), Mapping):
+                # Codex's free text is never passed on (see _thread_start_failure).
+                code = error.get("code") if isinstance(error, Mapping) else None
+                summary = "Codex API key login failed"
+                if isinstance(code, int) and not isinstance(code, bool):
+                    summary += f" (JSON-RPC {code})"
+                raise HarnessStartupError(summary)
+        response = await self._startup_request(
+            process, "account/read", {"refreshToken": False}
+        )
+        result = response.get("result")
+        if not isinstance(result, Mapping):
+            # An App Server that cannot report its account is not blocked here;
+            # a missing login then surfaces as a failed turn.
+            return
+        if result.get("account") is None and result.get("requiresOpenaiAuth") is True:
+            raise HarnessStartupError(
+                "Codex API key login was not applied"
+                if api_key is not None
+                else "Codex has no login: map an OpenAI API key with "
+                "credential_env or sign in to Codex"
+            )
 
     @staticmethod
     def _thread_start_failure(
@@ -1159,6 +1253,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                             if state in {"interrupted", "aborted"}
                             else "failed"
                         )
+                        if self._terminal_status == "failed":
+                            self._terminal_error = _turn_failure(turn.get("error"))
                     if self._unscoped_elicitation_failure:
                         self._terminal_status = "failed"
                     usage = turn.get("usage")
@@ -1621,6 +1717,69 @@ def _json(value: Any) -> Any:
         if value is None or isinstance(value, (str, int, float, bool))
         else {"capture": "unavailable"}
     )
+
+
+# Codex's codexErrorInfo variants (app-server-protocol CodexErrorInfo) and the
+# M3-authored text reported for each.
+_CODEX_TURN_FAILURES = {
+    "contextWindowExceeded": "context window exceeded",
+    "sessionBudgetExceeded": "session budget exceeded",
+    "usageLimitExceeded": "usage limit exceeded",
+    "rateLimitExceeded": "rate limit exceeded",
+    "flexUnavailable": "flex processing unavailable",
+    "serverOverloaded": "model server overloaded",
+    "cyberPolicy": "blocked by provider policy",
+    "misalignmentPolicyViolation": "blocked by provider policy",
+    "tooManyDenials": "too many denied approvals",
+    "httpConnectionFailed": "model request failed",
+    "responseStreamConnectionFailed": "model response stream could not connect",
+    "internalServerError": "model provider internal error",
+    "unauthorized": "model provider rejected the credentials",
+    "badRequest": "model provider rejected the request",
+    "threadRollbackFailed": "thread rollback failed",
+    "sandboxError": "sandbox error",
+    "responseStreamDisconnected": "model response stream disconnected",
+    "responseTooManyFailedAttempts": "model request retries exhausted",
+    "activeTurnNotSteerable": "active turn cannot be steered",
+    "other": "unclassified error",
+}
+
+
+def _turn_failure(error: Any) -> ErrorInfo:
+    """Describe a failed Codex turn from its structured error fields only.
+
+    Codex's ``message`` can quote request details and any credential it was
+    started with, so it is never passed on (see ``_thread_start_failure``).
+    The reason is a known ``codexErrorInfo`` variant and the HTTP status a
+    bounded integer.
+    """
+
+    info = error.get("codexErrorInfo") if isinstance(error, Mapping) else None
+    reason: str | None = None
+    status: int | None = None
+    if isinstance(info, str):
+        reason = info
+    elif isinstance(info, Mapping) and len(info) == 1:
+        ((reason, payload),) = info.items()
+        if isinstance(payload, Mapping):
+            code = payload.get("httpStatusCode")
+            if isinstance(code, int) and not isinstance(code, bool):
+                status = code if 100 <= code <= 599 else None
+    if reason not in _CODEX_TURN_FAILURES:
+        reason = None
+    details: dict[str, Any] = {"harness": "codex"}
+    if reason is None:
+        message = "Codex turn failed"
+    else:
+        details["reason"] = reason
+        description = _CODEX_TURN_FAILURES[reason]
+        if status in {401, 403}:
+            description = "model provider rejected the credentials"
+        message = f"Codex turn failed: {description}"
+    if status is not None:
+        details["http_status"] = status
+        message += f" (HTTP {status})"
+    return ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message=message, details=details)
 
 
 def _tool_error_message(error: Any) -> str | None:

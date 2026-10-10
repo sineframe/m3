@@ -40,6 +40,13 @@ With `kit.agents(...)`, a missing mapped source raises `ValueError` when you sta
 
 Codex, Claude Code, Pi, and OpenCode isolate their child environments. Codex may copy a host authentication file only when there are no explicit credential references. The other native adapters use selected references and do not copy host login files into their temporary homes.
 
+Codex runs with either an API key or a ChatGPT subscription login:
+
+- **API key.** The Codex App Server does not read `OPENAI_API_KEY` or `CODEX_API_KEY` from its environment. When either target is mapped, M3 passes the key to Codex with the App Server's `account/login/start` request before starting the thread, preferring `CODEX_API_KEY` when both are mapped. The generated configuration sets `cli_auth_credentials_store = "ephemeral"`, so Codex keeps the key in memory instead of writing `auth.json`. Codex does not validate the key at that point: an invalid key fails the first turn with `Codex turn failed: model provider rejected the credentials (HTTP 401)`.
+- **Subscription.** With no credential references, M3 copies the host's `auth.json` (from `CODEX_HOME`, default `~/.codex`) into the temporary Codex home.
+
+Before the first turn, M3 asks Codex whether it has an account. When it has neither a key nor a login, startup fails with `Codex has no login` instead of the first turn failing with HTTP 401.
+
 Agent and judge mappings reject the exact name `M3_ACCESS_TOKEN` as a target or environment source. This validation does not detect the same token copied into another variable.
 
 ## ACP environment
