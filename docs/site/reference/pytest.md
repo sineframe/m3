@@ -60,6 +60,36 @@ in the same file. Keep direct-only and agent tests in separate files.
 installs a default `SQLiteExecutionStore` for kits without an explicit store;
 an explicit kit store takes precedence.
 
+## Trials
+
+`--trials N` (or marker `trials=N`) expands the `agent` fixture, so only tests
+that request `agent` run N times. Trials share one logical case identity; each
+trial is a separately collected pytest item with its own pass/fail:
+
+```python
+@pytest.fixture
+def orders_server():
+    return StdioServer(name="orders", command="python", args=("orders_server.py",))
+
+
+@pytest.mark.m3
+def test_lookup(agent, orders_server):
+    result = agent.run("Find order 42.", server=orders_server)
+    expect(result).to_have_tool_calls(["get_order"])
+```
+
+```sh
+m3 test --harness codex=gpt-5.6-sol --trials 5 -- tests
+```
+
+A test that builds agents in its body with `m3_kit.agents([...])` is collected
+once and is not repeated by `--trials`; pass `trials=N` to `agents()` instead,
+which returns N trial selections for the test to run. When `--trials` is above
+1 but no selected test requests `agent`, the option has no effect and the
+plugin emits one pytest warning. `m3(trials=N)` written directly on a test that
+does not request `agent` is a usage error; on a module or class it only applies
+to the tests there that do.
+
 ## Step timings
 
 `M3_TIMINGS=1 pytest -p m3.pytest_plugin tests/` records step timings and prints the summary at the

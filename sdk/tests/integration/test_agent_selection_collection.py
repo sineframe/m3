@@ -66,6 +66,101 @@ def test_one(case, agent):
     assert "opencode-provider/b-opencode-trial-2" in result.stdout
 
 
+def _run_with_trials(
+    tmp_path: Path, source: str, trials: str | None, *, ok: bool = True
+) -> str:
+    test_file = tmp_path / "test_trials_warning.py"
+    test_file.write_text(source, encoding="utf-8")
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "m3.pytest_plugin",
+            "--harness",
+            "opencode=provider/a",
+            *(("--trials", trials) if trials is not None else ()),
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is ok, result.stdout + result.stderr
+    return result.stdout + result.stderr
+
+
+def test_trials_warns_when_no_test_requests_agent(tmp_path: Path) -> None:
+    output = _run_with_trials(tmp_path, "def test_plain(): pass\n", "2")
+    assert "1 passed" in output
+    assert "--trials 2 had no effect" in output
+
+
+def test_trials_warns_when_only_an_unrelated_agent_parameter_exists(
+    tmp_path: Path,
+) -> None:
+    # A parametrized argument that happens to be named `agent` is not M3's
+    # fixture and must not hide that --trials had no effect.
+    output = _run_with_trials(
+        tmp_path,
+        "import pytest\n"
+        "@pytest.mark.parametrize('agent', ['a'])\n"
+        "def test_other(agent): pass\n",
+        "2",
+    )
+    assert "1 passed" in output
+    assert "--trials 2 had no effect" in output
+
+
+def test_trials_does_not_warn_when_some_test_requests_agent(tmp_path: Path) -> None:
+    # --trials had an effect, so tests that build agents in their body or are
+    # not agent tests at all are left alone.
+    output = _run_with_trials(
+        tmp_path,
+        """
+import pytest
+pytestmark = pytest.mark.m3
+def test_body_agents(m3_kit): pass
+def test_repeated(agent): pass
+def test_plain(): pass
+""",
+        "3",
+    )
+    assert "5 passed" in output
+    assert "--trials" not in output
+
+
+def test_marker_trials_on_a_test_without_agent_is_rejected(tmp_path: Path) -> None:
+    output = _run_with_trials(
+        tmp_path,
+        "import pytest\n@pytest.mark.m3(trials=3)\ndef test_body_agents(m3_kit): pass\n",
+        None,
+        ok=False,
+    )
+    assert "m3(trials=...) on test_body_agents has no effect" in output
+    assert "request the `agent` fixture" in output
+
+
+def test_module_marker_trials_allows_tests_without_agent(tmp_path: Path) -> None:
+    output = _run_with_trials(
+        tmp_path,
+        """
+import pytest
+pytestmark = pytest.mark.m3(trials=2)
+def test_repeated(agent): pass
+def test_plain(m3_kit): pass
+""",
+        None,
+    )
+    assert "3 passed" in output
+
+
 @pytest.mark.parametrize(
     "arguments",
     (
