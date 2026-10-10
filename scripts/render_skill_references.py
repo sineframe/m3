@@ -299,6 +299,11 @@ def _selected_pages() -> list[dict[str, str]]:
 
 
 def _render_references(pages: list[dict[str, str]]) -> dict[Path, str]:
+    for page in pages:
+        if page["kind"] not in KIND_ORDER:
+            raise ValueError(
+                f"unknown documentation kind {page['kind']!r} for page {page['id']!r}"
+            )
     selected = {page["source"]: page["id"] for page in pages}
     examples: set[str] = set()
     rendered: dict[Path, str] = {}
@@ -494,7 +499,11 @@ def main() -> int:
     args = parser.parse_args()
 
     pages = _selected_pages()
-    expected = _render_references(pages)
+    try:
+        expected = _render_references(pages)
+    except ValueError as error:
+        print(f"agent skill error: {error}")
+        return 1
     skill_text, fence_errors = _sync_starter(SKILL_FILE.read_text(encoding="utf-8"))
     expected[SKILL_FILE] = skill_text
     expected_paths = set(expected)
