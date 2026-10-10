@@ -1,0 +1,14 @@
+name: Feature request
+description: Suggest something M3 should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: What are you trying to do
+      description: The problem you hit or the test you can't write today.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What would help
+      description: How you'd like it to work. A code sample of the API or command you have in mind is useful.
