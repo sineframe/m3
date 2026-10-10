@@ -1,0 +1,29 @@
+id: names-length-boundary
+backlog_id: Q09
+title: Tool whose full client name is 65 characters
+question: Does a tool whose full name is 65 chars work without killing the session?
+category: names-and-limits
+spec: "MCP allows tool names up to 128 chars; Claude Code's full name is mcp__<server>__<tool>"
+server: server.py
+# Full Claude Code names: mcp__quirk__<tool> = 64 and 65 chars (asserted in server.py).
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly three tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:len64_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa with text='a'.
+  3) Call quirk:len65_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb with text='b'.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: len65_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  arguments: {text: b}
+extra_tools:
+  - tool: len64_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    arguments: {text: a}
+error_strings:
+  - "Tool reference"
+  - "not found"
+issues:
+  - https://github.com/anthropics/claude-code/issues/97616
+workaround: >-
+  Keep mcp__<server>__<tool> at 64 characters or fewer; use short server
+  names and tool names.
+workaround_verified: false
