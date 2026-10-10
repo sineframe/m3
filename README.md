@@ -192,7 +192,7 @@ npx --yes skills@1.7.0 add sineframe/m3#vVERSION --skill testing-with-m3 --agent
 - [Handle MCP elicitation](https://m3.sineframe.com/docs/guides/elicitation/plans)
 - [CLI reference](https://m3.sineframe.com/docs/reference/cli/)
 - [Python reference](https://m3.sineframe.com/docs/reference/python/)
-- [Contributing](https://github.com/sineframe/m3/blob/main/docs/contributing.md)
+- [Contributing](https://github.com/sineframe/m3/blob/main/CONTRIBUTING.md)
 
 The SDK and CLI use separate environments. The CLI runs pytest in the project
 environment and saves history; tests import the SDK.
