@@ -60,6 +60,15 @@ state: dict[str, object] = {
     "xdg_data_home": os.environ.get("XDG_DATA_HOME"),
     "xdg_state_home": os.environ.get("XDG_STATE_HOME"),
     "opencode_config": os.environ.get("OPENCODE_CONFIG"),
+    "bootstrap_environment": {
+        key: os.environ.get(key)
+        for key in (
+            "OPENCODE_DISABLE_AUTOUPDATE",
+            "OPENCODE_DISABLE_DEFAULT_PLUGINS",
+            "OPENCODE_DISABLE_MODELS_FETCH",
+            "OPENCODE_DISABLE_LSP_DOWNLOAD",
+        )
+    },
     "config_exists": False,
     "config_content": None,
     "api_hits": [],
