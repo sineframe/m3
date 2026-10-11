@@ -131,6 +131,25 @@ M3 fails if the target's manifest key or matching asset is missing or
 ambiguous. Cache roots inside the project or `PATH` are rejected; so are
 blocked system-directory roots (including Windows system directories).
 
+## OpenCode model catalog
+
+Managed OpenCode uses one model catalog snapshot per run. The CLI prepares it
+before starting pytest workers; SDK sessions prepare it before opening OpenCode.
+Preparation is locked across processes and publishes the file atomically. The
+same run reuses its snapshot without refreshing it.
+
+With SQLite results, the file is stored at
+`<database>.runs/<SHA-256 of run ID>/opencode-models.json` and retained after the
+run. Kits without persistent results keep it in their temporary invocation
+directory. The `harness.runtime_resolved` event records
+`models_catalog_sha256`. Runtime cache pruning does not remove these snapshots.
+
+Set `OPENCODE_MODELS_PATH` to a saved catalog for offline preparation. M3 copies
+and validates it instead of downloading from `models.opencode.ai`; an existing
+run snapshot takes precedence. Preparation failures stop OpenCode startup.
+This removes per-session catalog downloads; OpenCode can still perform its
+independent npm dependency installation.
+
 ## Cache location and precedence
 
 Managed sessions download missing runtimes and reuse valid cached assets

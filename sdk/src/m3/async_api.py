@@ -994,6 +994,15 @@ class AsyncMCPTestKit:
             if scoped_store is not None:
                 store = scoped_store
                 self._owns_store = True
+        self._runtime_models_dir = self._runtime_invocation_dir
+        if store is not None:
+            from .runtime.opencode_models import models_directory
+            from .storage.sqlite import SQLiteExecutionStore
+
+            if isinstance(store, SQLiteExecutionStore):
+                self._runtime_models_dir = models_directory(
+                    store.database, self._run_id.root
+                )
         if store is not None and self._project_id is not None:
             register = getattr(store, "ensure_project", None)
             get_project = getattr(store, "get_project", None)
@@ -1621,6 +1630,7 @@ class AsyncMCPTestKit:
                 else str(_Path(harness_cache_dir).expanduser().resolve())
             ),
             runtime_invocation_dir=self._runtime_invocation_dir,
+            runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,
             managed_input_runtime=_managed_input_runtime,
         )

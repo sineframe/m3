@@ -1032,6 +1032,29 @@ def _run_pytest_process(
                 dict(environment) if environment is not None else dict(os.environ)
             )
             if runtime == "managed":
+                if any(
+                    value.split("=", 1)[0].split("@", 1)[0].strip().lower()
+                    == "opencode"
+                    for value in harnesses
+                ):
+                    from m3.runtime.core import RuntimeValidationError
+                    from m3.runtime.opencode_models import (
+                        models_directory,
+                        prepare_models,
+                    )
+
+                    try:
+                        models_path, _ = prepare_models(
+                            models_directory(database, run_id or f"run-{uuid4().hex}"),
+                            child_environment.get("OPENCODE_MODELS_PATH"),
+                        )
+                    except RuntimeValidationError:
+                        print(
+                            "m3 test: OpenCode model catalog preparation failed",
+                            file=sys.stderr,
+                        )
+                        return OPERATIONAL_ERROR
+                    child_environment["OPENCODE_MODELS_PATH"] = str(models_path)
                 runtime_dir = Path(tempfile.mkdtemp(prefix="m3-runtime-"))
                 os.chmod(runtime_dir, 0o700)
                 progress_path = runtime_dir / "progress.jsonl"

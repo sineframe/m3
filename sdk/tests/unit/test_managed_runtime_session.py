@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -11,9 +12,11 @@ import pytest
 from m3._types.specs import AgentSpec
 from m3.agent_session import AsyncAgentSession
 from m3.errors import TransportError
+from m3.harness.opencode import OpenCodeHarnessAdapter
 from m3.types import (
     ClaudeCode,
     EventKind,
+    OpenCode,
     Readiness,
     ServerBinding,
     SessionForkRequest,
@@ -92,6 +95,87 @@ class Adapter:
 
     async def close(self) -> None:
         self.order.append("close")
+
+
+@pytest.mark.asyncio
+async def test_managed_opencode_prepares_catalog_before_open_and_records_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.runtime.core import RuntimeManager
+
+    raw = b'{"opencode":{"models":{"fixture":{}}}}'
+    downloads: list[str] = []
+
+    def download(url: str, kind: str) -> bytes:
+        downloads.append(url)
+        return raw
+
+    monkeypatch.delenv("OPENCODE_MODELS_PATH", raising=False)
+    monkeypatch.setattr(RuntimeManager, "_download", download)
+    events: list[tuple[EventKind, dict[str, Any]]] = []
+
+    class OpenCodeAdapter(OpenCodeHarnessAdapter):
+        def __init__(self) -> None:
+            super().__init__(executable="fixture")
+
+        async def preflight(self, launch: Any) -> Readiness:
+            return Readiness(ready=True)
+
+        async def open(self, launch: Any) -> Any:
+            assert Path(self.environment["OPENCODE_MODELS_PATH"]).read_bytes() == raw
+            assert self.environment["OPENCODE_DISABLE_MODELS_FETCH"] == "1"
+            return object()
+
+    spec = _spec(runtime="managed").model_copy(
+        update={"harness": OpenCode(model="fixture", runtime="managed")}
+    )
+    adapters = [OpenCodeAdapter(), OpenCodeAdapter()]
+    for adapter in adapters:
+        session = AsyncAgentSession(
+            spec,
+            adapter,
+            runtime_manager=Manager(),
+            runtime_models_dir=tmp_path,
+            event_sink=lambda kind, payload, *_: events.append((kind, dict(payload))),
+        )
+        async with session:
+            pass
+    assert len(downloads) == 1
+    assert adapters[0].environment == adapters[1].environment
+    resolved = [
+        payload
+        for kind, payload in events
+        if kind is EventKind.HARNESS_RUNTIME_RESOLVED
+    ]
+    assert len(resolved) == 2
+    assert all(
+        payload["models_catalog_sha256"] == hashlib.sha256(raw).hexdigest()
+        for payload in resolved
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_opencode_catalog_preparation_prevents_open_and_releases_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.runtime.core import RuntimeManager
+
+    monkeypatch.delenv("OPENCODE_MODELS_PATH", raising=False)
+    monkeypatch.setattr(RuntimeManager, "_download", lambda *_: b"not json")
+    spec = _spec(runtime="managed").model_copy(
+        update={"harness": OpenCode(model="fixture", runtime="managed")}
+    )
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    manager = Manager()
+    session = AsyncAgentSession(
+        spec, adapter, runtime_manager=manager, runtime_models_dir=tmp_path
+    )
+    with pytest.raises(
+        TransportError, match="OpenCode model catalog preparation failed"
+    ):
+        await session.__aenter__()
+    assert adapter._session is None
+    assert manager.lease.released == 1
 
 
 @pytest.mark.asyncio

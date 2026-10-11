@@ -12,6 +12,81 @@ from m3.runtime.core import ProgressEmitter
 from m3_cli import main, runtime, supervisor
 
 
+@pytest.mark.parametrize("runtime", ("managed", "system"))
+def test_opencode_catalog_is_prepared_before_workers_and_retained_with_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime: str
+) -> None:
+    from m3.runtime.core import RuntimeManager
+
+    raw = b'{"opencode":{"models":{"fixture":{}}}}'
+    downloads: list[str] = []
+
+    def download(url: str, kind: str) -> bytes:
+        downloads.append(url)
+        return raw
+
+    monkeypatch.setattr(RuntimeManager, "_download", download)
+    observed: list[Path] = []
+    original_popen = supervisor.subprocess.Popen
+
+    def popen(*args: object, **kwargs: object):
+        env = kwargs["env"]
+        if runtime == "managed":
+            snapshot = Path(env["OPENCODE_MODELS_PATH"])
+            assert snapshot.read_bytes() == raw
+            assert len(downloads) == 1
+            observed.append(snapshot)
+        else:
+            assert "OPENCODE_MODELS_PATH" not in env
+            assert not downloads
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        supervisor, "pytest_command", lambda *_a, **_k: [sys.executable, "-c", "pass"]
+    )
+    for _ in range(2):
+        assert (
+            supervisor._run_pytest_process(
+                Path(sys.executable),
+                tmp_path / "results.sqlite",
+                (),
+                runtime=runtime,
+                harnesses=("opencode@1.18.31=fixture",),
+                run_id="same-run",
+                environment={},
+                num_processes="2",
+            )
+            == 0
+        )
+    if runtime == "managed":
+        assert observed[0] == observed[1]
+        assert observed[0].read_bytes() == raw
+
+
+def test_invalid_opencode_catalog_stops_before_spawning_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from m3.runtime.core import RuntimeManager
+
+    monkeypatch.setattr(RuntimeManager, "_download", lambda *_: b"not json")
+    monkeypatch.setattr(
+        supervisor.subprocess, "Popen", lambda *_a, **_k: pytest.fail("spawned")
+    )
+    assert (
+        supervisor._run_pytest_process(
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            (),
+            runtime="managed",
+            harnesses=("opencode=fixture",),
+            environment={},
+        )
+        == supervisor.OPERATIONAL_ERROR
+    )
+    assert "OpenCode model catalog preparation failed" in capsys.readouterr().err
+
+
 def test_runtime_cache_help_and_invalid_flags(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

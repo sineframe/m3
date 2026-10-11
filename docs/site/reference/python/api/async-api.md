@@ -27,6 +27,7 @@ m3.async_api.AsyncAgentSession(
     harness_cache_dir: str | None = None,
     runtime_manager: Any = None,
     runtime_invocation_dir: str | Path | None = None,
+    runtime_models_dir: str | Path | None = None,
     runtime_project_root: str | Path | None = None,
     managed_input_runtime: ManagedInputRuntime | None = None,
 ) -> None
