@@ -1,0 +1,29 @@
+id: names-sanitize-collision
+backlog_id: Q44
+title: Two tool names that collide after character sanitising
+question: Are two tools whose names differ only by `.` vs `_` both callable as distinct tools?
+category: names-and-limits
+spec: "MCP tool names may contain `.` and `_` (SEP-986); `fetch.page` and `fetch_page` are two distinct tools"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly three tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:fetch.page with url='https://a.example'.
+  3) Call quirk:fetch_page with url='https://b.example'.
+  Then reply with one line in the form CODE1/CODE2, where CODE1 is the code returned by fetch.page
+  and CODE2 is the code returned by fetch_page, or the name of any tool you could not find.
+expectation:
+  tool: fetch_page
+  arguments: {url: "https://b.example"}
+  # Only appears when both tools reached their own handler: fetch.page returns ZK41, fetch_page returns QW87.
+  marker: ZK41/QW87
+extra_tools:
+  - tool: fetch.page
+    arguments: {url: "https://a.example"}
+error_strings: []
+issues:
+  - https://github.com/anomalyco/opencode/blob/v1.18.25/packages/opencode/src/mcp/catalog.ts
+workaround: >-
+  Give every tool a name that stays unique after replacing characters outside
+  [A-Za-z0-9_-] with `_`; avoid `.` in tool names.
+workaround_verified: false

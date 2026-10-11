@@ -1,0 +1,27 @@
+id: result-resource-link
+backlog_id: Q11
+title: resource_link block in a tool result
+question: Does a tool result that contains a resource_link block reach the model?
+category: result-handling
+spec: "MCP 2025-06-18+ tool results may contain resource_link content blocks"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:view_item with id='42'.
+  Then reply with one line: the exact name of the resource link that
+  view_item returned, or the name of any tool you could not find.
+expectation:
+  tool: view_item
+  arguments: {id: "42"}
+  # Only in the resource_link's name; must appear in the final answer.
+  marker: item-RL42
+error_strings:
+  - "Unexpected response type"
+issues:
+  - https://github.com/openai/codex/issues/41280
+  - https://github.com/openai/codex/issues/41437
+workaround: >-
+  Also return a text block that carries the link's name and URI next to the
+  resource_link.
+workaround_verified: false

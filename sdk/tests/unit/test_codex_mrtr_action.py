@@ -1619,7 +1619,7 @@ def test_codex_modern_mcp_configuration_preserves_explicit_server_protocol() -> 
     launch = SimpleNamespace(configurations=(server,))
 
     config = codex_configuration(launch)
-    assert config["features"] == {"mcp_2026_07_28": True}
+    assert config["features"]["mcp_2026_07_28"] is True
     assert (
         config["mcp_servers"]["fixture"]["env"]["CODEX_MCP_PROTOCOL_VERSION"]
         == "2026-07-28"

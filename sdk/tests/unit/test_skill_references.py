@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT_PATH = _ROOT / "scripts" / "render_skill_references.py"
 _SCRIPT_SPEC = importlib.util.spec_from_file_location(
@@ -184,3 +186,39 @@ def test_cli_flag_extraction_matches_exact_tokens() -> None:
 
     assert "--project-name" in available
     assert "--project" not in available
+
+
+def test_unknown_page_kind_is_rejected() -> None:
+    page = {**_RENDERER._selected_pages()[0], "kind": "new-kind"}
+
+    with pytest.raises(ValueError, match="unknown documentation kind 'new-kind'"):
+        _RENDERER._render_references([page])
+
+
+def test_every_generated_reference_is_in_the_index() -> None:
+    rendered = _RENDERER._render_references(_RENDERER._selected_pages())
+    index = rendered[_RENDERER.REFERENCES / "index.md"]
+
+    for path in rendered:
+        if path.parent == _RENDERER.REFERENCES and path.name != "index.md":
+            assert f"]({path.name})" in index
+
+
+def test_unknown_page_kind_stops_generation_before_writing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    page = {**_RENDERER._selected_pages()[0], "kind": "new-kind"}
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text(
+        _RENDERER.SKILL_FILE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    monkeypatch.setattr(_RENDERER, "_selected_pages", lambda: [page])
+    monkeypatch.setattr(_RENDERER, "SKILL_DIR", tmp_path)
+    monkeypatch.setattr(_RENDERER, "SKILL_FILE", skill_file)
+    monkeypatch.setattr(_RENDERER, "EXAMPLES", tmp_path / "examples")
+    monkeypatch.setattr(_RENDERER, "REFERENCES", tmp_path / "references")
+    monkeypatch.setattr("sys.argv", [str(_SCRIPT_PATH)])
+
+    assert _RENDERER.main() == 1
+    assert "unknown documentation kind 'new-kind'" in capsys.readouterr().out
+    assert not (tmp_path / "references").exists()

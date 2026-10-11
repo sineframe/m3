@@ -1,0 +1,26 @@
+id: lifecycle-slow-tool-call
+backlog_id: Q47
+title: Tool call that takes 75 seconds
+question: Does a tool call that takes 75 s (no progress notifications) still deliver its result?
+category: lifecycle
+spec: "MCP does not set a request timeout; SDK defaults are 60 s, so clients must raise it for long-running tools"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:slow_job with id='1' and wait for it; it takes over a minute.
+  Then reply with one line: the exact marker token (job-SJ75 form) from slow_job's result, or the error you got.
+expectation:
+  tool: slow_job
+  arguments: {id: "1"}
+  marker: job-SJ75
+error_strings:
+  - "Request timed out"
+  - "-32001"
+issues:
+  - https://github.com/anomalyco/opencode/blob/v1.18.25/packages/opencode/src/mcp/catalog.ts
+workaround: >-
+  OpenCode: set `timeout` (ms) on the MCP server entry; server authors: send
+  progress notifications (OpenCode resets its timeout on progress) or return
+  a job id and poll.
+workaround_verified: false

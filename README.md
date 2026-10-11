@@ -9,6 +9,9 @@
 M3 tests MCP servers and the agents that use them. It runs Python and pytest
 tests, captures MCP evidence, and can save runs for inspection and comparison.
 
+<img width="2150" height="1568" alt="demo" src="https://github.com/user-attachments/assets/786c68d9-d2d0-4fa6-92c8-4f4ba5d62f5c" />
+
+
 <p><strong>Test your MCP with</strong></p>
 
 <table>
@@ -134,7 +137,9 @@ Put `ANTHROPIC_API_KEY` in `.env` at the project root, then run the tests:
 m3 test -- tests
 ```
 
-Run the same tests with another agent, or several times to get a pass rate:
+Run the same tests with another agent, or several times to get a pass rate.
+`--trials` repeats tests that take the `agent` fixture, like the ones above;
+other tests run once.
 
 ```sh
 m3 test --harness codex=gpt-5.6-sol -- tests
@@ -190,7 +195,7 @@ npx --yes skills@1.7.0 add sineframe/m3#vVERSION --skill testing-with-m3 --agent
 - [Handle MCP elicitation](https://m3.sineframe.com/docs/guides/elicitation/plans)
 - [CLI reference](https://m3.sineframe.com/docs/reference/cli/)
 - [Python reference](https://m3.sineframe.com/docs/reference/python/)
-- [Contributing](https://github.com/sineframe/m3/blob/main/docs/contributing.md)
+- [Contributing](https://github.com/sineframe/m3/blob/main/CONTRIBUTING.md)
 
 The SDK and CLI use separate environments. The CLI runs pytest in the project
 environment and saves history; tests import the SDK.

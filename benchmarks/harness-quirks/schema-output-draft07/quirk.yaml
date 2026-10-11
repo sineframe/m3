@@ -1,0 +1,28 @@
+id: schema-output-draft07
+backlog_id: Q07
+title: outputSchema declaring JSON Schema draft-07
+question: Is a tool whose outputSchema declares $schema draft-07 accepted?
+category: schema-acceptance
+spec: "MCP tool outputSchema; clients that validate only JSON Schema 2020-12 reject the draft-07 dialect"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:get_item with id='1'.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: get_item
+  arguments: {id: "1"}
+error_strings:
+  - "unsupported dialect"
+  - "draft-07"
+issues:
+  - https://github.com/anthropics/claude-code/issues/88882
+  - https://github.com/anthropics/claude-code/issues/90549
+  - https://github.com/modelcontextprotocol/typescript-sdk/issues/2721
+  - https://github.com/Roam-Research/roam-tools/issues/38
+  - https://github.com/nataliapc/mcp-openmsx/issues/22
+workaround: >-
+  Emit JSON Schema 2020-12 or omit $schema from outputSchema until the
+  TypeScript SDK fix ships.
+workaround_verified: false

@@ -61,6 +61,11 @@ _CAPTURE_DRAIN_TIMEOUT_SECONDS = 0.1
 _SSE_FRAME_SEPARATOR = re.compile(rb"\r\n\r\n|\n\n|\r\r")
 
 
+def _consume_task_failure(task: asyncio.Task[None]) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
 class _SSECaptureParser:
     """Incrementally capture bounded SSE data frames without buffering a stream."""
 
@@ -683,6 +688,7 @@ class ServerGroupManager:
         self._endpoints: dict[str, _LoopbackEndpoint] = {}
         self._started = False
         self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
         self._evidence = ServerLifecycleEvidence()
         self._capture: McpCaptureManager | None = None
         self._validate_keys()
@@ -928,23 +934,33 @@ class ServerGroupManager:
     async def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
+        task = self._close_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._close_impl())
+            task.add_done_callback(_consume_task_failure)
+            self._close_task = task
+        await asyncio.shield(task)
+
+    async def _close_impl(self) -> None:
         failures = 0
-        for endpoint in tuple(self._endpoints.values()):
+        for key, endpoint in tuple(self._endpoints.items()):
             try:
                 await endpoint.close()
             except Exception:
                 failures += 1
-        self._endpoints.clear()
+            else:
+                self._endpoints.pop(key, None)
         if self._capture is not None:
             try:
                 await self._capture.close()
             except Exception:
                 failures += 1
-            self._capture = None
+            else:
+                self._capture = None
+        self._closed = failures == 0
         self._evidence = ServerLifecycleEvidence(
             started=self._started,
-            closed=failures == 0,
+            closed=self._closed,
             partial=failures != 0,
             error_kind="cleanup_failed" if failures else None,
             limitations=("owned_server_cleanup_incomplete",) if failures else (),

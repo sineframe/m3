@@ -1,0 +1,21 @@
+id: result-large-iserror-truncation
+backlog_id: Q20
+title: Marker in the middle of a long tool error result
+question: Does the marker in the middle of a 12,000-character tool error reach the model?
+category: result-handling
+spec: MCP tool errors carry their diagnostic in a CallToolResult content block with isError true.
+server: server.py
+synthetic_nonce: true
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:fail with confirm=true.
+  The second tool returns a long synthetic error. Report only the nonce embedded near the middle of that error.
+expectation:
+  tool: fail
+  arguments: {confirm: true}
+  status: tool_error
+  markers: ["{nonce}"]
+issues:
+  - https://github.com/anthropics/claude-code/issues/97623
+  - https://github.com/anthropics/claude-code/issues/97622

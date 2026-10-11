@@ -487,25 +487,63 @@ def test_explicit_credential_names_are_checked_without_exposing_values(
     assert "sentinel" not in str(error.value)
 
 
-def test_custom_credential_mapping_keeps_known_provider_default(
-    monkeypatch: pytest.MonkeyPatch, kit: MCPTestKit
+@pytest.mark.parametrize(
+    ("harness", "model", "default", "target"),
+    [
+        (
+            "claude_code",
+            "claude/model",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ),
+        ("codex", "gpt/model", "OPENAI_API_KEY", "CODEX_API_KEY"),
+        ("opencode", "opencode/model", "OPENCODE_API_KEY", "VENDOR_API_KEY"),
+        ("pi", "anthropic/model", "ANTHROPIC_API_KEY", "VENDOR_API_KEY"),
+        ("pi", "openai-codex/model", "PI_CODING_AGENT_DIR", "VENDOR_API_KEY"),
+    ],
+)
+def test_explicit_credential_mapping_replaces_harness_default(
+    monkeypatch: pytest.MonkeyPatch,
+    kit: MCPTestKit,
+    harness: str,
+    model: str,
+    default: str,
+    target: str,
 ) -> None:
-    monkeypatch.setenv("OPENCODE_API_KEY", "ambient")
-    monkeypatch.setenv("VENDOR_KEY", "vendor")
+    monkeypatch.setenv(default, "ambient")
+    monkeypatch.setenv("MAPPED_SOURCE", "mapped")
     agent = kit.agents(
         [
             {
-                "harness": "opencode",
-                "models": ["opencode/model"],
-                "credential_env": {"VENDOR_API_KEY": "VENDOR_KEY"},
+                "harness": harness,
+                "models": [model],
+                "credential_env": {target: "MAPPED_SOURCE"},
             }
         ]
     )[0]
     spec = agent._spec(UserMessage(content="x"), server=_server())
-    assert set(spec.harness.credential_references) == {
-        "OPENCODE_API_KEY",
-        "VENDOR_API_KEY",
-    }
+    assert set(spec.harness.credential_references) == {target}
+    assert spec.harness.credential_references[target].name == "MAPPED_SOURCE"
+
+
+def test_empty_credential_mapping_forwards_no_default(
+    monkeypatch: pytest.MonkeyPatch, kit: MCPTestKit
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient")
+    agent = kit.agents(
+        [{"harness": "codex", "models": ["gpt/model"], "credential_env": {}}]
+    )[0]
+    spec = agent._spec(UserMessage(content="x"), server=_server())
+    assert spec.harness.credential_references == {}
+
+
+def test_harness_default_credential_is_forwarded_without_mapping(
+    monkeypatch: pytest.MonkeyPatch, kit: MCPTestKit
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient")
+    agent = kit.agents([{"harness": "claude_code", "models": ["claude/model"]}])[0]
+    spec = agent._spec(UserMessage(content="x"), server=_server())
+    assert set(spec.harness.credential_references) == {"ANTHROPIC_API_KEY"}
 
 
 def test_custom_mapping_overrides_known_default_target(

@@ -1,0 +1,24 @@
+id: catalog-tool-count-cap
+backlog_id: Q23
+title: Server that advertises 2,049 tools
+question: Are a server's tools usable when it advertises more than 2,048 of them?
+category: names-and-limits
+spec: "tools/list has no maximum size; large API gateways advertise thousands of tools"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok' (do this first, even if you cannot find the tool in step 2).
+  2) Call quirk:t2048 with text='x'.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: t2048
+  arguments: {text: x}
+error_strings:
+  - "exceeded the catalog limit"
+issues:
+  - https://github.com/cloudflare/mcp/issues/262
+  - https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/codex-mcp/src/pagination.rs
+workaround: >-
+  Split the catalog over several servers of at most 2,048 tools each, or expose
+  a search tool plus a generic executor instead of one tool per operation.
+workaround_verified: false

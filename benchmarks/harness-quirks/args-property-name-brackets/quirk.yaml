@@ -1,0 +1,20 @@
+id: args-property-name-brackets
+backlog_id: Q05
+title: Tool input property name contains square brackets
+question: Can the client discover and call a tool whose required input property is named ids[]?
+category: argument-fidelity
+spec: MCP input schemas permit property names containing square brackets.
+server: server.py
+synthetic_nonce: true
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:ids with the exact argument key ids[] set to ['synthetic-id'].
+  Then reply with one line containing the exact marker returned by ids.
+expectation:
+  tool: ids
+  arguments: {"ids[]": [synthetic-id]}
+  status: success
+  markers: ["{nonce}"]
+issues:
+  - https://github.com/anthropics/claude-code/issues/92648

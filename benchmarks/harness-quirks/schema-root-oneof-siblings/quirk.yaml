@@ -1,0 +1,25 @@
+id: schema-root-oneof-siblings
+backlog_id: Q02
+title: Root-level oneOf next to properties
+question: Do the property names of a tool with a root-level oneOf reach the model?
+category: schema-acceptance
+spec: "JSON Schema 2020-12 root combinators beside `properties` (spec-legal)"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Read the quirk tool's input schema to find the exact parameter names and allowed values. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:find_tenant for the tenant whose billing key is 'T-5521'.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: find_tenant
+  arguments: {bkey_v2: T-5521}
+error_strings:
+  - "missing or invalid identifier"
+issues:
+  - https://github.com/openai/codex/issues/42283
+  - https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/code-mode-protocol/src/json_schema_types.rs
+workaround: >-
+  Declare the optional properties without a root oneOf and enforce "one of
+  bkey_v2 or serial_no" in the handler, returning an isError result that names
+  the missing fields.
+workaround_verified: false

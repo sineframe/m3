@@ -1,0 +1,28 @@
+id: schema-root-anyof
+backlog_id: Q01
+title: Root-level anyOf in a tool's inputSchema
+question: Is a tool with a root-level anyOf in its inputSchema visible and callable?
+category: schema-acceptance
+spec: "JSON Schema 2020-12 root combinators in inputSchema (spec-legal; see SEP-2106 per claude-code#95504)"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:pick with a='x'.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: pick
+  arguments: {a: x}
+error_strings:
+  - "input_schema does not support oneOf, allOf, or anyOf at the top level"
+issues:
+  - https://github.com/anthropics/claude-code/issues/95504
+  - https://github.com/anomalyco/opencode/issues/46628
+  - https://github.com/anomalyco/opencode/issues/47543
+  - https://github.com/Mibayy/token-savior/issues/120
+workaround: >-
+  Move the alternatives into optional properties, enforce "a or b" in the
+  handler, and return an isError result naming the missing field.
+workaround_verified: false
+# Filled by step 6 (raw no-M3 run) per harness:
+# {state, version, digest, date, command, log}

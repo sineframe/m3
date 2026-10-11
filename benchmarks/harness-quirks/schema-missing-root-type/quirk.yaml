@@ -1,0 +1,23 @@
+id: schema-missing-root-type
+backlog_id: Q29
+title: One tool's inputSchema lacks a root type
+question: Does a tool whose inputSchema has no root `type` (a lenient-server habit) take down its valid sibling tools?
+category: schema-acceptance
+spec: "MCP tools/list: inputSchema SHOULD be a JSON Schema object with type object; clients are expected to be liberal in what they accept"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:ping with text='x'.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: ping
+  arguments: {text: x}
+error_strings:
+  - "not available in the deferred tools list"
+issues:
+  - https://github.com/anthropics/claude-code/issues/92900
+workaround: >-
+  Always emit `"type": "object"` at the root of every inputSchema (use
+  `{"type":"object","properties":{}}` for no-argument tools).
+workaround_verified: false

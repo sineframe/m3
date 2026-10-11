@@ -1,0 +1,26 @@
+id: args-int64-precision
+backlog_id: Q35
+title: Integer argument larger than 2^53
+question: Does a 64-bit integer argument reach the server as the exact JSON integer?
+category: argument-fidelity
+spec: "JSON Schema `integer` has no upper bound; JSON-RPC numbers are arbitrary precision (snowflake ids, database ids)"
+server: server.py
+prompt: >-
+  Use the MCP tools from the servers named control and quirk. Make exactly two tool calls, in this order.
+  1) Call control:echo with text='ok'.
+  2) Call quirk:get_record with id=1234567890123456789.
+  Then reply with one line: 'done', or the name of any tool you could not find.
+expectation:
+  tool: get_record
+  arguments: {id: 1234567890123456789}
+error_strings:
+  - "id must be an integer"
+  - "no record with id"
+# No public issue found. Evidence: Codex code mode (default for gpt-5.6-sol) passes MCP
+# arguments through a V8 isolate, so numbers become IEEE doubles and BigInt cannot be serialized
+# (investigation/codex/logs/mock-bigint-0.162.0.*).
+issues: []
+workaround: >-
+  Declare 64-bit ids as `type: string` in the tool's inputSchema and parse them
+  in the handler `[INFERENCE]`.
+workaround_verified: false

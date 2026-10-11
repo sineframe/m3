@@ -1,0 +1,22 @@
+id: lifecycle-tools-list-changed
+backlog_id: Q27
+title: Newly added tool after a tool-list change notification
+question: Does a new tool become callable after the server changes its catalog?
+category: lifecycle
+spec: MCP tool-list changes use notifications or modern subscriptions according to the negotiated protocol.
+server: server.py
+synthetic_nonce: true
+prompt: >-
+  Use only the control and quirk MCP servers. First call control:echo with text='ok'.
+  Then call quirk:arm. After the server changes its tool catalog, discover and call
+  quirk:unlock with the nonce returned by arm. Report the exact unlock marker.
+expectation:
+  tool: unlock
+  arguments: {nonce: "{nonce}"}
+  status: success
+  markers: ["unlocked:{nonce}"]
+extra_tools:
+  - tool: arm
+    arguments: {}
+issues:
+  - https://github.com/openai/codex/issues/33266

@@ -95,7 +95,9 @@ def _credential_refs(
     kind: str, model: str, mapping: _Mapping[str, str] | None
 ) -> dict[str, _SecretReference]:
     values: dict[str, str] = {}
-    if kind in {"claude_code", "codex", "opencode", "pi"}:
+    # An explicit mapping is the complete set: forwarding the harness default
+    # alongside it can shadow the mapped credential in the child process.
+    if mapping is None and kind in {"claude_code", "codex", "opencode", "pi"}:
         source = (
             "ANTHROPIC_API_KEY"
             if kind == "claude_code"

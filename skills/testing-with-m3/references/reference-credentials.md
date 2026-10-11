@@ -26,7 +26,7 @@ In `kit.agents(...)`, set `credential_env={"OPENAI_API_KEY": "MY_OPENAI_KEY"}` t
 
 When constructing `Codex`, `Pi`, `ClaudeCode`, or `OpenCode` directly, use `credential_references`. Its keys are agent environment variable names; its values are `SecretReference` objects naming the credential source.
 
-M3 also selects non-empty standard credential variables for the chosen harness and provider, such as `OPENAI_API_KEY` for Codex and `ANTHROPIC_API_KEY` for Claude Code. An explicit `credential_env` entry overrides the default for that target variable.
+M3 also selects non-empty standard credential variables for the chosen harness and provider, such as `OPENAI_API_KEY` for Codex and `ANTHROPIC_API_KEY` for Claude Code. These defaults apply only when the selection has no `credential_env`. An explicit `credential_env` is the complete set of credentials the agent receives, so `credential_env={"CLAUDE_CODE_OAUTH_TOKEN": "MY_CLAUDE_TOKEN"}` passes only `CLAUDE_CODE_OAUTH_TOKEN`, even when `ANTHROPIC_API_KEY` is set in the parent. Set `credential_env={}` to forward no credentials at all; with Codex, this lets the agent reuse the host's ChatGPT login even when `OPENAI_API_KEY` is set.
 
 For OpenCode and Pi, M3 selects a credential based on the model prefix:
 `opencode/` uses `OPENCODE_API_KEY`, `openai/` uses `OPENAI_API_KEY`, and
@@ -36,6 +36,13 @@ uses `PI_CODING_AGENT_DIR`.
 With `kit.agents(...)`, a missing mapped source raises `ValueError` when you start the run, before launching the agent. A present empty source passes that check, but launch requires a non-empty value and otherwise raises `HarnessStartupError`.
 
 Codex, Claude Code, Pi, and OpenCode isolate their child environments. Codex may copy a host authentication file only when there are no explicit credential references. The other native adapters use selected references and do not copy host login files into their temporary homes.
+
+Codex runs with either an API key or a ChatGPT subscription login:
+
+- **API key.** The Codex App Server does not read `OPENAI_API_KEY` or `CODEX_API_KEY` from its environment. When either target is mapped, M3 passes the key to Codex with the App Server's `account/login/start` request before starting the thread, preferring `CODEX_API_KEY` when both are mapped. The generated configuration sets `cli_auth_credentials_store = "ephemeral"`, so Codex keeps the key in memory instead of writing `auth.json`. Codex does not validate the key at that point: an invalid key fails the first turn with `Codex turn failed: model provider rejected the credentials (HTTP 401)`.
+- **Subscription.** With no credential references, M3 copies the host's `auth.json` (from `CODEX_HOME`, default `~/.codex`) into the temporary Codex home.
+
+Before the first turn, M3 asks Codex whether it has an account. When it has neither a key nor a login, startup fails with `Codex has no login` instead of the first turn failing with HTTP 401.
 
 Agent and judge mappings reject the exact name `M3_ACCESS_TOKEN` as a target or environment source. This validation does not detect the same token copied into another variable.
 
@@ -51,4 +58,4 @@ An ACP manifest `env` value must be an exact `${ENV_NAME}` reference. M3 resolve
 
 ## M3 upload
 
-`M3_ACCESS_TOKEN` is the environment variable for an access token used to upload an M3 run. It has the form `m3pat_<22 base64url characters>.<43 base64url characters>`; an explicitly empty or malformed token is a CLI configuration error. `m3 test` and `m3 ci test` remove the token from the pytest child environment, whether or not `--upload` is present. When this variable is present, its value takes precedence over the saved CLI credential, including when the value is empty. If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires the environment variable and never reads the interactive operating-system credential store. Without one of those markers, commands can fall back to the saved CLI credential when the variable is absent, including `m3 test --upload` and `m3 ci test`.
+`M3_ACCESS_TOKEN` is the environment variable for an access token used to upload an M3 run. It has the form `m3pat_<22 base64url characters>.<43 base64url characters>`; an explicitly empty value in the process environment or a malformed token is a CLI configuration error. A blank `M3_ACCESS_TOKEN=` in a file loaded with `--env-file` is skipped and treated as unset; other blank keys are preserved as empty strings. `m3 test` and `m3 ci test` remove the token from the pytest child environment, whether or not `--upload` is present. When this variable is present, its value takes precedence over the saved CLI credential, including when the process environment value is empty. If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires the environment variable and never reads the interactive operating-system credential store. Without one of those markers, commands can fall back to the saved CLI credential when the variable is absent, including `m3 test --upload` and `m3 ci test`.

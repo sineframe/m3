@@ -468,6 +468,7 @@ class AsyncExecutionHandle:
         self._direct_result: DirectResult | None = None
         self._agent_outcome: ExecutionOutcome | None = None
         self._agent_error: ErrorInfo | None = None
+        self._agent_cleanup_failed = False
         self._result: ExecutionResult | None = None
         self._state_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
@@ -961,7 +962,8 @@ class AsyncExecutionHandle:
                 else self._agent_error
                 or (_error_info(failure) if failure is not None else None)
             )
-            if workspace_cleanup_failed and result_error is None:
+            cleanup_failed = workspace_cleanup_failed or self._agent_cleanup_failed
+            if cleanup_failed and result_error is None:
                 result_error = ErrorInfo(
                     code=ErrorCode.CLEANUP_FAILED,
                     message="execution cleanup failed",
@@ -970,7 +972,7 @@ class AsyncExecutionHandle:
             try:
                 trace = self._finalize(
                     outcome,
-                    cleanup_succeeded=not workspace_cleanup_failed,
+                    cleanup_succeeded=not cleanup_failed,
                     limitations=trace_limitations,
                     error=result_error,
                 )
@@ -1329,6 +1331,7 @@ class AsyncExecutionHandle:
             self._agent_error = _error_info(exc)
             raise
         finally:
+            self._agent_cleanup_failed = session._cleanup_failed
             if managed_runtime is not None:
                 try:
                     await managed_runtime.cancel(

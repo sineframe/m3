@@ -262,6 +262,41 @@ async def test_observer_connect_failure_does_not_block_real_stdio_child(
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
+async def test_stdio_proxy_kills_child_that_stays_alive_after_eof(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path / "capture")
+    pid_file = tmp_path / "child.pid"
+    child_code = (
+        "import os,threading,time; from pathlib import Path; "
+        "Path(os.environ['STUCK_PID_FILE']).write_text(str(os.getpid())); "
+        "threading.Thread(target=lambda: time.sleep(10**9), daemon=False).start()"
+    )
+    instrumented = (
+        await manager.instrument(
+            (
+                _stdio_config(
+                    key="stuck",
+                    connection_id="stdio-stuck",
+                    command=sys.executable,
+                    args=("-c", child_code),
+                    environment={"STUCK_PID_FILE": str(pid_file)},
+                ),
+            )
+        )
+    )[0]
+
+    try:
+        await _run_stdio_proxy(instrumented, environment={})
+        pid = int(pid_file.read_text(encoding="utf-8"))
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_codex_stdio_defaults_reach_child_and_known_http_alias_is_ignored(
     tmp_path: Path,
 ) -> None:

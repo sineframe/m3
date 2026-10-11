@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -106,6 +109,40 @@ def test_untrusted_private_endpoint_is_rejected_without_network_access() -> None
     snapshot = manager.preflight()
     assert not snapshot.records[0].available
     assert snapshot.records[0].reason == "preflight_failed"
+
+
+@pytest.mark.asyncio
+async def test_close_cancellation_keeps_endpoint_cleanup_owned() -> None:
+    manager = ServerGroupManager(
+        (ServerBinding(server=StdioServer(name="fixture", command="fixture")),)
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    close_calls = 0
+
+    async def close_endpoint() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        started.set()
+        await release.wait()
+
+    manager._endpoints["fixture"] = SimpleNamespace(close=close_endpoint)  # type: ignore[assignment]
+    first = asyncio.create_task(manager.close())
+    await started.wait()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    retry = asyncio.create_task(manager.close())
+    await asyncio.sleep(0)
+    assert close_calls == 1
+    assert not manager._closed
+
+    release.set()
+    await retry
+    assert close_calls == 1
+    assert manager._closed
+    assert not manager._endpoints
 
 
 @pytest.mark.asyncio

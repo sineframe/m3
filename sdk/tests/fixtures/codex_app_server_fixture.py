@@ -24,6 +24,13 @@ if "--help" in sys.argv:
 thread = "fixture-thread"
 turn = 0
 approval = os.environ.get("M3_CODEX_FIXTURE_APPROVAL") == "1"
+# "none" starts logged out, like a fresh CODEX_HOME without auth.json.
+account = (
+    None
+    if os.environ.get("M3_CODEX_FIXTURE_ACCOUNT") == "none"
+    else {"type": "chatgpt", "email": "fixture@example.com", "planType": "plus"}
+)
+reject_login = os.environ.get("M3_CODEX_FIXTURE_REJECT_LOGIN") == "1"
 for line in sys.stdin:
     try:
         frame = json.loads(line)
@@ -35,6 +42,29 @@ for line in sys.stdin:
         print(
             json.dumps(
                 {"jsonrpc": "2.0", "id": ident, "result": {"protocolVersion": 1}}
+            ),
+            flush=True,
+        )
+    elif method == "account/login/start":
+        params = frame.get("params", {})
+        if reject_login or params.get("type") != "apiKey" or not params.get("apiKey"):
+            reply = {
+                "jsonrpc": "2.0",
+                "id": ident,
+                "error": {"code": -32600, "message": "login rejected"},
+            }
+        else:
+            account = {"type": "apiKey"}
+            reply = {"jsonrpc": "2.0", "id": ident, "result": {"type": "apiKey"}}
+        print(json.dumps(reply), flush=True)
+    elif method == "account/read":
+        print(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": ident,
+                    "result": {"account": account, "requiresOpenaiAuth": True},
+                }
             ),
             flush=True,
         )
