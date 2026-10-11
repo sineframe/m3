@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import socket
+import struct
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -178,3 +180,235 @@ def test_invalid_deadlines_are_rejected(
     with pytest.raises(LiteralTransferError, match="finite and positive"):
         LiteralBootstrapBroker(store, private_directory, timeout_seconds=timeout)
     store.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX IPC backend")
+def test_late_bundle_is_never_published_after_parse_deadline(
+    private_directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import m3._literal_store as literals
+
+    store = RunLiteralStore("run")
+    handle = store.freeze("frozen")
+    broker = LiteralBootstrapBroker(store, private_directory)
+    original_receive = literals._receive
+
+    def delayed_receive(channel: socket.socket, deadline: float) -> dict[str, object]:
+        result = original_receive(channel, deadline)
+        if "values" in result:
+            time.sleep(0.1)
+        return result
+
+    monkeypatch.setattr(literals, "_receive", delayed_receive)
+    try:
+        with pytest.raises(LiteralTransferError, match="deadline"):
+            bootstrap_worker(broker.issue([handle]), timeout_seconds=0.05)
+    finally:
+        broker.close()
+        store.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX IPC backend")
+def test_pending_capsule_writer_cannot_hold_teardown_or_publish_after_close(
+    private_directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import m3._literal_store as literals
+
+    store = RunLiteralStore("run")
+    handle = store.freeze("private-literal")
+    broker = LiteralBootstrapBroker(store, private_directory)
+    writing = threading.Event()
+    release = threading.Event()
+    original_dump = literals.json.dump
+    failures: list[BaseException] = []
+
+    def stalled_dump(*args: object, **kwargs: object) -> None:
+        writing.set()
+        assert release.wait(5)
+        original_dump(*args, **kwargs)
+
+    def issue() -> None:
+        try:
+            broker.issue([handle])
+        except BaseException as error:
+            failures.append(error)
+
+    monkeypatch.setattr(literals.json, "dump", stalled_dump)
+    writer = threading.Thread(target=issue)
+    writer.start()
+    try:
+        assert writing.wait(5)
+        start = time.monotonic()
+        broker.close()
+        assert time.monotonic() - start < 1.5
+        assert not broker.cleanup_complete
+        assert not broker._capabilities
+    finally:
+        release.set()
+        writer.join(timeout=5)
+        broker.close()
+        store.close()
+    assert not writer.is_alive()
+    assert len(failures) == 1
+    assert isinstance(failures[0], LiteralTransferError)
+    assert "private-literal" not in str(failures[0])
+    assert broker.cleanup_complete
+    assert list(private_directory.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX IPC backend")
+def test_stalled_client_does_not_block_concurrent_valid_workers(
+    private_directory: Path,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = RunLiteralStore("run")
+    handle = store.freeze("frozen-value")
+    broker = LiteralBootstrapBroker(store, private_directory, timeout_seconds=2)
+    descriptors = [broker.issue([handle]) for _ in range(12)]
+    silent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    silent.connect(descriptors[0].endpoint)
+    try:
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futures = [
+                executor.submit(bootstrap_worker, descriptor, timeout_seconds=1)
+                for descriptor in descriptors
+            ]
+            workers = [future.result(timeout=3) for future in futures]
+        assert all(worker.resolve(handle) == "frozen-value" for worker in workers)
+        for worker in workers:
+            worker.close()
+    finally:
+        silent.close()
+        broker.close()
+        store.close()
+    assert broker.cleanup_complete
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX IPC backend")
+@pytest.mark.parametrize("allocation", ["thread", "socket"])
+def test_constructor_rolls_back_all_owned_resources(
+    private_directory: Path, monkeypatch: pytest.MonkeyPatch, allocation: str
+) -> None:
+    import m3._literal_store as literals
+
+    store = RunLiteralStore("run")
+    owned_roots: list[Path] = []
+    original_mkdtemp = literals.tempfile.mkdtemp
+
+    def record_root(*args: object, **kwargs: object) -> str:
+        root = original_mkdtemp(*args, **kwargs)
+        owned_roots.append(Path(root))
+        return root
+
+    def fail_start(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("resource failure")
+
+    def fail_socket(*args: object, **kwargs: object) -> None:
+        raise OSError("resource failure")
+
+    monkeypatch.setattr(literals.tempfile, "mkdtemp", record_root)
+    if allocation == "thread":
+        monkeypatch.setattr(literals.threading.Thread, "start", fail_start)
+    else:
+        monkeypatch.setattr(literals.socket, "socket", fail_socket)
+    try:
+        with pytest.raises(LiteralTransferError, match="listener unavailable"):
+            LiteralBootstrapBroker(store, private_directory)
+        assert all(not root.exists() for root in owned_roots)
+        assert not list(private_directory.iterdir())
+    finally:
+        store.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX IPC backend")
+@pytest.mark.parametrize("fault", ["version", "duplicate", "oversized", "partial"])
+def test_malformed_requests_do_not_break_other_worker_bootstraps(
+    private_directory: Path, fault: str
+) -> None:
+    store = RunLiteralStore("run")
+    handle = store.freeze("private-literal")
+    broker = LiteralBootstrapBroker(store, private_directory, timeout_seconds=0.2)
+    descriptor = broker.issue([handle])
+    request = json.loads(Path(descriptor.capsule).read_text(encoding="utf-8"))
+    if fault == "version":
+        request["version"] = True
+        raw = json.dumps(request).encode()
+    elif fault == "duplicate":
+        raw = b'{"version":1,"version":1}'
+    else:
+        raw = b"{"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(1)
+            client.connect(descriptor.endpoint)
+            size = 9 * 1024 * 1024 if fault == "oversized" else len(raw)
+            if fault == "partial":
+                size += 100
+            client.sendall(struct.pack("!I", size) + raw)
+            client.shutdown(socket.SHUT_WR)
+            assert client.recv(4096) == b""
+        worker = bootstrap_worker(descriptor)
+        assert worker.resolve(handle) == "private-literal"
+        worker.close()
+    finally:
+        broker.close()
+        store.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX IPC backend")
+@pytest.mark.parametrize("fault", ["partial", "wrong_run", "wrong_manifest", "stall"])
+def test_worker_rejects_partial_or_foreign_bundles_atomically(
+    private_directory: Path, fault: str
+) -> None:
+    import m3._literal_store as literals
+
+    store = RunLiteralStore("run")
+    handle = store.freeze("private-literal")
+    broker = LiteralBootstrapBroker(store, private_directory)
+    descriptor = broker.issue([handle])
+    fake_endpoint = Path(descriptor.endpoint).parent / "fake"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(fake_endpoint))
+    listener.listen()
+    listener.settimeout(2)
+
+    def peer() -> None:
+        try:
+            channel, _ = listener.accept()
+            with channel:
+                literals._receive(channel, time.monotonic() + 2)
+                response = {
+                    "version": 1,
+                    "run_id": "other" if fault == "wrong_run" else descriptor.run_id,
+                    "generation": descriptor.generation,
+                    "values": {handle.slot: "private-literal"},
+                }
+                if fault == "wrong_manifest":
+                    response["values"] = {"foreign": "private-literal"}
+                encoded = json.dumps(response).encode()
+                channel.sendall(struct.pack("!I", len(encoded)))
+                if fault == "partial":
+                    channel.sendall(encoded[: len(encoded) // 2])
+                elif fault == "stall":
+                    # A stalled body cannot reset the original deadline.
+                    time.sleep(0.25)
+                else:
+                    channel.sendall(encoded)
+        finally:
+            listener.close()
+
+    server = threading.Thread(target=peer)
+    server.start()
+    try:
+        with pytest.raises(LiteralTransferError) as caught:
+            bootstrap_worker(
+                replace(descriptor, endpoint=str(fake_endpoint)), timeout_seconds=0.15
+            )
+        assert "private-literal" not in str(caught.value)
+    finally:
+        server.join(timeout=3)
+        fake_endpoint.unlink(missing_ok=True)
+        broker.close()
+        store.close()
+    assert not server.is_alive()

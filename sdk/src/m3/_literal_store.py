@@ -250,32 +250,54 @@ class LiteralBootstrapBroker:
         self._store = store
         self._directory = directory
         self._timeout = timeout_seconds
-        # Unix socket paths have a small platform-dependent limit. Project or
-        # pytest roots can exceed it, so use a separately owned short root.
-        self._socket_directory = Path(tempfile.mkdtemp(prefix="m3-lit-"))
-        self._endpoint = self._socket_directory / "ipc"
         self._capabilities: dict[str, Mapping[str, str]] = {}
         self._capsules: set[Path] = set()
+        self._pending_capsules: set[Path] = set()
         self._lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
         self._finished = False
         self._closed = threading.Event()
-        self._active: socket.socket | None = None
-        self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._transfers: dict[threading.Thread, socket.socket] = {}
         try:
+            self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except OSError:
+            raise LiteralTransferError(
+                "worker bootstrap listener unavailable"
+            ) from None
+        socket_directory: Path | None = None
+        thread: threading.Thread | None = None
+        try:
+            # Unix socket paths have a small platform-dependent limit. Project
+            # roots can exceed it, so use a separately owned short root.
+            socket_directory = Path(tempfile.mkdtemp(prefix="m3-lit-"))
+            self._socket_directory = socket_directory
+            self._endpoint = socket_directory / "ipc"
             self._listener.bind(str(self._endpoint))
             self._endpoint.chmod(0o600)
             self._listener.listen()
             self._listener.settimeout(0.1)
-        except OSError:
+            thread = threading.Thread(target=self._serve, daemon=True)
+            self._thread = thread
+            thread.start()
+        except BaseException as error:
+            self._closed.set()
             self._listener.close()
-            self._endpoint.unlink(missing_ok=True)
-            self._socket_directory.rmdir()
-            raise LiteralTransferError(
-                "worker bootstrap listener unavailable"
-            ) from None
-        self._thread = threading.Thread(target=self._serve, daemon=True)
-        self._thread.start()
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1)
+            if socket_directory is not None:
+                (socket_directory / "ipc").unlink(missing_ok=True)
+                socket_directory.rmdir()
+            if isinstance(error, (OSError, RuntimeError)):
+                raise LiteralTransferError(
+                    "worker bootstrap listener unavailable"
+                ) from None
+            raise
+
+    @property
+    def cleanup_complete(self) -> bool:
+        """Registry owners retain values until pending owned writes settle."""
+        with self._lock:
+            return self._finished and not self._pending_capsules and not self._transfers
 
     def issue(self, handles: Sequence[LiteralHandle]) -> WorkerBootstrap:
         values = self._store.export(handles)
@@ -290,25 +312,35 @@ class LiteralBootstrapBroker:
             raise LiteralTransferError("worker bootstrap bundle too large")
         capability = secrets.token_hex(32)
         capsule = self._directory / f"worker-{secrets.token_hex(16)}.json"
+        payload = {
+            "version": _VERSION,
+            "capability": capability,
+            "run_id": self._store.run_id,
+            "generation": self._store.generation,
+            "slots": list(values),
+        }
         with self._lock:
             if self._closed.is_set():
                 raise LiteralTransferError("worker bootstrap broker closed")
-            payload = {
-                "version": _VERSION,
-                "capability": capability,
-                "run_id": self._store.run_id,
-                "generation": self._store.generation,
-                "slots": list(values),
-            }
+            self._pending_capsules.add(capsule)
+        published = False
+        try:
+            # A filesystem wait must not hold the lock used to fence/revoke
+            # the broker. Pending writers retain their private path ownership.
             fd = os.open(capsule, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(payload, stream, ensure_ascii=True)
-            except BaseException:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, ensure_ascii=True)
+            with self._lock:
+                if self._closed.is_set():
+                    raise LiteralTransferError("worker bootstrap broker closed")
+                self._capabilities[capability] = values
+                self._capsules.add(capsule)
+                published = True
+        finally:
+            if not published:
                 capsule.unlink(missing_ok=True)
-                raise
-            self._capabilities[capability] = values
-            self._capsules.add(capsule)
+            with self._lock:
+                self._pending_capsules.discard(capsule)
         return WorkerBootstrap(
             str(self._endpoint),
             str(capsule),
@@ -325,20 +357,36 @@ class LiteralBootstrapBroker:
                 continue
             except OSError:
                 return
-            with channel:
-                with self._lock:
-                    if self._closed.is_set():
-                        return
-                    self._active = channel
+            with self._lock:
+                if self._closed.is_set():
+                    channel.close()
+                    return
+                # Bounded concurrency isolates slow clients without an
+                # unbounded thread/8-MiB-frame allocation surface.
+                if len(self._transfers) >= 64:
+                    channel.close()
+                    continue
+                thread = threading.Thread(
+                    target=self._transfer_owned, args=(channel,), daemon=True
+                )
+                self._transfers[thread] = channel
                 try:
-                    self._transfer(channel)
-                except (LiteralTransferError, OSError, ValueError, TypeError):
-                    # Neither invalid requests nor secret-bearing exceptions
-                    # cross an observation boundary.
-                    pass
-                finally:
-                    with self._lock:
-                        self._active = None
+                    thread.start()
+                except RuntimeError:
+                    self._transfers.pop(thread)
+                    channel.close()
+
+    def _transfer_owned(self, channel: socket.socket) -> None:
+        with channel:
+            try:
+                self._transfer(channel)
+            except (LiteralTransferError, OSError, ValueError, TypeError):
+                # Neither invalid requests nor secret-bearing exceptions
+                # cross an observation boundary.
+                pass
+            finally:
+                with self._lock:
+                    self._transfers.pop(threading.current_thread(), None)
 
     def _transfer(self, channel: socket.socket) -> None:
         deadline = _deadline(self._timeout)
@@ -380,20 +428,26 @@ class LiteralBootstrapBroker:
             self._closed.set()
             self._listener.close()
             with self._lock:
-                if self._active is not None:
+                transfers = tuple(self._transfers.items())
+                for _, channel in transfers:
                     try:
-                        self._active.shutdown(socket.SHUT_RDWR)
+                        channel.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
-            self._thread.join(timeout=1)
-            if self._thread.is_alive():
+            deadline = time.monotonic() + 1
+            for thread in (self._thread, *(thread for thread, _ in transfers)):
+                thread.join(timeout=max(0, deadline - time.monotonic()))
+            if self._thread.is_alive() or any(
+                thread.is_alive() for thread, _ in transfers
+            ):
                 # Keep resources owned rather than deleting a live broker's paths.
                 raise LiteralTransferError("worker bootstrap broker cleanup incomplete")
             with self._lock:
                 self._capabilities.clear()
-                for capsule in self._capsules:
-                    capsule.unlink(missing_ok=True)
+                capsules = tuple(self._capsules)
                 self._capsules.clear()
+            for capsule in capsules:
+                capsule.unlink(missing_ok=True)
             self._endpoint.unlink(missing_ok=True)
             self._socket_directory.rmdir()
             self._finished = True
@@ -439,8 +493,15 @@ def bootstrap_worker(
             or not all(isinstance(value, str) for value in values.values())
         ):
             raise LiteralTransferError("worker bootstrap manifest mismatch")
-        return RunLiteralStore._from_bundle(
+        _remaining(deadline)
+        store = RunLiteralStore._from_bundle(
             descriptor.run_id, descriptor.generation, values
         )
+        try:
+            _remaining(deadline)
+        except LiteralTransferError:
+            store.close()
+            raise
+        return store
     except (OSError, UnicodeError, ValueError):
         raise LiteralTransferError("worker bootstrap unavailable") from None
