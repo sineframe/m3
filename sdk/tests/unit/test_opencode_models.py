@@ -15,7 +15,7 @@ import pytest
 from m3.runtime.core import RuntimeManager, RuntimeValidationError, prune_cache
 from m3.runtime.opencode_models import models_directory, prepare_models
 
-CATALOG = b'{"opencode":{"models":{"fixture":{"id":"fixture"}}}}'
+CATALOG = (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
 
 
 def test_snapshot_is_frozen_and_independent_of_runtime_pruning(
@@ -55,7 +55,7 @@ def test_explicit_catalog_is_copied_without_network_and_frozen(
     assert prepare_models(tmp_path / "run", str(source)) == (snapshot, digest)
 
 
-@pytest.mark.parametrize("raw", (b"not json", b"[]", b"{}"))
+@pytest.mark.parametrize("raw", (b"not json", b"[]", b"{}", b'{"error":"unavailable"}'))
 def test_invalid_download_is_not_published_and_retry_can_succeed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: bytes
 ) -> None:
@@ -68,6 +68,31 @@ def test_invalid_download_is_not_published_and_retry_can_succeed(
     assert prepare_models(tmp_path)[0].read_bytes() == CATALOG
 
 
+@pytest.mark.parametrize("field", ("env", "models", "model", "limit"))
+def test_invalid_provider_or_model_is_rejected_and_corrected_source_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    catalog = json.loads(CATALOG)
+    provider = catalog["opencode"]
+    if field == "env":
+        del provider["env"]
+    elif field == "models":
+        provider["models"] = []
+    elif field == "model":
+        provider["models"]["fixture"] = "unavailable"
+    else:
+        del provider["models"]["fixture"]["limit"]
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(catalog))
+    monkeypatch.setattr(RuntimeManager, "_download", lambda *_: pytest.fail("network"))
+    directory = tmp_path / "run"
+    with pytest.raises(RuntimeValidationError, match="OpenCode model catalog"):
+        prepare_models(directory, str(source))
+    assert not (directory / "opencode-models.json").exists()
+    source.write_bytes(CATALOG)
+    assert prepare_models(directory, str(source))[0].read_bytes() == CATALOG
+
+
 def test_failed_download_does_not_publish_a_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -78,6 +103,35 @@ def test_failed_download_does_not_publish_a_snapshot(
     with pytest.raises(RuntimeValidationError, match="catalog download failed"):
         prepare_models(tmp_path)
     assert not (tmp_path / "opencode-models.json").exists()
+
+
+def test_valid_catalog_can_omit_temperature_and_preserves_extra_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog = json.loads(CATALOG)
+    model = catalog["opencode"]["models"]["fixture"]
+    del model["temperature"]
+    model["cost"] = {"input": 0.1, "output": 0.2}
+    raw = json.dumps(catalog).encode()
+    monkeypatch.setattr(RuntimeManager, "_download", lambda *_: raw)
+    assert prepare_models(tmp_path)[0].read_bytes() == raw
+
+
+def test_invalid_saved_catalog_can_be_replaced_by_a_corrected_explicit_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = tmp_path / "opencode-models.json"
+    snapshot.write_bytes(b'{"error":"unavailable"}')
+    monkeypatch.setattr(RuntimeManager, "_download", lambda *_: pytest.fail("network"))
+    with pytest.raises(RuntimeValidationError, match="invalid provider or model"):
+        prepare_models(tmp_path)
+    source = tmp_path / "corrected.json"
+    source.write_bytes(CATALOG)
+    assert prepare_models(tmp_path, str(source)) == (
+        snapshot.resolve(),
+        hashlib.sha256(CATALOG).hexdigest(),
+    )
+    assert snapshot.read_bytes() == CATALOG
 
 
 @pytest.mark.process_lifecycle

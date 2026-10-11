@@ -103,7 +103,7 @@ async def test_managed_opencode_prepares_catalog_before_open_and_records_digest(
 ) -> None:
     from m3.runtime.core import RuntimeManager
 
-    raw = b'{"opencode":{"models":{"fixture":{}}}}'
+    raw = (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
     downloads: list[str] = []
 
     def download(url: str, kind: str) -> bytes:

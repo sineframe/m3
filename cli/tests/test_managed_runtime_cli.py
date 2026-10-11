@@ -18,7 +18,13 @@ def test_opencode_catalog_is_prepared_before_workers_and_retained_with_results(
 ) -> None:
     from m3.runtime.core import RuntimeManager
 
-    raw = b'{"opencode":{"models":{"fixture":{}}}}'
+    raw = (
+        Path(__file__).parents[2]
+        / "sdk"
+        / "tests"
+        / "fixtures"
+        / "opencode_models.json"
+    ).read_bytes()
     downloads: list[str] = []
 
     def download(url: str, kind: str) -> bytes:

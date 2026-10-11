@@ -27,7 +27,7 @@ async def test_catalog_snapshot_survives_persistent_kit_close_and_is_reused_on_r
     from m3.runtime.opencode_models import prepare_models
     from m3.storage import SQLiteExecutionStore
 
-    raw = b'{"opencode":{"models":{"fixture":{}}}}'
+    raw = (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
     downloads: list[str] = []
 
     def download(url: str, kind: str) -> bytes:

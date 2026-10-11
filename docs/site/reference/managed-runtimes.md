@@ -145,8 +145,10 @@ directory. The `harness.runtime_resolved` event records
 `models_catalog_sha256`. Runtime cache pruning does not remove these snapshots.
 
 Set `OPENCODE_MODELS_PATH` to a saved catalog for offline preparation. M3 copies
-and validates it instead of downloading from `models.opencode.ai`; an existing
-run snapshot takes precedence. Preparation failures stop OpenCode startup.
+and validates its provider/model structure instead of downloading from
+`models.opencode.ai`; an existing valid run snapshot takes precedence. An invalid
+saved snapshot can be replaced with a corrected explicit source. Preparation
+failures stop OpenCode startup.
 This removes per-session catalog downloads; OpenCode can still perform its
 independent npm dependency installation.
 
