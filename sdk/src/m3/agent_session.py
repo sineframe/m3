@@ -397,6 +397,7 @@ class AsyncAgentSession:
         harness_cache_dir: str | None = None,
         runtime_manager: Any = None,
         runtime_invocation_dir: str | Path | None = None,
+        runtime_models_dir: str | Path | None = None,
         runtime_project_root: str | Path | None = None,
         managed_input_runtime: ManagedInputRuntime | None = None,
     ) -> None:
@@ -420,6 +421,7 @@ class AsyncAgentSession:
         self._harness_cache_dir = harness_cache_dir
         self._runtime_manager = runtime_manager
         self._runtime_invocation_dir = runtime_invocation_dir
+        self._runtime_models_dir = runtime_models_dir
         self._runtime_project_root = (
             Path(runtime_project_root).expanduser().resolve()
             if runtime_project_root is not None
@@ -1048,6 +1050,16 @@ class AsyncAgentSession:
             raise UnsupportedFeature(
                 "managed runtime requires a native harness adapter"
             )
+        from .harness.opencode import OpenCodeHarnessAdapter
+
+        opencode_adapter = (
+            self.adapter if isinstance(self.adapter, OpenCodeHarnessAdapter) else None
+        )
+        models_source = None
+        if opencode_adapter is not None:
+            models_source = opencode_adapter.environment.get(
+                "OPENCODE_MODELS_PATH"
+            ) or os.environ.get("OPENCODE_MODELS_PATH")
         manager = self._runtime_manager
         if manager is None:
             try:
@@ -1116,6 +1128,34 @@ class AsyncAgentSession:
         if isinstance(environment, Mapping) and hasattr(self.adapter, "environment"):
             self.adapter.environment = dict(environment)
         self._managed_runtime_result = result
+        models_digest = None
+        if opencode_adapter is not None:
+            from .harness.contracts import HarnessStartupError
+            from .runtime.core import RuntimeValidationError
+            from .runtime.opencode_models import models_directory, prepare_models
+
+            directory = (
+                self._runtime_models_dir
+                or os.environ.get("M3_RUNTIME_INVOCATION_DIR")
+                or self._runtime_invocation_dir
+            )
+            if directory is None:
+                directory = models_directory(
+                    self._runtime_project_root / ".m3" / "results.sqlite",
+                    self.spec.run_id.root
+                    if self.spec.run_id is not None
+                    else self._session_id.root,
+                )
+            try:
+                models_path, models_digest = await asyncio.to_thread(
+                    prepare_models, Path(directory), models_source
+                )
+            except (OSError, RuntimeValidationError):
+                raise HarnessStartupError(
+                    "OpenCode model catalog preparation failed"
+                ) from None
+            opencode_adapter.environment["OPENCODE_MODELS_PATH"] = str(models_path)
+            opencode_adapter.environment["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
         provenance = getattr(result, "provenance", {})
         resolved_version = (
             provenance.get("version") if isinstance(provenance, Mapping) else None
@@ -1155,6 +1195,11 @@ class AsyncAgentSession:
                     "immutable_release": immutable
                     if isinstance(immutable, bool)
                     else None,
+                    **(
+                        {"models_catalog_sha256": models_digest}
+                        if models_digest is not None
+                        else {}
+                    ),
                 },
                 phase=LifecyclePhase.STARTUP,
             )
@@ -2959,6 +3004,7 @@ class AsyncAgentSession:
             harness_cache_dir=self._harness_cache_dir,
             runtime_manager=self._runtime_manager,
             runtime_invocation_dir=self._runtime_invocation_dir,
+            runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,
         )
 

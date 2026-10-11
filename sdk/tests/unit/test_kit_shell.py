@@ -19,6 +19,42 @@ from m3.sync_api import ProbeKind, ProbeRequest
 from m3.types import CapabilityStatus
 
 
+@pytest.mark.asyncio
+async def test_catalog_snapshot_survives_persistent_kit_close_and_is_reused_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.runtime.core import RuntimeManager
+    from m3.runtime.opencode_models import prepare_models
+    from m3.storage import SQLiteExecutionStore
+
+    raw = (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
+    downloads: list[str] = []
+
+    def download(url: str, kind: str) -> bytes:
+        downloads.append(url)
+        return raw
+
+    monkeypatch.setattr(RuntimeManager, "_download", download)
+    store = SQLiteExecutionStore(tmp_path / "results.sqlite")
+    try:
+        for _ in range(2):
+            async with AsyncMCPTestKit(
+                store=store, run_id="same-run", embedded_worker=False
+            ) as kit:
+                snapshot, _ = prepare_models(kit._runtime_models_dir)
+            assert snapshot.read_bytes() == raw
+            assert not kit._runtime_invocation_dir.exists()
+        assert len(downloads) == 1
+        async with AsyncMCPTestKit(
+            store=store, run_id="next-run", embedded_worker=False
+        ) as kit:
+            next_snapshot, _ = prepare_models(kit._runtime_models_dir)
+        assert next_snapshot != snapshot
+        assert len(downloads) == 2
+    finally:
+        store.close()
+
+
 def test_sync_kit_resolves_config_and_baseline_without_harness_probes(
     tmp_path: Path,
 ) -> None:
