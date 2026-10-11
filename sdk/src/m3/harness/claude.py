@@ -14,7 +14,7 @@ import os
 import shutil
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from math import isfinite
 from pathlib import Path
@@ -35,6 +35,7 @@ from ..types import (
     RestrictiveToolPolicy,
     SecretReference,
     TextContent,
+    TurnOutcome,
     TurnResponse,
     UserMessage,
 )
@@ -344,6 +345,7 @@ class ClaudeCodeHarnessAdapter:
         self._reader_task: asyncio.Task[None] | None = None
         self._process_started_emitted = False
         self._cancel_requested = False
+        self._partial_capture: Callable[[], TurnEvidence] | None = None
 
     @property
     def name(self) -> str:
@@ -591,13 +593,21 @@ class ClaudeCodeHarnessAdapter:
         del metadata
         if self._session is None:
             raise HarnessAdapterError("Claude Code session is not open")
+        self._partial_capture = None
         result = await self._session.send(
             HarnessTurnRequest.from_message(message, timeout_seconds=timeout)
         )
+        self._partial_capture = None
         return AdapterTurn(
             response=result.response,
             error=result.error,
             terminal=result.status != "completed",
+            outcome={
+                "completed": TurnOutcome.COMPLETED,
+                "timed_out": TurnOutcome.TIMED_OUT,
+                "cancelled": TurnOutcome.CANCELLED,
+                "interrupted": TurnOutcome.INTERRUPTED,
+            }.get(result.status, TurnOutcome.FAILED),
             tool_calls=result.tool_calls,
             evidence=result.evidence,
             trace_limitations=result.trace_limitations,
@@ -632,6 +642,12 @@ class ClaudeCodeHarnessAdapter:
         self._cancel_requested = True
         if self._session is not None:
             await self._session.cancel()
+
+    def take_partial_turn_evidence(self) -> TurnEvidence | None:
+        """Return observations of a turn cancelled before it returned, once."""
+
+        capture, self._partial_capture = self._partial_capture, None
+        return capture() if capture is not None else None
 
     async def _send(
         self, request: HarnessTurnRequest, sequence: int
@@ -1026,6 +1042,21 @@ class ClaudeCodeHarnessAdapter:
             ):
                 limit()
             add_metadata()
+
+        def partial_evidence() -> TurnEvidence:
+            # The session deadline or an outer cancellation stopped this turn
+            # before it could return; keep what was already observed.
+            limit()
+            finalize()
+            return TurnEvidence(
+                sequence=sequence,
+                status="cancelled",
+                observations=tuple(observations),
+                limitations=tuple(limitations),
+                monotonic_origin=turn_started,
+            )
+
+        self._partial_capture = partial_evidence
 
         async def terminate_and_observe(phase: str = "exited") -> None:
             try:

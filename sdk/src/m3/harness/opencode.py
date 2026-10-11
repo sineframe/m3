@@ -39,6 +39,7 @@ from ..types import (
     RestrictiveToolPolicy,
     SecretReference,
     TextContent,
+    TurnOutcome,
     TurnResponse,
     UserMessage,
 )
@@ -643,6 +644,12 @@ class OpenCodeHarnessAdapter:
             response=result.response,
             error=result.error,
             terminal=result.status != "completed",
+            outcome={
+                "completed": TurnOutcome.COMPLETED,
+                "timed_out": TurnOutcome.TIMED_OUT,
+                "cancelled": TurnOutcome.CANCELLED,
+                "interrupted": TurnOutcome.INTERRUPTED,
+            }.get(result.status, TurnOutcome.FAILED),
             tool_calls=result.tool_calls,
             evidence=result.evidence,
             trace_limitations=result.trace_limitations,
