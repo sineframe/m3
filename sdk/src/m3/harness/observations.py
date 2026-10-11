@@ -124,6 +124,9 @@ class ReasoningChunkObservation(HarnessObservationBase):
 
 class ToolCallObservedObservation(HarnessObservationBase):
     kind: Literal["tool_call_observed"] = "tool_call_observed"
+    # Additive: legacy observations remain readable, without granting unknown
+    # calls the policy exemption reserved for decoded native protocol tools.
+    provenance: Literal["mcp", "harness_builtin", "unknown"] = "unknown"
     server: str | None = Field(default=None, min_length=1, max_length=256)
     tool: str = Field(min_length=1, max_length=256)
     arguments: JsonValue | None = None
