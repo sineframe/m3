@@ -506,6 +506,10 @@ class OpenCodeHarnessAdapter:
             harness = launch.spec.harness
             environment = _isolated_environment(root, self.environment)
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+            if isinstance(harness, OpenCode) and harness.runtime == "managed":
+                environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
+                environment["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
+                environment["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "1"
             runtime_secrets: set[str] = set()
             if isinstance(harness, OpenCode):
                 for variable, reference in harness.credential_references.items():

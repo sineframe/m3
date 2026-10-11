@@ -2049,6 +2049,44 @@ async def test_opencode_three_turns_retain_one_session_and_selected_model(
     await _assert_pid_dead(observed["child_pid"])
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", ("managed", "system"))
+async def test_opencode_managed_launch_disables_network_bootstrap(
+    tmp_path: Path, runtime: Literal["managed", "system"]
+) -> None:
+    marker = tmp_path / "bootstrap.json"
+    executable = str(
+        Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py"
+    )
+    flags = (
+        "OPENCODE_DISABLE_AUTOUPDATE",
+        "OPENCODE_DISABLE_DEFAULT_PLUGINS",
+        "OPENCODE_DISABLE_MODELS_FETCH",
+        "OPENCODE_DISABLE_LSP_DOWNLOAD",
+    )
+    base = _launch()
+    spec = base.spec.model_copy(
+        update={"harness": OpenCode(model="fixture", runtime=runtime)}
+    )
+    adapter = OpenCodeHarnessAdapter(
+        executable=executable,
+        environment={"M3_MARKER": str(marker), **dict.fromkeys(flags, "0")},
+    )
+    try:
+        await adapter.open(
+            HarnessLaunch(spec, base.servers, base.configurations, base.tool_policy)
+        )
+        observed = await _wait_for_marker(
+            marker, lambda value: value.get("session_post_count") == 1
+        )
+        assert observed["bootstrap_environment"] == {
+            flags[0]: "1",
+            **dict.fromkeys(flags[1:], "1" if runtime == "managed" else "0"),
+        }
+    finally:
+        await adapter.close()
+
+
 async def _open_opencode_fixture(
     marker: Path,
     *,
