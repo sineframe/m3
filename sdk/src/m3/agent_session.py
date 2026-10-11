@@ -2250,6 +2250,34 @@ class AsyncAgentSession:
                 )
             return
         self._record_turn_evidence(turn_id, evidence)
+        from .harness.observations import (
+            ToolCallObservedObservation,
+            ToolResultObservedObservation,
+            TurnEvidence,
+        )
+
+        if not isinstance(evidence, TurnEvidence):
+            return
+        # One outcome per call, with a result replacing its pending request.
+        # Unfinished calls count as failed, matching the trace summary. Wire
+        # capture still takes precedence in _activity_health().
+        outcomes: dict[str, bool] = {}
+        for observation in evidence.observations:
+            if isinstance(observation, ToolCallObservedObservation):
+                key = observation.call_id or observation.observation_id
+                outcomes[key] = observation.status == "success"
+            elif isinstance(observation, ToolResultObservedObservation):
+                key = observation.call_id or observation.observation_id
+                result = observation.result
+                outcomes[key] = (
+                    observation.status in {None, "success"}
+                    and observation.is_error is not True
+                    and observation.error_message is None
+                    and isinstance(result, Mapping)
+                    and result.get("isError", False) is False
+                    and result.get("is_error", False) is False
+                )
+        self._tool_outcomes.extend(outcomes.values())
 
     def _turn_result(self, turn_id: TurnId, raw: object) -> TurnResult:
         typed_evidence = getattr(raw, "turn_evidence", None)

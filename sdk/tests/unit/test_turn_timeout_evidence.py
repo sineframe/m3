@@ -20,11 +20,13 @@ from m3.harness.observations import (
     HarnessObservation,
     MessageChunkObservation,
     ToolCallObservedObservation,
+    ToolResultObservedObservation,
     TurnEvidence,
     UsageObservedObservation,
 )
 from m3.types import (
     ACPAgent,
+    ActivityHealth,
     ErrorCode,
     ErrorInfo,
     ExecutionOutcome,
@@ -75,6 +77,7 @@ class _SlowNative(NativeRPCAdapter):
     def __init__(self) -> None:
         super().__init__(executable="fixture")
         self._frames = list(FRAMES)
+        self.stalled = asyncio.Event()
 
     async def preflight(self, launch: Any) -> Any:
         return SimpleNamespace(ready=True)
@@ -91,6 +94,7 @@ class _SlowNative(NativeRPCAdapter):
         if self._frames:
             await asyncio.sleep(0.02)
             return self._frames.pop(0)
+        self.stalled.set()
         await asyncio.wait_for(asyncio.Event().wait(), timeout)
         raise AssertionError("unreachable")
 
@@ -124,6 +128,16 @@ class _SlowNative(NativeRPCAdapter):
                     tool=frame["tool"],
                     call_id=frame["call_id"],
                     arguments={"key": "x"},
+                )
+            )
+        elif frame["type"] == "tool_result":
+            observations.append(
+                ToolResultObservedObservation(
+                    **common,
+                    call_id=frame["call_id"],
+                    result={"content": [], "isError": frame["is_error"]},
+                    is_error=frame["is_error"],
+                    status="tool_error" if frame["is_error"] else "success",
                 )
             )
         else:
@@ -197,6 +211,51 @@ async def test_cancelled_turn_keeps_observations_seen_before_cancel() -> None:
 
     assert session.result.snapshot.outcome is ExecutionOutcome.CANCELLED
     _assert_partial_trace(session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True], ids=["timeout", "cancel"])
+@pytest.mark.parametrize(
+    ("tool_results", "expected"),
+    [
+        ((), ActivityHealth.NO_CALLS),
+        ((False,), ActivityHealth.ALL_SUCCEEDED),
+        ((True,), ActivityHealth.ALL_FAILED),
+        ((None,), ActivityHealth.ALL_FAILED),
+        ((False, True), ActivityHealth.MIXED),
+        ((False, None), ActivityHealth.MIXED),
+    ],
+    ids=["no_calls", "success", "error", "incomplete", "mixed", "unfinished"],
+)
+async def test_partial_tool_activity_health(
+    cancelled: bool,
+    tool_results: tuple[bool | None, ...],
+    expected: ActivityHealth,
+) -> None:
+    adapter = _SlowNative()
+    adapter._frames = []
+    for index, is_error in enumerate(tool_results):
+        call_id = f"call-{index}"
+        adapter._frames.append(
+            {"type": "tool", "server": "memory", "tool": "read", "call_id": call_id}
+        )
+        if is_error is not None:
+            adapter._frames.append(
+                {"type": "tool_result", "call_id": call_id, "is_error": is_error}
+            )
+    async with AsyncAgentSession(_spec(), adapter) as session:
+        if cancelled:
+            task = asyncio.create_task(session.send("do the task"))
+            await asyncio.wait_for(adapter.stalled.wait(), timeout=2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            await session.send("do the task", timeout=0.3)
+        assert session.result.activity_health is expected
+
+    assert session.result.activity_health is expected
+    assert session.result.trace_view.summary.activity_health is expected
 
 
 @pytest.mark.asyncio
