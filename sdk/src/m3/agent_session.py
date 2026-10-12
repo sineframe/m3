@@ -76,6 +76,9 @@ from .types import (
 from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 
 if TYPE_CHECKING:
+    from ._literal_store import RunLiteralStore
+    from .harness._native_auth import NativeAuthOperations
+    from .harness._private_policy import PrivateToolCalls
     from .harness.contracts import HarnessLaunch, HarnessSession
     from .harness.observations import TurnEvidence
     from .managed_runtime import ManagedInputRuntime
@@ -184,9 +187,15 @@ def _startup_failure_cause(error: BaseException) -> str:
     provider-controlled text, so only a fixed category is reported for it.
     """
 
+    from .harness._native_errors import NativeHarnessStartupError
     from .harness.contracts import HarnessAdapterError
     from .runtime.core import RuntimeErrorBase
 
+    if isinstance(error, NativeHarnessStartupError):
+        # Reserve space for the public startup prefix; ErrorInfo's complete
+        # message is bounded to 4096 characters. Native details retain their
+        # separately bounded diagnostic and truncation evidence.
+        return error.error.message[:4000]
     if isinstance(error, (HarnessAdapterError, UnsupportedFeature)):
         text = " ".join(str(error).split())
         if text:
@@ -232,6 +241,10 @@ def _terminal_turn_error(error: object) -> ErrorInfo | None:
     adapter details may hold nested provider payloads.
     """
 
+    from .harness._native_errors import NativeErrorInfo
+
+    if isinstance(error, NativeErrorInfo):
+        return error
     if not isinstance(error, ErrorInfo):
         return None
     cause = " ".join(error.message.split())[:_STARTUP_CAUSE_LIMIT]
@@ -326,6 +339,9 @@ class AdapterTurn:
     # Provider adapters may carry the typed observation envelope
     # without making this core state machine import provider modules.
     turn_evidence: TurnEvidence | None = None
+    _private_tool_calls: PrivateToolCalls | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
@@ -402,10 +418,16 @@ class AsyncAgentSession:
         runtime_project_root: str | Path | None = None,
         managed_input_runtime: ManagedInputRuntime | None = None,
         preparation_supervisor: PreparationSupervisor | None = None,
+        _literal_registry: RunLiteralStore | None = None,
+        _credential_deadline: float | None = None,
+        _native_auth_operations: NativeAuthOperations | None = None,
     ) -> None:
         self.spec = spec
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
+        self._literal_registry = _literal_registry
+        self._credential_deadline = _credential_deadline
+        self._native_auth_operations = _native_auth_operations
         needs_elicitation = (
             managed_input_runtime is not None or spec.elicitation is not None
         )
@@ -498,6 +520,9 @@ class AsyncAgentSession:
         self._workspace_capture: WorkspaceCapture | None = None
         self._workspace_artifacts: tuple[Any, ...] = ()
         self._capture_seen: dict[str, int] = {}
+        self._private_capture_seen: dict[str, int] = {}
+        self._private_capture_calls: PrivateToolCalls | None = None
+        self._captured_identity_invalid = False
         # A manager may be started more than once by lifecycle retries. Keep
         # transport lifecycle evidence one-per-connection in the trace.
         self._transport_connected: set[tuple[str, str]] = set()
@@ -678,6 +703,15 @@ class AsyncAgentSession:
                 if isinstance(exc, asyncio.CancelledError)
                 else _startup_failure_cause(exc)
             )
+            from .harness._native_errors import NativeHarnessStartupError
+
+            startup_details: dict[str, Any] | None = (
+                None if cause is None else {"cause": cause}
+            )
+            if isinstance(exc, NativeHarnessStartupError) and cause is not None:
+                startup_details = {**exc.error.details, "cause": cause}
+                if len(exc.error.message) > len(cause):
+                    startup_details["cause_truncated"] = True
             if outcome is ExecutionOutcome.CANCELLED:
                 code, message = ErrorCode.CANCELLED, "session startup cancelled"
             elif unsupported:
@@ -693,6 +727,7 @@ class AsyncAgentSession:
                         "code": "startup_failed",
                         "error_code": code.value,
                         "message": message,
+                        **({"details": startup_details} if startup_details else {}),
                     },
                     phase=LifecyclePhase.STARTUP,
                 )
@@ -700,7 +735,7 @@ class AsyncAgentSession:
                 outcome,
                 code,
                 message,
-                details=None if cause is None else {"cause": cause},
+                details=startup_details,
             )
             if cleanup_failure:
                 # Keep the terminal result and all unfinished owners visible
@@ -725,7 +760,7 @@ class AsyncAgentSession:
             # bounded cause is surfaced; the original exception is raised
             # outside this handler so provider-controlled text does not
             # survive as ``__context__``.
-            details = {"cause": cause}
+            details = startup_details or {"cause": cause}
             startup_error = (
                 UnsupportedFeature(
                     f"session startup unsupported: {cause}", details=details
@@ -802,6 +837,33 @@ class AsyncAgentSession:
         # it must complete (or be cancelled) before server startup, probes, or
         # provider open can produce side effects.
         await self._prepare_managed_runtime()
+        from ._native_settings import native_literal_inputs, requested_native_settings
+
+        configuration_reader = getattr(self._server_manager, "configurations", None)
+        native_configurations = (
+            tuple(configuration_reader()) if callable(configuration_reader) else ()
+        )
+        if requested_native_settings(self.spec) or any(
+            config.timeouts.model_dump() for config in native_configurations
+        ):
+            validate_settings = getattr(self.adapter, "validate_native_settings", None)
+            if not callable(validate_settings):
+                raise UnsupportedFeature(
+                    "adapter cannot validate requested native settings"
+                )
+            from .harness.native_capabilities import NativeRuntimeIdentity
+
+            runtime_identity = None
+            if self._runtime_lease is not None:
+                provenance = getattr(self._runtime_lease, "provenance", None)
+                if not isinstance(provenance, Mapping):
+                    raise UnsupportedFeature(
+                        "managed native capability identity is unavailable"
+                    )
+                runtime_identity = NativeRuntimeIdentity.from_provenance(provenance)
+            await validate_settings(
+                self.spec, native_configurations, runtime_identity=runtime_identity
+            )
         if self._deferred_elicitation_capability_check:
             await _prepare_capabilities(self.adapter)
             _require_elicitation_capability(self.adapter)
@@ -810,20 +872,25 @@ class AsyncAgentSession:
             # Import lazily: the contract module aliases this core adapter
             # protocol, so importing it at module load would create a cycle.
             start = self._server_manager.start
+            credential_activation = getattr(
+                self.adapter, "prepare_launch_credentials", None
+            )
             defaults_provider = getattr(
                 self.adapter, "stdio_environment_defaults", None
             )
             stdio_environment_defaults = (
                 defaults_provider(self.spec) if callable(defaults_provider) else {}
             )
-            if stdio_environment_defaults and self._supports_stdio_environment_defaults(
-                self._server_manager, start
+            options: dict[str, Any] = {}
+            if stdio_environment_defaults and self._supports_start_option(
+                self._server_manager, start, "stdio_environment_defaults"
             ):
-                started_snapshot = await start(
-                    stdio_environment_defaults=stdio_environment_defaults
-                )
-            else:
-                started_snapshot = await start()
+                options["stdio_environment_defaults"] = stdio_environment_defaults
+            if callable(credential_activation) and self._supports_start_option(
+                self._server_manager, start, "defer_capture"
+            ):
+                options["defer_capture"] = True
+            started_snapshot = await start(**options)
             # Transport evidence is emitted only after the server group has
             # successfully started and before the harness is opened. The
             # snapshot is the configured source; manager configurations are
@@ -902,8 +969,14 @@ class AsyncAgentSession:
                     self._interactions,
                     str(self._workspace.root),
                     capture=self._server_manager.capture,
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
                 )
                 launch = await self._preflight_launch(launch)
+                if callable(credential_activation):
+                    launch = await credential_activation(launch)
                 result = opener(launch)
             else:
                 preflight = getattr(self.adapter, "preflight", None)
@@ -918,6 +991,10 @@ class AsyncAgentSession:
                         self._interactions,
                         str(self._workspace.root),
                         capture=self._server_manager.capture,
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -941,6 +1018,10 @@ class AsyncAgentSession:
                     self.spec.tool_policy,
                     self._interactions,
                     str(self._workspace.root),
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
                 )
                 launch = await self._preflight_launch(launch)
                 result = opener(launch)
@@ -957,6 +1038,10 @@ class AsyncAgentSession:
                         self.spec.tool_policy,
                         self._interactions,
                         str(self._workspace.root),
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -993,6 +1078,14 @@ class AsyncAgentSession:
     def _supports_stdio_environment_defaults(manager: object, start: Any) -> bool:
         """Whether a manager explicitly supports pre-instrumentation env defaults."""
 
+        return AsyncAgentSession._supports_start_option(
+            manager, start, "stdio_environment_defaults"
+        )
+
+    @staticmethod
+    def _supports_start_option(manager: object, start: Any, option: str) -> bool:
+        """Whether a manager explicitly supports a native launch preparation hook."""
+
         from .server_group import ServerGroupManager
 
         if isinstance(manager, ServerGroupManager):
@@ -1001,7 +1094,7 @@ class AsyncAgentSession:
             parameters = inspect.signature(start).parameters
         except (TypeError, ValueError):
             return False
-        return "stdio_environment_defaults" in parameters
+        return option in parameters
 
     @property
     def _managed_harness_session(self) -> HarnessSession | None:
@@ -1770,10 +1863,29 @@ class AsyncAgentSession:
             captured_tool_calls = self._pending_captured_tool_calls()
             self._emit_captured_wire_events(turn_id)
             self._record_tool_outcomes(raw)
-            policy_violations = self._evaluate_reported_tool_calls(
-                raw,
-                captured_tool_calls=captured_tool_calls,
-            )
+            from .harness._private_policy import PrivateToolCalls
+
+            private_calls = getattr(raw, "_private_tool_calls", None)
+            try:
+                policy_violations = self._evaluate_reported_tool_calls(
+                    raw, captured_tool_calls=captured_tool_calls
+                )
+                capture_calls = self._private_capture_calls
+                if isinstance(private_calls, PrivateToolCalls) or isinstance(
+                    capture_calls, PrivateToolCalls
+                ):
+                    for envelope in (private_calls, capture_calls):
+                        if isinstance(envelope, PrivateToolCalls):
+                            policy_violations = tuple(
+                                envelope.project_policy_violation(item)
+                                for item in policy_violations
+                            )
+            finally:
+                if isinstance(private_calls, PrivateToolCalls):
+                    private_calls.release()
+                if isinstance(self._private_capture_calls, PrivateToolCalls):
+                    self._private_capture_calls.release()
+                self._private_capture_calls = None
             self._emit_adapter_events(raw, turn_id, policy_violations)
             if policy_violations:
                 self._emit_policy_violations(policy_violations, turn_id)
@@ -1983,19 +2095,34 @@ class AsyncAgentSession:
         *,
         captured_tool_calls: tuple[ToolDescriptor, ...] = (),
     ) -> tuple[dict[str, object], ...]:
-        calls = getattr(raw, "tool_calls", ())
+        from .harness._private_policy import PrivateToolCalls
+
+        private_calls = getattr(raw, "_private_tool_calls", None)
+        calls = (
+            private_calls.calls
+            if isinstance(private_calls, PrivateToolCalls)
+            else getattr(raw, "tool_calls", ())
+        )
         if not isinstance(calls, (tuple, list)):
             calls = ()
-        if not calls and not captured_tool_calls:
+        if (
+            not calls
+            and not captured_tool_calls
+            and not self._captured_identity_invalid
+        ):
             return ()
         # Proxy enforcement already handled the empty restrictive policy's
         # deny-by-default behavior.  Do not reinterpret an advisory provider
         # update as a second, post-hoc enforcement decision.
-        if not self._requires_policy_preflight():
-            return ()
         evidence = self._tool_policy_evidence or ToolPolicyEvidence(
             requested="restrictive", enforced="default_deny", observed="runtime"
         )
+        if not self._requires_policy_preflight():
+            return (
+                (self._policy_violation(None, "tool_identity_invalid", evidence),)
+                if self._captured_identity_invalid
+                else ()
+            )
         policy = self.spec.tool_policy
         records: tuple[Any, ...] = ()
         if self._server_manager is not None:
@@ -2036,6 +2163,10 @@ class AsyncAgentSession:
             or not self._requires_policy_preflight()
         )
         violations: list[dict[str, object]] = []
+        if self._captured_identity_invalid:
+            violations.append(
+                self._policy_violation(None, "tool_identity_invalid", evidence)
+            )
         # Preserve the positional association for adapters that emit
         # entirely anonymous updates, but never use it to repair malformed or
         # ambiguous identities. Exact cardinality is required and the adapter
@@ -2243,6 +2374,7 @@ class AsyncAgentSession:
         """Return this turn's stable forwarded calls before advancing capture."""
 
         manager = self._server_manager
+        self._captured_identity_invalid = False
         capture = getattr(manager, "capture", None) if manager is not None else None
         snapshots = getattr(capture, "snapshots", None)
         if not callable(snapshots):
@@ -2255,6 +2387,36 @@ class AsyncAgentSession:
                 )
                 for record in records
             }
+            private_reader = getattr(capture, "_private_forwarded_calls", None)
+            if callable(private_reader):
+                from .harness._private_policy import PrivateToolCalls
+
+                private = private_reader()
+                if isinstance(private, PrivateToolCalls):
+                    if self._private_capture_calls is not None:
+                        self._private_capture_calls.release()
+                    self._private_capture_calls = private
+                    from pydantic import ValidationError
+
+                    private_output = []
+                    for call in private.calls:
+                        connection_id = call["server"]
+                        index = int(call["call_id"])
+                        start = self._private_capture_seen.get(connection_id, 0)
+                        if index < start:
+                            continue
+                        self._private_capture_seen[connection_id] = index + 1
+                        alias = aliases.get(connection_id)
+                        if not alias:
+                            self._captured_identity_invalid = True
+                            continue
+                        try:
+                            descriptor = ToolDescriptor(server=alias, name=call["tool"])
+                        except ValidationError:
+                            self._captured_identity_invalid = True
+                            continue
+                        private_output.append(descriptor)
+                    return tuple(private_output)
             output: list[ToolDescriptor] = []
             for snapshot in snapshots():
                 connection_id = str(getattr(snapshot, "connection_id", ""))
@@ -2359,6 +2521,8 @@ class AsyncAgentSession:
         payload: dict[str, Any] = {"lifecycle": TurnStatus.FINISHED.value}
         if result.snapshot.outcome is not None:
             payload["outcome"] = result.snapshot.outcome.value
+        if result.error is not None:
+            payload["error"] = result.error.model_dump(mode="json")
         self._emit_event(
             EventKind.TURN_STATE_CHANGED,
             payload,
@@ -2545,15 +2709,18 @@ class AsyncAgentSession:
             self._trace_limitations = tuple(merged)
         snapshot = self._turn_snapshot(turn_id, outcome)
         if error is not None:
-            error = ErrorInfo(
-                code=error.code,
-                message="tool error"
-                if not self._terminal_requested(raw)
-                else "turn timed out"
-                if outcome is TurnOutcome.TIMED_OUT
-                else "turn failed",
-                retryable=error.retryable,
-            )
+            from .harness._native_errors import NativeErrorInfo
+
+            if not isinstance(error, NativeErrorInfo):
+                error = ErrorInfo(
+                    code=error.code,
+                    message="tool error"
+                    if not self._terminal_requested(raw)
+                    else "turn timed out"
+                    if outcome is TurnOutcome.TIMED_OUT
+                    else "turn failed",
+                    retryable=error.retryable,
+                )
         return TurnResult(
             snapshot=snapshot,
             response=response,

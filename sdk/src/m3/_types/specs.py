@@ -37,6 +37,14 @@ from .base import (
     TurnId,
     WorkspaceKind,
 )
+from .settings import (
+    ClaudeCodePermissions,
+    CodexPermissions,
+    HarnessTimeouts,
+    McpTimeouts,
+    OpenCodePermissions,
+    StartupAdmission,
+)
 
 ContentBlock = _Annotated[
     TextContent
@@ -75,6 +83,14 @@ class UserMessage(FrozenModel):
 class ServerDefinition(FrozenModel):
     name: str = _Field(min_length=1, max_length=256)
     trust: TrustLevel = TrustLevel.UNTRUSTED
+    timeouts: McpTimeouts = _Field(default_factory=McpTimeouts)
+
+    @_model_serializer(mode="wrap")
+    def _serialize_native_timeouts(self, handler: _Any) -> dict[str, _Any]:
+        value = dict(handler(self))
+        if not value.get("timeouts"):
+            value.pop("timeouts", None)
+        return value
 
 
 class StdioServer(ServerDefinition):
@@ -143,6 +159,14 @@ class ServerBinding(FrozenModel):
     profile: ServerProfileRef | None = None
     alias: str | None = _Field(default=None, min_length=1, max_length=256)
     required: bool = True
+    timeouts: McpTimeouts = _Field(default_factory=McpTimeouts)
+
+    @_model_serializer(mode="wrap")
+    def _serialize_native_timeouts(self, handler: _Any) -> dict[str, _Any]:
+        value = dict(handler(self))
+        if not value.get("timeouts"):
+            value.pop("timeouts", None)
+        return value
 
     @_model_validator(mode="after")
     def _one_binding_source(self) -> ServerBinding:
@@ -157,6 +181,7 @@ class HarnessValue(FrozenModel):
     executable: str | None = None
     runtime: _Literal["system", "managed"] = "system"
     version: str | None = _Field(default=None, min_length=1, max_length=64)
+    timeouts: HarnessTimeouts = _Field(default_factory=HarnessTimeouts)
 
     @_field_validator("runtime", mode="before")
     @classmethod
@@ -189,6 +214,10 @@ class HarnessValue(FrozenModel):
             value.pop("runtime", None)
         if value.get("version") is None:
             value.pop("version", None)
+        if not value.get("permissions"):
+            value.pop("permissions", None)
+        if not value.get("timeouts"):
+            value.pop("timeouts", None)
         return value
 
     def with_model(self, model: str) -> HarnessValue:
@@ -200,6 +229,7 @@ class HarnessValue(FrozenModel):
 
 
 class ClaudeCode(HarnessValue):
+    permissions: ClaudeCodePermissions = _Field(default_factory=ClaudeCodePermissions)
     kind: _Literal["claude_code"] = "claude_code"
     name: str = "claude-code"
     credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
@@ -226,6 +256,7 @@ class ClaudeCode(HarnessValue):
 
 
 class OpenCode(HarnessValue):
+    permissions: OpenCodePermissions = _Field(default_factory=OpenCodePermissions)
     kind: _Literal["opencode"] = "opencode"
     name: str = "opencode"
     provider: str | None = None
@@ -256,6 +287,7 @@ class OpenCode(HarnessValue):
 class Codex(HarnessValue):
     """Native OpenAI Codex App Server harness profile."""
 
+    permissions: CodexPermissions = _Field(default_factory=CodexPermissions)
     kind: _Literal["codex"] = "codex"
     name: str = "codex"
     credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
@@ -571,6 +603,63 @@ class AgentSpec(_ExecutionSpecBase):
     message: UserMessage | None = None
     elicitation: _ElicitationPlan | None = None
     elicitation_round_limit: int = 10
+    admission: StartupAdmission = _Field(default_factory=StartupAdmission)
+    harness_timeouts: HarnessTimeouts = _Field(default_factory=HarnessTimeouts)
+    harness_permissions: (
+        CodexPermissions | ClaudeCodePermissions | OpenCodePermissions | None
+    ) = None
+
+    @_field_validator("harness_permissions", mode="before")
+    @classmethod
+    def _explicit_permissions_are_typed(cls, value: _Any) -> _Any:
+        if value is None:
+            raise ValueError("explicit harness permissions require a typed override")
+        if isinstance(value, dict):
+            if set(value) != {"harness", "values"}:
+                raise ValueError(
+                    "serialized permission override requires a harness discriminator"
+                )
+            models: dict[
+                str,
+                type[CodexPermissions | ClaudeCodePermissions | OpenCodePermissions],
+            ] = {
+                "codex": CodexPermissions,
+                "claude_code": ClaudeCodePermissions,
+                "opencode": OpenCodePermissions,
+            }
+            model = (
+                models.get(value["harness"])
+                if isinstance(value["harness"], str)
+                else None
+            )
+            if model is None:
+                raise ValueError("permission override harness is unsupported")
+            return model.model_validate(value["values"])
+        return value
+
+    @_model_serializer(mode="wrap")
+    def _serialize_native_permissions(self, handler: _Any) -> dict[str, _Any]:
+        value = dict(handler(self))
+        if not self.admission.model_dump():
+            value.pop("admission", None)
+        if not value.get("harness_timeouts"):
+            value.pop("harness_timeouts", None)
+        if self.harness_permissions is None:
+            value.pop("harness_permissions", None)
+        else:
+            kinds: dict[
+                type[CodexPermissions | ClaudeCodePermissions | OpenCodePermissions],
+                str,
+            ] = {
+                CodexPermissions: "codex",
+                ClaudeCodePermissions: "claude_code",
+                OpenCodePermissions: "opencode",
+            }
+            value["harness_permissions"] = {
+                "harness": kinds[type(self.harness_permissions)],
+                "values": value["harness_permissions"],
+            }
+        return value
 
     @_field_validator("elicitation_round_limit", mode="before")
     @classmethod

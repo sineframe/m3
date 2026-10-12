@@ -7,9 +7,16 @@
   "target_release": "the release declared by the consumer project",
   "python": ">=3.10",
   "files": [
-    "test_configuration_values.py"
+    "test_configuration_values.py",
+    "test_native_values.py"
   ],
   "displayed_blocks": [
+    {
+      "page": "reference-configuration",
+      "label": "native settings descriptors",
+      "source": "test_native_values.py",
+      "kind": "file"
+    },
     {
       "page": "reference-configuration",
       "label": "configuration values",
@@ -34,6 +41,22 @@
       ],
       "compatibility": {
         "harness": "none; pure configuration values",
+        "mode": "in-process",
+        "status": "verified by the documented test"
+      },
+      "verification": "deterministic"
+    },
+    {
+      "id": "native-settings-values",
+      "command": "python -m pytest -q test_native_values.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": [
+        "constructs a named Codex profile with explicit definitions",
+        "constructs inline profile shorthand and separate MCP phase budgets"
+      ],
+      "compatibility": {
+        "harness": "none; descriptor construction only",
         "mode": "in-process",
         "status": "verified by the documented test"
       },

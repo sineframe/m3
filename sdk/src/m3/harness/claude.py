@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import shutil
 import tempfile
 import time
@@ -23,11 +22,16 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
+from .._types.specs import AgentSpec
 from ..agent_session import AdapterTurn
 from ..policy import ToolPolicyEvidence
+from ..server_group import HarnessServerConfig
+from ..trace.redaction import RedactionConfig, RedactionError, redact_for_api
 from ..types import (
+    UNSET,
     Capability,
     CapabilityStatus,
+    ClaudeCode,
     ErrorCode,
     ErrorInfo,
     NativeToolPolicy,
@@ -38,6 +42,12 @@ from ..types import (
     TurnOutcome,
     TurnResponse,
     UserMessage,
+)
+from ._native_errors import (
+    launch_error_redaction,
+    native_error_info,
+    project_native_observation,
+    project_native_turn,
 )
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -58,9 +68,12 @@ from .native import (
     _text,
     probe_help,
     read_bounded_line,
+    startup_spawn_options,
     workspace_for_launch,
     write_config,
 )
+from .native_capabilities import NativeRuntimeIdentity
+from .native_settings import milliseconds
 from .observations import (
     HarnessObservation,
     MessageChunkObservation,
@@ -346,6 +359,7 @@ class ClaudeCodeHarnessAdapter:
         self._process_started_emitted = False
         self._cancel_requested = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
+        self._native_error_redaction: RedactionConfig | None = None
 
     @property
     def name(self) -> str:
@@ -358,6 +372,32 @@ class ClaudeCodeHarnessAdapter:
     @property
     def supported_content_kinds(self) -> frozenset[str]:
         return self._capabilities.supported_content_kinds
+
+    async def validate_native_settings(
+        self,
+        spec: AgentSpec,
+        configurations: tuple[HarnessServerConfig, ...],
+        *,
+        runtime_identity: NativeRuntimeIdentity | None = None,
+    ) -> None:
+        from .native_settings import validate_native_settings
+
+        await validate_native_settings(
+            self.executable, spec, configurations, runtime_identity
+        )
+        startup = next(
+            (
+                item.timeouts.startup_seconds
+                for item in configurations
+                if item.timeouts.startup_seconds is not UNSET
+            ),
+            UNSET,
+        )
+        if startup is not UNSET and "MCP_TIMEOUT" in self.environment:
+            if self.environment["MCP_TIMEOUT"] != str(milliseconds(startup)):
+                raise HarnessStartupError(
+                    "Claude MCP timeout conflicts with explicit harness environment"
+                )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
         if (
@@ -432,20 +472,51 @@ class ClaudeCodeHarnessAdapter:
         )
         return self._capabilities.readiness()
 
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._launch_credentials import activate_native_launch
+
+        return await activate_native_launch(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+        )
+
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("Claude Code streaming is unavailable")
         if self._session is not None:
             raise HarnessStartupError("Claude Code session is already open")
+        launch = await self.prepare_launch_credentials(launch)
         root = Path(tempfile.mkdtemp(prefix="m3-claude-"))
         owner = ProcessOwner(root)
         try:
-            environment = _isolated_environment(root, self.environment)
+            credentials = launch._credentials
+            assert credentials is not None
+            environment = _isolated_environment(root, credentials.child_environment())
             environment["DISABLE_UPDATES"] = "1"
             harness = launch.spec.harness
             if harness is None:
                 raise HarnessStartupError("Claude Code harness is unavailable")
+            if isinstance(harness, ClaudeCode):
+                startup = next(
+                    (
+                        item.timeouts.startup_seconds
+                        for item in launch.configurations
+                        if item.timeouts.startup_seconds is not UNSET
+                    ),
+                    UNSET,
+                )
+                if startup is not UNSET:
+                    native_budget = str(milliseconds(startup))
+                    if (
+                        "MCP_TIMEOUT" in self.environment
+                        and self.environment["MCP_TIMEOUT"] != native_budget
+                    ):
+                        raise HarnessStartupError(
+                            "Claude MCP timeout conflicts with explicit harness environment"
+                        )
+                    environment["MCP_TIMEOUT"] = native_budget
             runtime_secrets: set[str] = set()
             for target, reference in getattr(
                 harness, "credential_references", {}
@@ -457,9 +528,7 @@ class ClaudeCodeHarnessAdapter:
                     raise HarnessStartupError(
                         "Claude Code credential reference is unavailable"
                     )
-                value = self.environment.get(reference.name)
-                if value is None:
-                    value = os.environ.get(reference.name)
+                value = credentials.credential_environment()[target]
                 if not value:
                     raise HarnessStartupError("Claude Code credential is unavailable")
                 environment[target] = value
@@ -471,8 +540,11 @@ class ClaudeCodeHarnessAdapter:
             config = write_config(
                 root,
                 launch,
-                environment=self._resolver_environment,
+                environment=credentials.reference_environment(),
                 secrets=runtime_secrets,
+            )
+            self._native_error_redaction = launch_error_redaction(
+                launch, self.environment, runtime_secrets
             )
             # ``write_config`` resolves selected server references and adds
             # their literals to the runtime-only set before the child exists.
@@ -503,21 +575,55 @@ class ClaudeCodeHarnessAdapter:
                     str(item) for item in (policy.policy.get("read_only_tools") or ())
                 )
                 if mode == "mcp_only":
-                    argv.extend(["--tools", "", "--allowedTools", f"mcp__{server}__*"])
+                    argv.extend(["--tools", ""])
+                    if (
+                        not isinstance(harness, ClaudeCode)
+                        or harness.permissions.allowed_tools is UNSET
+                    ):
+                        argv.extend(["--allowedTools", f"mcp__{server}__*"])
                 elif mode == "mcp_read_only":
                     argv.extend(
                         [
                             "--tools",
                             ",".join(read_only),
-                            "--allowedTools",
-                            ",".join((*read_only, f"mcp__{server}__*")),
                         ]
                     )
+                    if (
+                        not isinstance(harness, ClaudeCode)
+                        or harness.permissions.allowed_tools is UNSET
+                    ):
+                        argv.extend(
+                            [
+                                "--allowedTools",
+                                ",".join((*read_only, f"mcp__{server}__*")),
+                            ]
+                        )
                 elif mode == "full":
+                    argv.extend(["--tools", "default"])
+                    if (
+                        not isinstance(harness, ClaudeCode)
+                        or not harness.permissions.model_dump()
+                    ):
+                        argv.append("--dangerously-skip-permissions")
+            if isinstance(harness, ClaudeCode):
+                permissions = harness.permissions
+                if permissions.permission_mode is not UNSET:
+                    argv.extend(["--permission-mode", permissions.permission_mode])
+                if permissions.allowed_tools is not UNSET:
+                    argv.extend(["--allowedTools", ",".join(permissions.allowed_tools)])
+                if permissions.denied_tools is not UNSET:
                     argv.extend(
-                        ["--tools", "default", "--dangerously-skip-permissions"]
+                        ["--disallowedTools", ",".join(permissions.denied_tools)]
                     )
-            await owner.spawn(argv, environment, cwd=workspace)
+            from ._launch_credentials import check_credential_deadline
+
+            check_credential_deadline(launch)
+            await owner.spawn(
+                argv,
+                environment,
+                cwd=workspace,
+                **startup_spawn_options(launch._startup_lease),
+            )
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(
                 maxsize=MAX_QUEUE_ITEMS
             )
@@ -609,6 +715,7 @@ class ClaudeCodeHarnessAdapter:
                 "interrupted": TurnOutcome.INTERRUPTED,
             }.get(result.status, TurnOutcome.FAILED),
             tool_calls=result.tool_calls,
+            _private_tool_calls=result._private_tool_calls,
             evidence=result.evidence,
             trace_limitations=result.trace_limitations,
             turn_evidence=result.turn_evidence,
@@ -635,8 +742,12 @@ class ClaudeCodeHarnessAdapter:
         self._owner = None
         self._config = None
         self._output = None
+        from ._launch_credentials import release_native_credentials
+
+        release_native_credentials(self._launch)
         self._launch = None
         self._root = None
+        self._native_error_redaction = None
 
     async def cancel(self) -> None:
         self._cancel_requested = True
@@ -647,9 +758,31 @@ class ClaudeCodeHarnessAdapter:
         """Return observations of a turn cancelled before it returned, once."""
 
         capture, self._partial_capture = self._partial_capture, None
-        return capture() if capture is not None else None
+        if capture is None:
+            return None
+        evidence = capture()
+        redaction = self._native_error_redaction or RedactionConfig(
+            include_environment=False
+        )
+        return evidence.model_copy(
+            update={
+                "observations": tuple(
+                    project_native_observation(item, redaction, index)
+                    for index, item in enumerate(evidence.observations)
+                )
+            }
+        )
 
     async def _send(
+        self, request: HarnessTurnRequest, sequence: int
+    ) -> HarnessTurnResult:
+        result = await self._send_private(request, sequence)
+        return project_native_turn(
+            result,
+            self._native_error_redaction or RedactionConfig(include_environment=False),
+        )
+
+    async def _send_private(
         self, request: HarnessTurnRequest, sequence: int
     ) -> HarnessTurnResult:
         owner, output = self._owner, self._output
@@ -732,6 +865,13 @@ class ClaudeCodeHarnessAdapter:
         def emit_frame(item: Mapping[str, Any]) -> None:
             nonlocal frame_index
             sanitized = safe_frame(item)
+            if self._native_error_redaction is not None:
+                try:
+                    sanitized = redact_for_api(
+                        sanitized, config=self._native_error_redaction
+                    )
+                except RedactionError:
+                    sanitized = {"capture": "unavailable", "reason": "redaction_failed"}
             observations.append(
                 RawFrameObservation(
                     observation_id=f"claude-{sequence}-frame-{frame_index}",
@@ -1043,6 +1183,10 @@ class ClaudeCodeHarnessAdapter:
                 limit()
             add_metadata()
 
+        partial_redaction = self._native_error_redaction or RedactionConfig(
+            include_environment=False
+        )
+
         def partial_evidence() -> TurnEvidence:
             # The session deadline or an outer cancellation stopped this turn
             # before it could return; keep what was already observed.
@@ -1051,7 +1195,10 @@ class ClaudeCodeHarnessAdapter:
             return TurnEvidence(
                 sequence=sequence,
                 status="cancelled",
-                observations=tuple(observations),
+                observations=tuple(
+                    project_native_observation(item, partial_redaction, index)
+                    for index, item in enumerate(observations)
+                ),
                 limitations=tuple(limitations),
                 monotonic_origin=turn_started,
             )
@@ -1390,7 +1537,18 @@ class ClaudeCodeHarnessAdapter:
                         set_meta(name, value, identifier=True)
                 for name in ("api_duration_ms", "cost_usd", "result"):
                     if name in metadata_values:
-                        set_meta(name, metadata_values[name])
+                        value = metadata_values[name]
+                        if failed and name == "result":
+                            value = native_error_info(
+                                value,
+                                summary="Claude Code turn failed",
+                                harness="claude-code",
+                                phase="turn/result",
+                                redaction=self._native_error_redaction,
+                            ).details.get(
+                                "native_message", "native diagnostic unavailable"
+                            )
+                        set_meta(name, value)
                 if failed:
                     await terminate_and_observe("failed")
                 finalize()
@@ -1400,11 +1558,15 @@ class ClaudeCodeHarnessAdapter:
                 return _claude_result(
                     sequence,
                     "failed" if failed else "completed",
-                    ErrorInfo(
+                    native_error_info(
+                        _claude_native_error(item),
+                        summary="Claude Code turn failed",
+                        harness="claude-code",
+                        phase="turn/result",
+                        redaction=self._native_error_redaction,
                         code=ErrorCode.PROTOCOL_ERROR
                         if malformed_error
                         else ErrorCode.TRANSPORT_ERROR,
-                        message="Claude Code turn failed",
                     )
                     if failed
                     else None,
@@ -1443,3 +1605,20 @@ class ClaudeCodeSession(NativeSessionBase):
 
 
 __all__ = ["ClaudeCodeHarnessAdapter", "ClaudeCodeSession"]
+
+
+def _claude_native_error(item: Mapping[str, Any]) -> object:
+    """Select the native result diagnostic without exposing its whole frame."""
+
+    if item.get("error") is not None:
+        return item["error"]
+    errors = item.get("errors")
+    if isinstance(errors, list):
+        # Claude emits a list of textual causes for an error result. Bound
+        # its size before joining; oversized diagnostics are omitted.
+        if len(errors) <= 16 and all(
+            isinstance(value, str) and len(value) <= 4096 for value in errors
+        ):
+            return {"code": item.get("subtype"), "message": "\n".join(errors)}
+        return {"code": item.get("subtype")}
+    return {"code": item.get("subtype"), "message": item.get("result")}

@@ -96,7 +96,7 @@ The `code` is `invalid_configuration` for a bad value, `unknown_setting` for an 
 
 ## Construct and merge native settings
 
-`Config` also parses typed native timeout, permission, cache and admission values. These values are a configuration foundation: constructing them or loading them does not yet apply them to a running harness, server, cache or scheduler. Native capability checks and runtime application are separate.
+`Config` also parses typed native timeout, permission, cache and admission values. Construction and loading never launch a process. Agent sessions apply native permissions and MCP budgets after merging their explicit settings and checking the selected runtime. Harness phase deadlines, cache reuse and admission values remain a configuration foundation.
 
 `load_config(config_file=path)` replaces project discovery with an explicit TOML file containing the same `[tool.m3]` table. It adds no environment variables or CLI flags. Invalid fields fail during parsing; no native process is started by this API. Both file forms merge defaults, file values, existing configuration environment values, and explicit Python values in that order. Alias settings describe existing server bindings and never create servers.
 
@@ -121,6 +121,64 @@ busy_timeout_seconds = 30
 ```
 
 Codex permission values choose a named or defined profile, or legacy sandbox options. A profile cannot coexist with legacy sandbox/network overrides. Defined profiles expose a subset of the [Codex 0.160.1 native schema](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/core/config.schema.json): filesystem path decisions (`read`, `write`, `deny`), and network enablement/domain decisions (`allow`, `deny`). Interactive approval policy is separate from filesystem permissions. Claude Code and OpenCode tool rules do not promise OS filesystem confinement. Runtime support must be validated before these values are applied.
+
+### Apply native permissions and MCP budgets
+
+Native harness values accept `permissions=`, and server definitions and bindings accept `timeouts=McpTimeouts(...)`. An agent selection dictionary accepts the same typed permission value under `permissions`. `agent.session(harness_permissions=...)` overrides the selected harness's explicit leaves for that session. The low-level sync and async `agent_session` methods accept that override too.
+
+Permissions merge in this order: `[tool.m3.harnesses.<kind>.permissions]`, the selected harness's `permissions`, and the session override. Server budgets merge global `[tool.m3.mcp_timeouts]`, alias settings, the server definition, then the binding. An empty default model inherits; explicitly supplying `profiles=()` clears inherited profile definitions. Structural conflicts fail before session entry. Native capability checks run after runtime resolution and before MCP startup.
+
+Supply custom Codex profile definitions explicitly. This definition and selector can be reused by different harness cases:
+
+```python
+from m3.types import (
+    Codex,
+    CodexPermissionProfile,
+    CodexPermissions,
+    McpTimeouts,
+    NativeFilesystemPermissions,
+    NativeNetworkPermissions,
+    StdioServer,
+)
+
+profile = CodexPermissionProfile(
+    name="project",
+    filesystem=NativeFilesystemPermissions(
+        rules={":minimal": "read", ":project_roots": "write"},
+    ),
+    network=NativeNetworkPermissions(enabled=False),
+)
+harness = Codex(
+    model="your-codex-model",
+    runtime="managed",
+    version="0.162.1",
+    permissions=CodexPermissions(profile="project", profiles=(profile,)),
+)
+server = StdioServer(
+    name="slow",
+    command="python3",
+    args=("slow_mcp.py",),
+    timeouts=McpTimeouts(startup_seconds=60, request_seconds=120),
+)
+
+
+def test_native_values() -> None:
+    assert harness.permissions.profile == "project"
+    assert harness.permissions.profiles == (profile,)
+    assert server.timeouts.startup_seconds == 60
+    assert server.timeouts.request_seconds == 120
+    assert CodexPermissions(profile=profile).profile == profile
+```
+
+Use `harness` in a `HarnessCase`, as shown in [agent matrices](guides-agents-matrices.md), or pass `harness.permissions` in an ordinary agent selection dictionary. The inline shorthand `CodexPermissions(profile=profile)` emits the same native configuration. A string selector must name an explicit definition or a builtin verified for that runtime. Duplicate definitions and conflicting inline definitions fail validation. A later `profile="other"` selector inherits the earlier `profiles` tuple; it does not import an ambient Codex config.
+
+Codex receives the selected profile in its isolated native config and `thread/start` request. M3 omits the legacy `sandbox` override and confirms the returned active profile ID. Builtins verified for the supported releases are `:read-only`, `:workspace`, and `:danger-full-access`. A legacy network setting requires `CodexPermissions(sandbox="workspace-write", network_access=True)`; profile filesystem/network rules cannot coexist with these legacy options. Interactive `approval_policy` is checked against the selected runtime's exported RPC schema, so an obsolete policy fails explicitly.
+
+Codex budgets become `startup_timeout_sec` and `tool_timeout_sec`. OpenCode's native `timeout` is one integer millisecond budget used for startup and requests; supplying distinct values for the two phases is invalid. Claude Code's `MCP_TIMEOUT` is process-wide, so all bound servers must have the same effective startup setting, including omitted settings. Claude request budgets use its per-server `timeout` field and may differ. They must be at least one second. Millisecond timers reject fractional milliseconds and values their native timer would clamp. These are native MCP budgets; M3's separate startup phase limits remain unchanged. Direct clients use their existing `timeout=` API and reject native harness budgets.
+
+Claude `permission_mode`, `allowed_tools`, and `denied_tools` become native CLI flags. Explicit rules replace inherited allowlists, and cannot widen a selected native tool policy. OpenCode `rules` become native `permission` entries under the same constraint. Native tool approvals and filesystem access are separate from M3's interaction handlers and portable tool policy.
+
+Config-only support is verified for Codex `0.160.1`/`0.162.1`, OpenCode `1.18.31`/`1.18.35`, and the published macOS arm64 Claude Code `2.1.295`/`2.1.296` distributions. Other requested config-only features fail as unknown. RPC/help fields are discovered with bounded isolated offline commands. Facts retain the native release, source revision or distribution integrity, executable digest, dialect and platform; every final session request is validated again. A script launcher needs a verified managed distribution identity for config-only support. Default sessions perform no additional discovery.
 
 Caches default to `isolated`. `immutable-seed` requests opt-in seed reuse; this type does not materialize a cache. Startup admission defaults to disabled, with four slots and a 300-second queue budget when enabled. Worker bootstrap defaults to one total 30-second budget. Native phase defaults remain unset so the runtime can retain its existing limits.
 

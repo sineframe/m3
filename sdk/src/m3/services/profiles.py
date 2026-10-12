@@ -275,6 +275,7 @@ def resolve_agent_spec(
                 server=resolved.value,
                 alias=binding.alias or resolved.value.name,
                 required=binding.required,
+                timeouts=binding.timeouts,
             )
         )
         provenance.append({**resolved.provenance, "_ordinal": str(ordinal)})
@@ -325,6 +326,7 @@ def resolve_execution_spec(
                 server=resolved.value,
                 alias=binding.alias or resolved.value.name,
                 required=binding.required,
+                timeouts=binding.timeouts,
             )
         )
         provenance.append({**resolved.provenance, "_ordinal": str(ordinal)})

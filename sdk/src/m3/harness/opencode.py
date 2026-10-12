@@ -24,14 +24,22 @@ from typing import Any, Literal, NamedTuple, cast
 
 import httpx
 
+from .._types.specs import AgentSpec
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
+from ..server_group import HarnessServerConfig
+from ..trace.redaction import (
+    RedactionConfig,
+    RedactionError,
+    is_sensitive_key,
+    redact_artifact_bytes,
+    redact_for_api,
+)
 from ..types import (
+    UNSET,
     Capability,
     CapabilityStatus,
     ErrorCode,
-    ErrorInfo,
     FullToolPolicy,
     NativeToolPolicy,
     OpenCode,
@@ -42,6 +50,12 @@ from ..types import (
     TurnOutcome,
     TurnResponse,
     UserMessage,
+)
+from ._native_errors import (
+    NativeHarnessStartupError,
+    launch_error_redaction,
+    native_error_info,
+    project_native_turn,
 )
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -64,8 +78,11 @@ from .native import (
     probe_help,
     read_bounded_line,
     run_probe,
+    startup_spawn_options,
     workspace_for_launch,
 )
+from .native_capabilities import NativeRuntimeIdentity
+from .native_settings import milliseconds
 from .observations import (
     HarnessObservation,
     MessageChunkObservation,
@@ -160,6 +177,15 @@ def opencode_configuration(
                     for key, raw in headers.items()
                 },
             }
+        if source is not None:
+            budgets = source.timeouts
+            timeout = (
+                budgets.startup_seconds
+                if budgets.startup_seconds is not UNSET
+                else budgets.request_seconds
+            )
+            if timeout is not UNSET:
+                item["timeout"] = milliseconds(timeout)
         servers[name] = item
     policy = launch.tool_policy
     if isinstance(policy, NativeToolPolicy):
@@ -200,11 +226,15 @@ def opencode_configuration(
     else:
         tools = {}
         permissions = {}
+    harness = launch.spec.harness
+    if isinstance(harness, OpenCode):
+        permissions.update(harness.permissions.rules)
     if dialect == "v2":
         return {
             "$schema": "https://opencode.ai/config.json",
             "mcp": {"servers": servers},
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            **({"permission": permissions} if permissions else {}),
         }
     if dialect == "legacy":
         return {
@@ -212,7 +242,8 @@ def opencode_configuration(
             "mcp": {
                 name: {**value, "enabled": True} for name, value in servers.items()
             },
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            **({"permission": permissions} if permissions else {}),
         }
     raise HarnessStartupError("unsupported OpenCode configuration dialect")
 
@@ -346,6 +377,7 @@ class OpenCodeHarnessAdapter:
         # are used to protect adapter results before they reach the public
         # session boundary; they are never included in a launch descriptor.
         self._runtime_secrets: set[str] = set()
+        self._native_error_redaction: RedactionConfig | None = None
         self.last_policy_evidence: Any = None
 
     @property
@@ -359,6 +391,19 @@ class OpenCodeHarnessAdapter:
     @property
     def supported_content_kinds(self) -> frozenset[str]:
         return self._capabilities.supported_content_kinds
+
+    async def validate_native_settings(
+        self,
+        spec: AgentSpec,
+        configurations: tuple[HarnessServerConfig, ...],
+        *,
+        runtime_identity: NativeRuntimeIdentity | None = None,
+    ) -> None:
+        from .native_settings import validate_native_settings
+
+        await validate_native_settings(
+            self.executable, spec, configurations, runtime_identity
+        )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
         if (
@@ -451,7 +496,9 @@ class OpenCodeHarnessAdapter:
                 for config in launch.configurations
                 if config.available
             )
-            enforcement = getattr(launch.capture, "enforces_portable_policy", None)
+            enforcement = getattr(launch.capture, "can_enforce_portable_policy", None)
+            if not callable(enforcement):
+                enforcement = getattr(launch.capture, "enforces_portable_policy", None)
             if not callable(enforcement) or not enforcement(available_connections):
                 return self._capabilities.readiness(
                     ready=False, reason="tool_policy_unsupported"
@@ -493,18 +540,30 @@ class OpenCodeHarnessAdapter:
             return "v2"
         raise HarnessStartupError("OpenCode configuration dialect is unsupported")
 
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._launch_credentials import activate_native_launch
+
+        return await activate_native_launch(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+        )
+
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("OpenCode server is unavailable")
         if self._session is not None:
             raise HarnessStartupError("OpenCode session is already open")
+        launch = await self.prepare_launch_credentials(launch)
         root = Path(tempfile.mkdtemp(prefix="m3-opencode-"))
         owner = ProcessOwner(root)
         client: httpx.AsyncClient | None = None
         try:
             harness = launch.spec.harness
-            environment = _isolated_environment(root, self.environment)
+            credentials = launch._credentials
+            assert credentials is not None
+            environment = _isolated_environment(root, credentials.child_environment())
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             if isinstance(harness, OpenCode) and harness.runtime == "managed":
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
@@ -526,9 +585,7 @@ class OpenCodeHarnessAdapter:
                         raise HarnessStartupError(
                             "OpenCode credential reference is unavailable"
                         )
-                    value = environment.get(reference.name)
-                    if value is None:
-                        value = os.environ.get(reference.name)
+                    value = credentials.credential_environment()[variable]
                     if not value:
                         raise HarnessStartupError("OpenCode credential is unavailable")
                     environment[variable] = value
@@ -539,22 +596,25 @@ class OpenCodeHarnessAdapter:
                         value,
                         environment,
                         runtime_secrets,
-                        resolver_environment=self._resolver_environment,
+                        resolver_environment=credentials.reference_environment(),
                     )
                 for value in server.headers.values():
                     _resolve_opencode_environment_value(
                         value,
                         environment,
                         runtime_secrets,
-                        resolver_environment=self._resolver_environment,
+                        resolver_environment=credentials.reference_environment(),
                     )
                 _resolve_opencode_environment_value(
                     server.endpoint,
                     environment,
                     runtime_secrets,
-                    resolver_environment=self._resolver_environment,
+                    resolver_environment=credentials.reference_environment(),
                 )
             self._runtime_secrets = runtime_secrets
+            self._native_error_redaction = launch_error_redaction(
+                launch, self.environment, runtime_secrets
+            )
             capture = launch.capture
             add_secrets = getattr(capture, "add_secrets", None)
             if callable(add_secrets) and runtime_secrets:
@@ -581,10 +641,14 @@ class OpenCodeHarnessAdapter:
             config = _write_opencode_config(root, launch, dialect)
             workspace = workspace_for_launch(launch, root)
             environment["OPENCODE_CONFIG"] = str(config)
+            from ._launch_credentials import check_credential_deadline
+
+            check_credential_deadline(launch)
             await owner.spawn(
                 [self.executable, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                 environment,
                 cwd=workspace,
+                **startup_spawn_options(launch._startup_lease),
             )
             assert owner.process is not None and owner.process.stdout is not None
             base_url = await self._read_server_url(owner.process.stdout)
@@ -598,7 +662,18 @@ class OpenCodeHarnessAdapter:
             )
             async with client.stream("POST", "/session", json={}) as response:
                 if response.status_code >= 400:
-                    raise HarnessStartupError("OpenCode session could not be created")
+                    raise NativeHarnessStartupError(
+                        native_error_info(
+                            _native_response_error(
+                                await self._read_bounded_response(response)
+                            ),
+                            summary="OpenCode session could not be created",
+                            harness="opencode",
+                            phase="session/create",
+                            redaction=self._native_error_redaction,
+                            details={"http_status": response.status_code},
+                        )
+                    )
                 try:
                     body = json.loads(await self._read_bounded_response(response))
                 except json.JSONDecodeError:
@@ -620,6 +695,7 @@ class OpenCodeHarnessAdapter:
             return self._session
         except BaseException:
             self._runtime_secrets.clear()
+            self._native_error_redaction = None
             if client is not None:
                 await client.aclose()
             try:
@@ -655,6 +731,7 @@ class OpenCodeHarnessAdapter:
                 "interrupted": TurnOutcome.INTERRUPTED,
             }.get(result.status, TurnOutcome.FAILED),
             tool_calls=result.tool_calls,
+            _private_tool_calls=result._private_tool_calls,
             evidence=result.evidence,
             trace_limitations=result.trace_limitations,
             turn_evidence=result.turn_evidence,
@@ -672,9 +749,13 @@ class OpenCodeHarnessAdapter:
         self._client = None
         self._owner = None
         self._base_url = None
+        from ._launch_credentials import release_native_credentials
+
+        release_native_credentials(self._launch)
         self._launch = None
         self._root = None
         self._runtime_secrets.clear()
+        self._native_error_redaction = None
 
     async def cancel(self) -> None:
         if self._session is not None:
@@ -715,6 +796,18 @@ class OpenCodeHarnessAdapter:
         return bytes(body)
 
     async def _send(
+        self, request: HarnessTurnRequest, sequence: int, session_id: str
+    ) -> HarnessTurnResult:
+        result = await self._send_private(request, sequence, session_id)
+        return project_native_turn(
+            result,
+            self._native_error_redaction
+            or RedactionConfig(
+                secrets=frozenset(self._runtime_secrets), include_environment=False
+            ),
+        )
+
+    async def _send_private(
         self, request: HarnessTurnRequest, sequence: int, session_id: str
     ) -> HarnessTurnResult:
         client = self._client
@@ -1297,8 +1390,12 @@ class OpenCodeHarnessAdapter:
             else TurnResponse(content=(TextContent(text=text),)),
             error=None
             if not failed
-            else ErrorInfo(
-                code=ErrorCode.TRANSPORT_ERROR, message="OpenCode turn failed"
+            else native_error_info(
+                info.get("error"),
+                summary="OpenCode turn failed",
+                harness="opencode",
+                phase="turn/message",
+                redaction=self._native_error_redaction,
             ),
             tool_calls=tool_calls,
             evidence=evidence,
@@ -1466,12 +1563,21 @@ class OpenCodeHarnessAdapter:
             and all(ord(char) >= 0x20 for char in content_type)
             else "application/json"
         )
+        redaction = self._native_error_redaction or RedactionConfig(
+            secrets=frozenset(self._runtime_secrets), include_environment=False
+        )
         try:
             text = body.decode("utf-8")
-            safe = redact_for_api(
-                text,
-                config=RedactionConfig.from_environment(secrets=self._runtime_secrets),
-            )
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                safe = redact_for_api(text, config=redaction)
+            else:
+                safe = json.dumps(
+                    redact_for_api(decoded, config=redaction),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
             if not isinstance(safe, str):
                 raise ValueError
             return RawFrameObservation(
@@ -1485,8 +1591,20 @@ class OpenCodeHarnessAdapter:
                 text=safe,
                 raw_evidence=RawEvidenceInput(content=safe, media_type=media_type),
             )
+        except RedactionError:
+            return RawFrameObservation(
+                observation_id=observation_id or f"opencode-http-{sequence}",
+                harness_kind="opencode",
+                turn_sequence=sequence,
+                wall_time=wall_time,
+                monotonic_offset_ms=self._offset_ms(started),
+                direction="inbound",
+                media_type=media_type,
+                payload={"capture": "unavailable", "reason": "redaction_failed"},
+            )
         except (UnicodeDecodeError, TypeError, ValueError):
-            encoded = base64.b64encode(body).decode("ascii")
+            safe_bytes = redact_artifact_bytes(body, config=redaction).data
+            encoded = base64.b64encode(safe_bytes).decode("ascii")
             return RawFrameObservation(
                 observation_id=observation_id or f"opencode-http-{sequence}",
                 harness_kind="opencode",
@@ -1826,7 +1944,21 @@ class OpenCodeHarnessAdapter:
         return HarnessTurnResult(
             sequence=sequence,
             status=status,
-            error=ErrorInfo(code=code, message=message),
+            error=native_error_info(
+                _native_response_error(raw_body)
+                if raw_body is not None
+                and status_code is not None
+                and status_code >= 400
+                else None,
+                summary=message,
+                harness="opencode",
+                phase="turn/message",
+                redaction=self._native_error_redaction,
+                code=code,
+                details={"http_status": status_code}
+                if status_code is not None
+                else None,
+            ),
             evidence={
                 "process_observed": False,
                 "transport_observed": "http",
@@ -1924,3 +2056,17 @@ class OpenCodeSession(NativeSessionBase):
 
 
 __all__ = ["OpenCodeHarnessAdapter", "OpenCodeSession"]
+
+
+def _native_response_error(raw: bytes) -> object:
+    """Read a bounded HTTP error body; arbitrary nested bodies stay private."""
+
+    if len(raw) > 65536:
+        return None
+    try:
+        body = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return raw.decode("utf-8", errors="replace")
+    if isinstance(body, Mapping):
+        return body.get("error", body)
+    return body if isinstance(body, str) else None
