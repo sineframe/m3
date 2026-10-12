@@ -63,6 +63,9 @@ from .configuration import (
     ConfigSource,
     load_config,
 )
+from .configuration import (
+    _resolve_kit_config as _resolve_kit_config,
+)
 from .direct_client import (
     _ELICITATION_CALLBACK_REMOVED_MESSAGE,
     _REMOVED_ELICITATION_CALLBACK,
@@ -983,11 +986,7 @@ class AsyncMCPTestKit:
             )
         )
         self._record_checks = _record_checks_enabled(record_checks)
-        self.config = (
-            config
-            if isinstance(config, Config)
-            else load_config(config, env=env, cwd=cwd)
-        )
+        self.config = _resolve_kit_config(config, env=env, cwd=cwd)
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()

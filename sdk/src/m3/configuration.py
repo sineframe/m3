@@ -7,9 +7,13 @@ and UI/runtime limits) intentionally remain in :mod:`m3_app.settings`.
 
 from __future__ import annotations
 
+import hashlib as _hashlib
+import json as _json
+import math as _math
 import os as _os
 import re as _re
 import sys as _sys
+import threading as _threading
 import typing as _typing
 from collections.abc import Mapping as _Mapping
 from enum import Enum as _Enum
@@ -74,7 +78,58 @@ class ConfigOrigin(_FrozenModel):
     origin: str = _Field(min_length=1, max_length=4096)
 
 
-_FIELDS = ("artifact_policy", "protocol_revision")
+class _Section(_FrozenModel):
+    @_field_validator("*", mode="before")
+    @classmethod
+    def _reject_bool(cls, value: _Any) -> _Any:
+        if isinstance(value, bool):
+            raise ValueError("must be a number")
+        return value
+
+
+class CliSettings(_Section):
+    """Limits used by the m3 CLI before pytest starts."""
+
+    project_python_timeout_seconds: float = _Field(
+        default=15.0, gt=0, le=3600, allow_inf_nan=False
+    )
+
+
+class ResultsSettings(_Section):
+    """Results-store settings applied to stores the pytest plugin opens."""
+
+    busy_timeout_seconds: float = _Field(
+        default=5.0, ge=0, le=3600, allow_inf_nan=False
+    )
+
+
+SETTING_NAMES: tuple[str, ...] = (
+    "artifact_policy",
+    "protocol_revision",
+    "cli.project_python_timeout_seconds",
+    "results.busy_timeout_seconds",
+)
+_SECTIONS: dict[str, type[_Section]] = {"cli": CliSettings, "results": ResultsSettings}
+_DEFAULTS: dict[str, _Any] = {
+    "artifact_policy": "failed",
+    "protocol_revision": "auto",
+    "cli.project_python_timeout_seconds": 15.0,
+    "results.busy_timeout_seconds": 5.0,
+}
+_NUMBER_RULES: dict[str, tuple[bool, str]] = {  # (zero allowed, reason)
+    "cli.project_python_timeout_seconds": (
+        False,
+        "must be a number greater than 0 and at most 3600",
+    ),
+    "results.busy_timeout_seconds": (True, "must be a number from 0 to 3600"),
+}
+
+
+def _leaf(config: Config, name: str) -> _Any:
+    section, _, key = name.partition(".")
+    return getattr(getattr(config, section), key) if key else getattr(config, section)
+
+
 _ENV_FIELDS = {
     "M3_ARTIFACT_POLICY": "artifact_policy",
     "M3_PROTOCOL_REVISION": "protocol_revision",
@@ -85,8 +140,8 @@ _REVISION_PATTERN = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 def _default_origins() -> dict[str, ConfigOrigin]:
     return {
-        field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
-        for field in _FIELDS
+        name: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
+        for name in SETTING_NAMES
     }
 
 
@@ -95,6 +150,8 @@ class Config(_FrozenModel):
 
     artifact_policy: _Literal["failed", "always", "never"] = "failed"
     protocol_revision: _StrictStr = "auto"
+    cli: CliSettings = _Field(default_factory=CliSettings)
+    results: ResultsSettings = _Field(default_factory=ResultsSettings)
     sources: _Mapping[str, ConfigOrigin] = _Field(default_factory=_default_origins)
 
     @_field_validator("protocol_revision")
@@ -106,7 +163,7 @@ class Config(_FrozenModel):
 
     @_model_validator(mode="after")
     def _validate_sources(self) -> Config:
-        if set(self.sources) != set(_FIELDS):
+        if set(self.sources) != set(SETTING_NAMES):
             raise ValueError(
                 "sources must identify every supported configuration field"
             )
@@ -115,31 +172,32 @@ class Config(_FrozenModel):
             # omitted fields retain the default origin.  The mapping is
             # frozen here because this validator runs after the base model's
             # recursive-freeze hook.
-            inferred = {
-                field: ConfigOrigin(
-                    source=ConfigSource.EXPLICIT
-                    if field in self.__pydantic_fields_set__
-                    else ConfigSource.DEFAULT,
-                    origin=f"argument:{field}"
-                    if field in self.__pydantic_fields_set__
-                    else "default",
+            def explicit(name: str) -> bool:
+                section, _, key = name.partition(".")
+                if not key:
+                    return name in self.__pydantic_fields_set__
+                return (
+                    section in self.__pydantic_fields_set__
+                    and key in getattr(self, section).model_fields_set
                 )
-                for field in _FIELDS
+
+            inferred = {
+                name: ConfigOrigin(
+                    source=ConfigSource.EXPLICIT, origin=f"argument:{name}"
+                )
+                if explicit(name)
+                else ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
+                for name in SETTING_NAMES
             }
             object.__setattr__(self, "sources", _FrozenMapping(inferred))
         else:
-            defaults = {
-                "artifact_policy": "failed",
-                "protocol_revision": "auto",
-            }
-            for field in _FIELDS:
-                source = self.sources[field]
+            for name in SETTING_NAMES:
                 if (
-                    source.source is ConfigSource.DEFAULT
-                    and getattr(self, field) != defaults[field]
+                    self.sources[name].source is ConfigSource.DEFAULT
+                    and _leaf(self, name) != _DEFAULTS[name]
                 ):
                     raise ValueError(
-                        f"{field} has a non-default value but default provenance"
+                        f"{name} has a non-default value but default provenance"
                     )
         return self
 
@@ -150,7 +208,7 @@ class Config(_FrozenModel):
         return self.sources
 
     def source_for(self, field: str) -> ConfigOrigin:
-        if field not in _FIELDS:
+        if field not in SETTING_NAMES:
             raise ConfigError(
                 field=field,
                 origin="runtime",
@@ -186,15 +244,50 @@ def _validate(field: str, value: _Any, origin: str) -> _Any:
                 "must be auto or a non-empty protocol revision identifier",
             )
         return value
+    if field in _NUMBER_RULES:
+        zero_allowed, reason = _NUMBER_RULES[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not _math.isfinite(value)
+            or value < 0
+            or value > 3600
+            or (value == 0 and not zero_allowed)
+        ):
+            raise _error(field, origin, reason)
+        return float(value)
     raise _error(field, origin, "unknown setting", code="unknown_setting")
 
 
-def _validate_mapping(values: _Mapping[str, _Any], origin: str) -> dict[str, _Any]:
-    unknown = sorted(set(values) - set(_FIELDS))
+def _flatten(values: _Mapping[str, _Any], origin: str) -> dict[str, _Any]:
+    flat: dict[str, _Any] = {}
+    unknown: list[str] = []
+    for key, value in values.items():
+        if key in _SECTIONS:
+            if not isinstance(value, _Mapping):
+                raise _error(key, origin, "must be a table")
+            for leaf, leaf_value in value.items():
+                name = f"{key}.{leaf}"
+                if name in SETTING_NAMES:
+                    flat[name] = leaf_value
+                else:
+                    unknown.append(name)
+        elif key in SETTING_NAMES and "." not in key:
+            flat[key] = value
+        else:
+            unknown.append(key)
     if unknown:
         raise _error(
-            ", ".join(unknown), origin, "unknown setting", code="unknown_setting"
+            ", ".join(sorted(unknown)),
+            origin,
+            "unknown setting",
+            code="unknown_setting",
         )
+    return flat
+
+
+def _validate_mapping(values: _Mapping[str, _Any], origin: str) -> dict[str, _Any]:
+    values = _flatten(values, origin)
     return {
         field: _validate(
             field,
@@ -215,11 +308,7 @@ def _find_pyproject(start: str | _Path | None) -> _Path | None:
     return None
 
 
-def _project_values(start: str | _Path | None) -> tuple[dict[str, _Any], str]:
-    path = _find_pyproject(start)
-    if path is None:
-        return {}, "project:none"
-    origin = f"pyproject:{path}"
+def _read_m3_table(path: _Path, origin: str) -> dict[str, _Any] | None:
     try:
         document = _tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
@@ -231,12 +320,36 @@ def _project_values(start: str | _Path | None) -> tuple[dict[str, _Any], str]:
         raise _error(
             "project", origin, "tool table must be a table", code="invalid_project"
         )
-    values = tool.get("m3", {})
+    if "m3" not in tool:
+        return None
+    values = tool["m3"]
     if not isinstance(values, dict):
         raise _error(
             "project", origin, "[tool.m3] must be a table", code="invalid_project"
         )
-    return _validate_mapping(values, origin), origin
+    return values
+
+
+def _project_values(start: str | _Path | None) -> tuple[dict[str, _Any], str]:
+    path = _find_pyproject(start)
+    if path is None:
+        return {}, "project:none"
+    origin = f"pyproject:{path}"
+    table = _read_m3_table(path, origin)
+    return _validate_mapping(table or {}, origin), origin
+
+
+def _file_values(config_file: str | _Path) -> tuple[dict[str, _Any], str]:
+    path = _Path(config_file).expanduser().absolute()
+    origin = f"config-file:{path}"
+    if not path.is_file():
+        raise _error("config_file", origin, "file not found", code="invalid_project")
+    table = _read_m3_table(path, origin)
+    if table is None:
+        raise _error(
+            "project", origin, "missing [tool.m3] table", code="invalid_project"
+        )
+    return _validate_mapping(table, origin), origin
 
 
 def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
@@ -247,15 +360,31 @@ def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
     return values
 
 
+def _build(values: _Mapping[str, _Any], origins: _Mapping[str, ConfigOrigin]) -> Config:
+    sections: dict[str, _Any] = {
+        section: model(
+            **{
+                name.partition(".")[2]: values[name]
+                for name in SETTING_NAMES
+                if name.startswith(f"{section}.")
+            }
+        )
+        for section, model in _SECTIONS.items()
+    }
+    top = {name: values[name] for name in SETTING_NAMES if "." not in name}
+    return Config(**top, **sections, sources=dict(origins))
+
+
 def load_config(
     explicit: _Mapping[str, _Any] | None = None,
     *,
     env: _Mapping[str, str] | None = None,
     cwd: str | _Path | None = None,
+    config_file: str | _Path | None = None,
     artifact_policy: _Any = _UNSET,
     protocol_revision: _Any = _UNSET,
 ) -> Config:
-    """Resolve SDK settings using explicit, environment, project, default order.
+    """Resolve SDK settings using explicit, environment, project (or `config_file`), default order.
 
     ``env`` is injectable for deterministic callers and tests; omitted means
     the ambient process environment.  Project discovery reads only the
@@ -282,23 +411,18 @@ def load_config(
     provided.update(keyword_values)
     explicit_values = _validate_mapping(provided, "explicit")
     environment_values = _environment_values(env if env is not None else _os.environ)
-    project_values, project_origin = _project_values(cwd)
+    project_values, project_origin = (
+        _file_values(config_file) if config_file is not None else _project_values(cwd)
+    )
 
-    values: dict[str, _Any] = {
-        "artifact_policy": "failed",
-        "protocol_revision": "auto",
-    }
+    values: dict[str, _Any] = dict(_DEFAULTS)
     origins: dict[str, ConfigOrigin] = {
-        field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
-        for field in _FIELDS
+        name: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
+        for name in SETTING_NAMES
     }
-    for field, source_values, source, origin in (
-        ("artifact_policy", project_values, ConfigSource.PROJECT, project_origin),
-        ("protocol_revision", project_values, ConfigSource.PROJECT, project_origin),
-    ):
-        if field in source_values:
-            values[field] = source_values[field]
-            origins[field] = ConfigOrigin(source=source, origin=origin)
+    for name, value in project_values.items():
+        values[name] = value
+        origins[name] = ConfigOrigin(source=ConfigSource.PROJECT, origin=project_origin)
     for field, value in environment_values.items():
         values[field] = value
         origins[field] = ConfigOrigin(
@@ -309,13 +433,87 @@ def load_config(
         origins[field] = ConfigOrigin(
             source=ConfigSource.EXPLICIT, origin=f"argument:{field}"
         )
-    return Config(**values, sources=origins)
+    return _build(values, origins)
+
+
+def configuration_digest(config: Config) -> str:
+    """Stable digest of effective values; sources are excluded."""
+
+    payload = config.model_dump(mode="json", exclude={"sources"})
+    encoded = _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return "sha256:" + _hashlib.sha256(encoded).hexdigest()
+
+
+_run_config_lock = _threading.RLock()
+_run_config: Config | None = None
+
+
+def _install_run_config(config: Config | None) -> Config | None:
+    """Install the invocation's resolved settings; return the previous value."""
+
+    global _run_config
+    with _run_config_lock:
+        previous, _run_config = _run_config, config
+        return previous
+
+
+def _active_run_config() -> Config | None:
+    with _run_config_lock:
+        return _run_config
+
+
+_SNAPSHOT_VERSION = 1
+
+
+def _config_snapshot(config: Config) -> str:
+    return _json.dumps(
+        {"version": _SNAPSHOT_VERSION, "config": config.model_dump(mode="json")}
+    )
+
+
+def _config_from_snapshot(text: object) -> Config:
+    try:
+        payload = _json.loads(text) if isinstance(text, str) else None
+        if not isinstance(payload, dict) or payload.get("version") != _SNAPSHOT_VERSION:
+            raise ValueError
+        return Config.model_validate(payload["config"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("M3 configuration snapshot is invalid") from None
+
+
+def _resolve_kit_config(
+    config: Config | _Mapping[str, _Any] | None,
+    *,
+    env: _Mapping[str, str] | None,
+    cwd: str | _Path | None,
+) -> Config:
+    """A ready Config wins; inside a run, ambient discovery uses the run snapshot."""
+
+    if isinstance(config, Config):
+        return config
+    active = _active_run_config()
+    if active is None or env is not None or cwd is not None:
+        return load_config(config, env=env, cwd=cwd)
+    values = {name: _leaf(active, name) for name in SETTING_NAMES}
+    origins = dict(active.sources)
+    for name, value in _validate_mapping(config or {}, "explicit").items():
+        values[name] = value
+        origins[name] = ConfigOrigin(
+            source=ConfigSource.EXPLICIT, origin=f"argument:{name}"
+        )
+    return _build(values, origins)
 
 
 __all__ = [
+    "SETTING_NAMES",
+    "CliSettings",
     "Config",
     "ConfigError",
     "ConfigOrigin",
     "ConfigSource",
+    "ResultsSettings",
+    "configuration_digest",
     "load_config",
 ]

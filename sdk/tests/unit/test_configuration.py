@@ -8,7 +8,19 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from m3.configuration import Config, ConfigError, ConfigSource, load_config
+from m3.configuration import (
+    SETTING_NAMES,
+    Config,
+    ConfigError,
+    ConfigSource,
+    ResultsSettings,
+    _config_from_snapshot,
+    _config_snapshot,
+    _install_run_config,
+    _resolve_kit_config,
+    configuration_digest,
+    load_config,
+)
 
 
 def test_defaults_are_frozen_and_value_only() -> None:
@@ -24,7 +36,11 @@ def test_defaults_are_frozen_and_value_only() -> None:
 
 def test_direct_construction_infers_truthful_provenance() -> None:
     config = Config(artifact_policy="always", protocol_revision="2025-06-18")
-    assert all(info.source is ConfigSource.EXPLICIT for info in config.sources.values())
+    assert config.source_for("artifact_policy").source is ConfigSource.EXPLICIT
+    assert config.source_for("protocol_revision").source is ConfigSource.EXPLICIT
+    assert (
+        config.source_for("results.busy_timeout_seconds").source is ConfigSource.DEFAULT
+    )
     assert config.source_for("artifact_policy").origin == "argument:artifact_policy"
     assert Config().source_for("artifact_policy").source is ConfigSource.DEFAULT
 
@@ -208,3 +224,208 @@ def test_configuration_json_round_trip_and_aliases() -> None:
         json.loads(json.dumps(config.model_dump(mode="json")))
     )
     assert restored == config
+
+
+_NO_PROJECT = Path("/tmp/m3-no-project")
+_BUSY_REASON = "must be a number from 0 to 3600"
+_CLI_REASON = "must be a number greater than 0 and at most 3600"
+
+
+def test_nested_project_sections_and_origins(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 30\n", encoding="utf-8"
+    )
+    config = load_config(env={}, cwd=tmp_path)
+    assert config.results.busy_timeout_seconds == 30.0
+    assert (
+        config.source_for("results.busy_timeout_seconds").origin
+        == f"pyproject:{tmp_path / 'pyproject.toml'}"
+    )
+    assert config.cli.project_python_timeout_seconds == 15.0
+    assert (
+        config.source_for("cli.project_python_timeout_seconds").source
+        is ConfigSource.DEFAULT
+    )
+
+
+def test_explicit_nested_leaf_overrides_file_leaf_only(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 30\n", encoding="utf-8"
+    )
+    config = load_config({"results": {"busy_timeout_seconds": 1}}, env={}, cwd=tmp_path)
+    source = config.source_for("results.busy_timeout_seconds")
+    assert config.results.busy_timeout_seconds == 1.0
+    assert source.source is ConfigSource.EXPLICIT
+    assert source.origin == "argument:results.busy_timeout_seconds"
+    assert config.source_for("artifact_policy").source is ConfigSource.DEFAULT
+
+
+@pytest.mark.parametrize(
+    ("toml", "explicit", "code", "field", "reason"),
+    [
+        ("[tool.m3.results]\nfoo = 1\n", None, "unknown_setting", "results.foo", None),
+        (
+            "[tool.m3]\nresults = 3\n",
+            None,
+            "invalid_configuration",
+            "results",
+            "must be a table",
+        ),
+        (
+            "",
+            {"results.busy_timeout_seconds": 1},
+            "unknown_setting",
+            "results.busy_timeout_seconds",
+            None,
+        ),
+    ],
+)
+def test_nested_unknown_and_shape_errors(
+    tmp_path: Path,
+    toml: str,
+    explicit: dict[str, object] | None,
+    code: str,
+    field: str,
+    reason: str | None,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(toml, encoding="utf-8")
+    with pytest.raises(ConfigError) as caught:
+        load_config(explicit, env={}, cwd=tmp_path)
+    assert caught.value.code == code
+    assert caught.value.field == field
+    if reason is not None:
+        assert caught.value.reason == reason
+
+
+@pytest.mark.parametrize(
+    ("section", "name", "value", "reason", "secret"),
+    [
+        ("results", "busy_timeout_seconds", -1, _BUSY_REASON, "-1"),
+        ("results", "busy_timeout_seconds", 3601, _BUSY_REASON, "3601"),
+        ("results", "busy_timeout_seconds", True, _BUSY_REASON, "True"),
+        ("results", "busy_timeout_seconds", "5", _BUSY_REASON, "'5'"),
+        ("results", "busy_timeout_seconds", float("nan"), _BUSY_REASON, "nan"),
+        ("cli", "project_python_timeout_seconds", 0, _CLI_REASON, "= 0"),
+    ],
+)
+def test_nested_value_errors_are_value_free(
+    section: str, name: str, value: object, reason: str, secret: str
+) -> None:
+    with pytest.raises(ConfigError) as caught:
+        load_config({section: {name: value}}, env={}, cwd=_NO_PROJECT)
+    assert caught.value.code == "invalid_configuration"
+    assert caught.value.reason == reason
+    assert caught.value.field == f"{section}.{name}"
+    assert secret not in str(caught.value)
+
+
+def test_nested_toml_nan_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = nan\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError) as caught:
+        load_config(env={}, cwd=tmp_path)
+    assert caught.value.reason == _BUSY_REASON
+
+
+def test_config_file_replaces_discovery(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 30\n", encoding="utf-8"
+    )
+    other = tmp_path / "other.toml"
+    other.write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 40\n", encoding="utf-8"
+    )
+    config = load_config(env={}, cwd=tmp_path, config_file=other)
+    assert config.cli.project_python_timeout_seconds == 40.0
+    assert (
+        config.source_for("cli.project_python_timeout_seconds").origin
+        == f"config-file:{other}"
+    )
+    assert config.results.busy_timeout_seconds == 5.0
+    assert (
+        config.source_for("results.busy_timeout_seconds").source is ConfigSource.DEFAULT
+    )
+
+
+def test_config_file_errors(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as missing:
+        load_config(env={}, cwd=tmp_path, config_file=tmp_path / "missing.toml")
+    assert missing.value.code == "invalid_project"
+    assert missing.value.field == "config_file"
+    assert missing.value.reason == "file not found"
+    other = tmp_path / "other.toml"
+    other.write_text("[tool.other]\nx = 1\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as no_table:
+        load_config(env={}, cwd=tmp_path, config_file=other)
+    assert no_table.value.code == "invalid_project"
+    assert no_table.value.field == "project"
+    assert no_table.value.reason == "missing [tool.m3] table"
+
+
+def test_configuration_digest_ignores_sources(tmp_path: Path) -> None:
+    explicit = load_config(
+        {"results": {"busy_timeout_seconds": 30}}, env={}, cwd=_NO_PROJECT
+    )
+    thirty = tmp_path / "thirty.toml"
+    thirty.write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 30\n", encoding="utf-8"
+    )
+    from_file = load_config(env={}, cwd=_NO_PROJECT, config_file=thirty)
+    thirty_one = load_config(
+        {"results": {"busy_timeout_seconds": 31}}, env={}, cwd=_NO_PROJECT
+    )
+    assert explicit.sources != from_file.sources
+    assert configuration_digest(explicit) == configuration_digest(from_file)
+    assert configuration_digest(explicit) != configuration_digest(thirty_one)
+    assert configuration_digest(explicit).startswith("sha256:")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["{}", "x", None, json.dumps({"version": 2, "config": {}})],
+)
+def test_snapshot_round_trip_and_rejection(bad: object) -> None:
+    config = load_config(
+        {"results": {"busy_timeout_seconds": 30}}, env={}, cwd=_NO_PROJECT
+    )
+    assert _config_from_snapshot(_config_snapshot(config)) == config
+    with pytest.raises(ValueError, match="M3 configuration snapshot is invalid"):
+        _config_from_snapshot(bad)
+
+
+def test_kit_inherits_run_config() -> None:
+    previous = _install_run_config(
+        load_config({"results": {"busy_timeout_seconds": 30}}, env={}, cwd=_NO_PROJECT)
+    )
+    try:
+        assert (
+            _resolve_kit_config(None, env=None, cwd=None).results.busy_timeout_seconds
+            == 30.0
+        )
+        overridden = _resolve_kit_config(
+            {"results": {"busy_timeout_seconds": 2}}, env=None, cwd=None
+        )
+        assert overridden.results.busy_timeout_seconds == 2.0
+        assert (
+            overridden.source_for("results.busy_timeout_seconds").source
+            is ConfigSource.EXPLICIT
+        )
+        standalone = _resolve_kit_config(None, env={}, cwd=_NO_PROJECT)
+        assert standalone.results.busy_timeout_seconds == 5.0
+    finally:
+        _install_run_config(previous)
+
+
+def test_direct_construction_nested_provenance() -> None:
+    config = Config(results=ResultsSettings(busy_timeout_seconds=9))
+    leaf = config.source_for("results.busy_timeout_seconds")
+    assert leaf.source is ConfigSource.EXPLICIT
+    assert leaf.origin == "argument:results.busy_timeout_seconds"
+    for name in SETTING_NAMES:
+        if name != "results.busy_timeout_seconds":
+            assert config.source_for(name).source is ConfigSource.DEFAULT
+    with pytest.raises(ValidationError):
+        Config(
+            results=ResultsSettings(busy_timeout_seconds=9), sources=Config().sources
+        )

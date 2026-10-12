@@ -73,6 +73,9 @@ from .configuration import (
     ConfigSource,
     load_config,
 )
+from .configuration import (
+    _resolve_kit_config as _resolve_kit_config,
+)
 from .direct_client import (
     _ELICITATION_CALLBACK_REMOVED_MESSAGE,
     _REMOVED_ELICITATION_CALLBACK,
@@ -1548,11 +1551,7 @@ class MCPTestKit:
         self._max_judge_requests = effective_judge_limit
         self._probe_timeout_seconds = probe_timeout_seconds
         self._probe_output_limit = probe_output_limit
-        self.config = (
-            config
-            if isinstance(config, Config)
-            else load_config(config, env=env, cwd=cwd)
-        )
+        self.config = _resolve_kit_config(config, env=env, cwd=cwd)
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()
