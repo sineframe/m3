@@ -52,7 +52,7 @@ def _inventory() -> dict[int, tuple[int, bytes]]:
                     continue
                 try:
                     result[int(entry.name)] = _linux_status(entry / "stat")
-                except FileNotFoundError:
+                except (FileNotFoundError, ProcessLookupError):
                     # A process disappearing cannot remain a writer.
                     continue
             return result
@@ -95,7 +95,12 @@ class GroupInventory:
 
 
 def group_snapshot(pid: int) -> tuple[bool, bool]:
-    return GroupInventory().snapshot(pid)
+    # Standalone native guardians retain ownership when status is unknown.
+    # Preparation uses GroupInventory directly to report unavailable status.
+    try:
+        return GroupInventory().snapshot(pid)
+    except ProcessStatusUnavailable:
+        return False, True
 
 
 def members_alive(pid: int) -> bool:

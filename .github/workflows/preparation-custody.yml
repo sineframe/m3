@@ -5,7 +5,10 @@ on:
     paths:
       - 'sdk/src/m3/_process_group_custody.py'
       - 'sdk/src/m3/_preparation_worker.py'
+      - 'sdk/src/m3/_preparation_owner.py'
+      - 'sdk/src/m3/preparation.py'
       - 'sdk/tests/unit/test_process_group_custody.py'
+      - 'sdk/tests/unit/test_preparation.py'
       - '.github/workflows/preparation-custody.yml'
   workflow_dispatch:
 

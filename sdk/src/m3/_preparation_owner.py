@@ -41,7 +41,6 @@ class PreparationWorker:
         self._acknowledgements: deque[bytes] = deque()
         self._queued_bytes = 0
         self._routes: dict[str, tuple[asyncio.AbstractEventLoop, Callback]] = {}
-        self._groups: dict[str, int] = {}
         self._abandoned: set[str] = set()
         self._closing = False
         self._failed = False
@@ -81,8 +80,6 @@ class PreparationWorker:
         with self._lock:
             self._routes.pop(ident, None)
             self._abandoned.discard(ident)
-            if published:
-                self._groups.pop(ident, None)
 
     def send(self, action: str, ident: str, **values: Any) -> None:
         frame = (
@@ -109,13 +106,9 @@ class PreparationWorker:
         ident = frame["id"]
         with self._lock:
             route = self._routes.get(ident)
-            if frame["event"] in {"started", "cleanup_started"}:
-                self._groups[ident] = frame["pid"]
-            elif frame["event"] in {"removed", "rejected"}:
-                self._groups.pop(ident, None)
         if frame["event"] in {"started", "cleanup_started"}:
-            # No job may touch staging until its owning process group is
-            # recorded here. Helper death before this gate causes child EOF.
+            # The helper reserves this group before requesting acknowledgement.
+            # No job may mutate staging until this begin reply reaches it.
             self.send("begin", ident)
         if route is None:
             return
@@ -295,8 +288,8 @@ def worker_preparation(max_jobs: int = 64) -> PreparationWorker:
         worker = _workers.get(key)
         if worker is None or worker.failed:
             if worker is not None:
-                # A replacement serves new requests only. The old owner keeps
-                # fenced roots/groups; never retry the failed generation.
+                # A replacement serves new requests only. Keep the failed
+                # owner's private roots quarantined; do not retry its jobs.
                 _retired_workers.append(worker)
             worker = PreparationWorker(max_jobs)
             _workers[key] = worker

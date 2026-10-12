@@ -215,7 +215,7 @@ class PreparationSupervisor:
             if deadline is not None and time.monotonic() >= deadline:
                 raise asyncio.TimeoutError
             self._send("forget", ident)
-            self._worker.forget(ident, published=True)
+            self._worker.forget(ident)
             self._jobs.pop(ident, None)
             # No suspension after transfer: caller must publish/adopt without
             # an intervening await. The helper no longer owns this directory.

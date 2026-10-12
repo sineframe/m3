@@ -243,6 +243,7 @@ class _ForkJob:
         self.returncode: int | None = None
         self._reaped = False
         self.exited = False
+        self.live_descendants: bool | None = None
         self._sealed_inventory: GroupInventory | None = None
         self._exit_notification: ExitNotification | None = None
         self.pid = os.fork()
@@ -344,9 +345,11 @@ class _ForkJob:
                 self.exited = fallback_exited(self.pid, self._exit_notification)
         if not self.exited:
             return self.returncode
+        self.live_descendants = None
         if self.group_established:
             current = inventory if inventory is not None else GroupInventory()
             zombie, descendants = current.snapshot(self.pid)
+            self.live_descendants = descendants if zombie else None
             if not zombie or descendants:
                 return self.returncode
             if sys.platform.startswith("linux"):
@@ -648,9 +651,9 @@ def _supervise(
             exited = job.process.exited
             alive = job.process.alive()
             if job.state == "running" and exited and not job.stream_open:
-                if alive:
+                if job.process.live_descendants is True:
                     stop(job)
-                else:
+                elif not alive:
                     try:
                         result = json.loads(job.output)
                     except (ValueError, UnicodeError):

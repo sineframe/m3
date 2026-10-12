@@ -1010,7 +1010,7 @@ pathlib.Path({str(escaped)!r}).touch()
     job = next(iter(supervisor._jobs.values()))
     root = job.root
     assert not root.exists()
-    assert not supervisor._worker._groups  # No unacknowledged PGID recorded.
+    assert job.pid is None  # No group acknowledgement reached the facade.
     group_signals = []
     os.killpg = lambda pid, sig: group_signals.append((pid, sig))
     if LOSS == "controller_eof":
@@ -1213,12 +1213,19 @@ time.sleep(60)
     await wait(ready.exists)
     root = next(iter(supervisor._jobs.values())).root
     owner = supervisor._worker
+    acknowledged = []
+    original_deliver = owner._deliver
+    def deliver(frame):
+        if frame["event"] == "cleanup_started":
+            acknowledged.append(frame["pid"])
+        original_deliver(frame)
+    owner._deliver = deliver
     start = time.monotonic()
     owner.close(0.02)
     assert time.monotonic() - start < 0.2
     await wait(cleanup.exists)
     child = int(cleanup.read_text())
-    assert child in owner._groups.values()  # Registered before cleanup mutation.
+    assert child in acknowledged  # Group acknowledgement preceded cleanup mutation.
     group_signals = []
     os.killpg = lambda pid, sig: group_signals.append((pid, sig))
     os.kill(owner.helper_pid, signal.SIGKILL)
@@ -1461,5 +1468,32 @@ def test_failed_git_checkout_unregisters_even_after_staged_git_file_is_removed(
         assert worktrees.count("worktree ") == 1
         assert (source / "sample").read_text() == "preserved"
         await supervisor.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux group sealing")
+def test_completed_linux_workspace_is_published_after_group_sealing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "sample").write_text("complete")
+
+    async def run() -> None:
+        supervisor = PreparationSupervisor()
+        manager = WorkspaceManager(
+            WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), "sealed"
+        )
+        try:
+            root = await manager.create_async(supervisor, deadline=time.monotonic() + 5)
+            assert (root / "sample").read_text() == "complete"
+            assert supervisor.quarantined_roots == ()
+            manager.cleanup()
+            assert not root.exists()
+            assert source.exists()
+        finally:
+            manager.cleanup()
+            await supervisor.close()
 
     asyncio.run(run())

@@ -471,3 +471,33 @@ def test_standalone_guardian_can_load_custody_callables() -> None:
             job.poll()
             assert time.monotonic() < deadline
             time.sleep(0.01)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux proc inventory")
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+def test_disappearing_proc_entry_does_not_reject_the_inventory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error: type[OSError]
+) -> None:
+    import m3._process_group_custody as custody
+
+    live = tmp_path / "101"
+    live.mkdir()
+    (live / "stat").write_bytes(b"101 (process name) S 1 101 101")
+    vanished = tmp_path / "102"
+    vanished.mkdir()
+    original_iterdir = Path.iterdir
+    original_read = Path.read_bytes
+
+    def entries(path: Path):
+        return (
+            iter((live, vanished)) if str(path) == "/proc" else original_iterdir(path)
+        )
+
+    def read(path: Path) -> bytes:
+        if path == vanished / "stat":
+            raise error("process disappeared")
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "iterdir", entries)
+    monkeypatch.setattr(Path, "read_bytes", read)
+    assert custody._inventory() == {101: (101, b"S")}
