@@ -420,7 +420,7 @@
       "id": "reference-configuration",
       "title": "Configuration",
       "source": "reference/configuration.md",
-      "description": "Project identity and environment-file loading behavior.",
+      "description": "Project settings, native configuration values, and environment-file loading.",
       "kind": "reference",
       "searchAliases": [
         "env file"

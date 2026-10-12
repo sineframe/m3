@@ -620,11 +620,20 @@ m3.async_api.Config(
     *,
     artifact_policy: Literal['failed', 'always', 'never'] = 'failed',
     protocol_revision: str = 'auto',
+    harness_timeouts: m3.types.HarnessTimeouts = ...,
+    mcp_timeouts: m3.types.McpTimeouts = ...,
+    harnesses: m3.types.HarnessSettingsMap = ...,
+    servers: collections.abc.Mapping[str, m3.types.ServerSettings] = ...,
+    cli: m3.types.CliSettings = ...,
+    results: m3.types.ResultsSettings = ...,
+    worker_bootstrap: m3.types.WorkerBootstrapSettings = ...,
+    cache: m3.types.CachePolicy = ...,
+    admission: m3.types.StartupAdmission = ...,
     sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin] = ...,
 ) -> None
 ```
 
-Effective SDK-wide settings and the origin of each setting.
+SDK settings, native configuration values, and leaf origins.
 
 Model fields:
 
@@ -632,8 +641,17 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `artifact_policy` | `Literal['failed', 'always', 'never']` | No | `'failed'` | — | — |
 | `protocol_revision` | `str` | No | `'auto'` | `strict=True` | — |
-| `sources` | `collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` | No | `factory m3.configuration._default_origins()` | — | — |
-- `provenance` (property): Compatibility name for callers that call origins provenance.
+| `harness_timeouts` | `m3.types.HarnessTimeouts` | No | `factory m3.types.HarnessTimeouts()` | — | — |
+| `mcp_timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
+| `harnesses` | `m3.types.HarnessSettingsMap` | No | `factory m3.types.HarnessSettingsMap()` | — | — |
+| `servers` | `collections.abc.Mapping[str, m3.types.ServerSettings]` | No | `factory builtins.dict()` | `type argument 1: strict=True` | — |
+| `cli` | `m3.types.CliSettings` | No | `factory m3.types.CliSettings()` | — | — |
+| `results` | `m3.types.ResultsSettings` | No | `factory m3.types.ResultsSettings()` | — | — |
+| `worker_bootstrap` | `m3.types.WorkerBootstrapSettings` | No | `factory m3.types.WorkerBootstrapSettings()` | — | — |
+| `cache` | `m3.types.CachePolicy` | No | `factory m3.types.CachePolicy()` | — | — |
+| `admission` | `m3.types.StartupAdmission` | No | `factory m3.types.StartupAdmission()` | — | — |
+| `sources` | `collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` | No | `factory builtins.dict()` | — | — |
+- `provenance` (property): Origins for all supported leaves, including omitted native settings.
 
 ```python
 source_for(
@@ -641,6 +659,13 @@ source_for(
     field: str,
 ) -> ConfigOrigin
 ```
+
+```python
+redacted_projection(
+    self,
+) -> dict[str, _Any]
+```
+Legacy SDK diagnostics plus a value-free native settings projection.
 
 ## `ConfigError`
 
@@ -1409,6 +1434,7 @@ m3.async_api.load_config(
     *,
     env: _Mapping[str, str] | None = None,
     cwd: str | _Path | None = None,
+    config_file: str | _Path | None = None,
     artifact_policy: _Any = ...,
     protocol_revision: _Any = ...,
 ) -> Config

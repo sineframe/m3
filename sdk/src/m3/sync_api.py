@@ -1457,7 +1457,7 @@ def _baseline_report(config: Config, probes: Probes) -> ProbeReport:
         evidence=ProbeEvidence(
             kind=ProbeKind.CONFIGURATION,
             target="sdk-config",
-            details=config.model_dump(mode="json"),
+            details=config.redacted_projection(),
         ),
     )
     memory = probes.probe_storage("memory")

@@ -1224,7 +1224,7 @@ class AsyncMCPTestKit:
             evidence=ProbeEvidence(
                 kind=ProbeKind.CONFIGURATION,
                 target="sdk-config",
-                details=self.config.model_dump(mode="json"),
+                details=self.config.redacted_projection(),
             ),
         )
         memory = await self.probes.probe_storage("memory")

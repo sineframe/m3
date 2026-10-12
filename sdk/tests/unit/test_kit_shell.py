@@ -229,3 +229,28 @@ def test_async_capabilities_offload_blocking_probe_work() -> None:
         assert ticked
 
     asyncio.run(scenario())
+
+
+def test_sync_baseline_projects_native_configuration_without_identifiers() -> None:
+    config = Config(
+        harnesses={"codex": {"permissions": {"profile": "CONFIG-CANARY"}}},
+        servers={"CONFIG-CANARY": {"timeouts": {"startup_seconds": 75}}},
+    )
+    with MCPTestKit(config) as kit:
+        report = kit.capabilities()
+    assert "CONFIG-CANARY" not in report.model_dump_json()
+    assert report.results[0].evidence.details["native_settings"]
+
+
+@pytest.mark.asyncio
+async def test_async_baseline_projects_native_configuration_without_identifiers() -> (
+    None
+):
+    config = Config(
+        harnesses={"codex": {"permissions": {"profile": "CONFIG-CANARY"}}},
+        servers={"CONFIG-CANARY": {"timeouts": {"startup_seconds": 75}}},
+    )
+    async with AsyncMCPTestKit(config) as kit:
+        report = await kit.capabilities()
+    assert "CONFIG-CANARY" not in report.model_dump_json()
+    assert report.results[0].evidence.details["native_settings"]
