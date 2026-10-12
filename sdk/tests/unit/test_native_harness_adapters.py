@@ -29,7 +29,7 @@ from m3.harness.contracts import (
 from m3.harness.native import (
     MAX_FRAME_BYTES,
     _server_configuration,
-    configuration_secrets,
+    launch_secrets,
     write_config,
 )
 from m3.harness.observation_sink import HarnessObservationSink
@@ -2837,37 +2837,59 @@ async def test_opencode_turn_error_keeps_native_name_and_redacted_reason() -> No
 
 
 @pytest.mark.asyncio
-async def test_opencode_turn_reason_redacts_urls_multiline_secrets_not_trivia(
+async def test_opencode_turn_reason_redacts_urls_and_launch_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TOKEN_LIMIT", "1")
     pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
-    endpoint = "http://127.0.0.1:5555/mcp?k=QUERY-CANARY&api_key=KEY-CANARY"
+    endpoint = "http://127.0.0.1:5555/api/mcp/s/ZapPathCanary/mcp?k=QUERY-CANARY"
+    base = _launch()
     adapter = OpenCodeHarnessAdapter(executable="fixture")
-    adapter._configuration_secrets = configuration_secrets(
-        (
-            HarnessServerConfig(
-                key="remote",
-                transport=TransportKind.STREAMABLE_HTTP,
-                required=True,
-                available=True,
-                connection_id="remote-connection",
-                endpoint=endpoint,
-                environment={"PRIVATE_KEY": pem},
+    adapter._launch_secrets = launch_secrets(
+        HarnessLaunch(
+            base.spec,
+            base.servers,
+            (
+                HarnessServerConfig(
+                    key="remote",
+                    transport=TransportKind.STREAMABLE_HTTP,
+                    required=True,
+                    available=True,
+                    connection_id="remote-connection",
+                    endpoint=endpoint,
+                    environment={
+                        "PRIVATE_KEY": pem,
+                        "API_TOKEN": "4821",
+                        "GITHUB_PAT": "ghp_literal_canary",
+                        "MODE": "stream",
+                    },
+                ),
             ),
+            base.tool_policy,
         )
     )
     message, details = adapter._native_failure(
         "OpenCode turn failed",
         {
             "name": "UnknownError",
-            "data": {"message": f"fetch {endpoint} failed (id 1); bad key {pem}"},
+            "data": {
+                "message": f"fetch {endpoint} failed (id 1); bad key {pem}, "
+                "pin 4821, pat ghp_literal_canary, stream closed"
+            },
         },
     )
-    for canary in ("QUERY-CANARY", "KEY-CANARY", "MIIE-CANARY"):
+    for canary in (
+        "ZapPathCanary",
+        "QUERY-CANARY",
+        "MIIE-CANARY",
+        "4821",
+        "ghp_literal_canary",
+    ):
         assert canary not in message and canary not in repr(details)
-    assert "fetch http://127.0.0.1:5555/mcp?" in message
-    assert message.endswith("failed (id 1); bad key [REDACTED]")
+    assert message == (
+        "OpenCode turn failed: UnknownError: fetch http://127.0.0.1:5555/… failed "
+        "(id 1); bad key [REDACTED], pin [REDACTED], pat [REDACTED], stream closed"
+    )
 
 
 @pytest.mark.asyncio
