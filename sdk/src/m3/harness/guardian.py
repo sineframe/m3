@@ -39,7 +39,7 @@ class NativeGuardian:
         self._death_descriptor: int | None = None
         self._death_confirmed = False
         self._admission_descriptor: int | None = None
-        self._reader: tuple[asyncio.AbstractEventLoop, int, object] | None = None
+        self._reader: tuple[asyncio.AbstractEventLoop, int] | None = None
 
     @property
     def process(self) -> asyncio.subprocess.Process:
@@ -265,7 +265,7 @@ class NativeGuardian:
                 available.set_result(value)
             loop.remove_reader(descriptor)
 
-        binding = (loop, descriptor, object())
+        binding = (loop, descriptor)
         self._reader = binding
         loop.add_reader(descriptor, receive_block)
         delivered = False
@@ -384,7 +384,7 @@ class NativeGuardian:
         if not self._closed:
             self._closed = True
             if self._reader is not None:
-                loop, descriptor, _ = self._reader
+                loop, descriptor = self._reader
                 if self._channel.fileno() == descriptor:
                     loop.remove_reader(descriptor)
                 self._reader = None
