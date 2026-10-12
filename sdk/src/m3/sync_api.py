@@ -47,6 +47,8 @@ from anyio.from_thread import (
 from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 
 from . import _timing
+from ._admission_settings import admission_override as _admission_override
+from ._admission_settings import override_admission_config as _override_admission_config
 from ._check_recording import (
     bind_subject as _bind_subject,
 )
@@ -66,6 +68,7 @@ from ._default_store import (
 from ._native_settings import NativePermissions as _NativePermissions
 from ._native_settings import permission_override as _permission_override
 from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import StartupAdmission as _StartupAdmission
 from ._types.settings import Unset as _Unset
 from ._types.specs import AgentSpec as _AgentSpec
 from .agent_session import AgentAdapter as _AgentAdapter
@@ -1493,6 +1496,7 @@ class MCPTestKit:
         record_checks: bool = False,
         max_judge_requests: int | None = None,
         harness_cache_dir: str | _Path | None = None,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
     ) -> None:
         from ._test_runs import active_test
 
@@ -1554,7 +1558,7 @@ class MCPTestKit:
         self._probe_timeout_seconds = probe_timeout_seconds
         self._probe_output_limit = probe_output_limit
         configuration = _resolve_configuration(config, env=env, cwd=cwd)
-        self.config = configuration.config
+        self.config = _override_admission_config(configuration.config, admission)
         self._literal_registry = configuration.literal_registry
         self._owns_store = False
         if store is None:
@@ -2104,12 +2108,14 @@ class MCPTestKit:
         interaction_handlers: InteractionHandlers | None = None,
         harness_cache_dir: str | _Path | None = None,
         harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
     ) -> AgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
             self._unsupported("agent_session")
         spec = _cast(_AgentSpec, self._with_run_id(spec))
         spec = _permission_override(spec, harness_permissions)
+        spec = _admission_override(spec, admission)
         with self._state_lock:
             if self._closed:
                 raise _KitClosed("MCPTestKit is closed")

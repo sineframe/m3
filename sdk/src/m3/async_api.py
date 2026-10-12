@@ -34,6 +34,8 @@ from mcp import ClientSession as _ClientSession
 from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 
 from . import _timing
+from ._admission_settings import override_admission_config as _override_admission_config
+from ._admission_settings import resolve_admission as _resolve_admission
 from ._check_recording import (
     bind_execution as _bind_execution,
 )
@@ -59,6 +61,7 @@ from ._native_settings import resolve_native_settings as _resolve_native_setting
 from ._native_settings import resolve_runtime_settings as _resolve_runtime_settings
 from ._native_settings import validate_bound_settings as _validate_bound_settings
 from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import StartupAdmission as _StartupAdmission
 from ._types.settings import Unset as _Unset
 from ._types.specs import AgentSpec as _AgentSpec
 from .agent_session import AgentAdapter as _AgentAdapter
@@ -947,6 +950,7 @@ class AsyncMCPTestKit:
         record_checks: bool = False,
         max_judge_requests: int | None = None,
         harness_cache_dir: str | _Path | None = None,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
     ) -> None:
         from ._test_runs import active_test
 
@@ -992,7 +996,7 @@ class AsyncMCPTestKit:
         )
         self._record_checks = _record_checks_enabled(record_checks)
         configuration = _resolve_configuration(config, env=env, cwd=cwd)
-        self.config = configuration.config
+        self.config = _override_admission_config(configuration.config, admission)
         self._literal_registry = configuration.literal_registry
         self._owns_store = False
         if store is None:
@@ -1540,6 +1544,7 @@ class AsyncMCPTestKit:
         _managed_input_runtime: _Any = None,
         harness_cache_dir: str | _Path | None = None,
         harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
     ) -> AsyncAgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
@@ -1560,6 +1565,7 @@ class AsyncMCPTestKit:
         spec = _resolve_native_settings(
             _permission_override(spec, harness_permissions), self.config
         )
+        spec = _resolve_admission(spec, self.config, admission)
         server_profile_by_ordinal = {
             item.get("_ordinal"): item
             for item in session_profile_provenance

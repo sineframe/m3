@@ -70,6 +70,28 @@ async def test_cancelled_head_and_queue_timeout_release_ticket(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_larger_request_cannot_widen_active_smaller_host_limit(
+    tmp_path: Path,
+) -> None:
+    admission = HostAdmission(tmp_path / "host")
+    first = await admission.acquire(
+        StartupAdmission(enabled=True, slots=1, queue_timeout_seconds=2)
+    )
+    assert first is not None
+    pending = asyncio.create_task(
+        admission.acquire(
+            StartupAdmission(enabled=True, slots=4, queue_timeout_seconds=2)
+        )
+    )
+    await asyncio.sleep(0.075)
+    assert not pending.done()
+    first.close()
+    next_lease = await pending
+    assert next_lease is not None
+    next_lease.close()
+
+
+@pytest.mark.asyncio
 async def test_load_gate_keeps_capacity_idle_until_load_recovers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

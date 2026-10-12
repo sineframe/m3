@@ -42,6 +42,7 @@ from .settings import (
     CodexPermissions,
     McpTimeouts,
     OpenCodePermissions,
+    StartupAdmission,
 )
 
 ContentBlock = _Annotated[
@@ -598,6 +599,7 @@ class AgentSpec(_ExecutionSpecBase):
     message: UserMessage | None = None
     elicitation: _ElicitationPlan | None = None
     elicitation_round_limit: int = 10
+    admission: StartupAdmission = _Field(default_factory=StartupAdmission)
     harness_permissions: (
         CodexPermissions | ClaudeCodePermissions | OpenCodePermissions | None
     ) = None
@@ -633,6 +635,8 @@ class AgentSpec(_ExecutionSpecBase):
     @_model_serializer(mode="wrap")
     def _serialize_native_permissions(self, handler: _Any) -> dict[str, _Any]:
         value = dict(handler(self))
+        if not self.admission.model_dump():
+            value.pop("admission", None)
         if self.harness_permissions is None:
             value.pop("harness_permissions", None)
         else:
