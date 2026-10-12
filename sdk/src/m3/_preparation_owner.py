@@ -13,7 +13,6 @@ import atexit
 import json
 import os
 import selectors
-import signal
 import socket
 import subprocess
 import sys
@@ -25,7 +24,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ._preparation_worker import MAX_FRAME, _group_alive, _signal_group
+from ._preparation_worker import MAX_FRAME
 
 Callback = Callable[[dict[str, Any]], None]
 
@@ -321,28 +320,12 @@ class PreparationWorker:
                 routes = tuple(self._routes)
             for ident in routes:
                 self._deliver({"id": ident, "event": "lost"})
-            # An unexpected helper death cannot orphan a materializing job:
-            # the start gate ensures every writer group was registered first.
-            # Retain this owner/thread while a KILL-resistant kernel IO wait
-            # survives. Roots remain quarantined; never delete them here.
-            with self._lock:
-                groups = tuple(self._groups.values())
-            # The helper's session also contains any child not yet through
-            # setsid. A child that races into a new session without its ACK
-            # reaching us has a closed start gate and cannot materialize.
+            # Only the helper is our waitable child. Its EOF handler owns job
+            # cancellation while it survives. If it dies unexpectedly, recorded
+            # job PGIDs no longer prove identity: retain their private roots in
+            # quarantine rather than signal, publish, reuse, or delete them.
             if process is not None:
-                groups = (*groups, process.pid)
-            for group in groups:
-                _signal_group(group, signal.SIGKILL)
-            while True:
-                if process is not None:
-                    # Reap our own helper before testing its session. A zombie
-                    # helper still answers killpg(0); waiting on that without
-                    # poll would keep the ownership thread alive indefinitely.
-                    process.poll()
-                if not any(_group_alive(group) for group in groups):
-                    break
-                time.sleep(0.02)
+                process.wait()
 
     def close(self, timeout_seconds: float = 3) -> None:
         if self.pid != os.getpid():
