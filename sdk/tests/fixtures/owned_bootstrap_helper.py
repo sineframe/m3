@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from m3 import _bootstrap_operations as operations
+from m3.workspace import WorkspaceManager
 
 mode, arm_name, marker_name, fifo_name, late_name = sys.argv[1:6]
 arm = Path(arm_name)
@@ -18,6 +19,7 @@ late = Path(late_name)
 original_open = os.open
 original_resource = operations._resource
 original_unlink = Path.unlink
+original_workspace_cleanup = WorkspaceManager._cleanup
 
 
 def block_filesystem(target: Path) -> None:
@@ -52,8 +54,15 @@ def record_resource(root: Path, path: Path, **kwargs: object) -> dict[str, objec
     return original_resource(root, path, **kwargs)
 
 
+def blocked_workspace_cleanup(manager: WorkspaceManager, *, bounded: bool) -> None:
+    if mode == "workspace_remove" and arm.exists():
+        block_filesystem(manager.root / "cleanup")
+    original_workspace_cleanup(manager, bounded=bounded)
+
+
 operations.os.open = blocked_open
 operations._resource = record_resource
 Path.unlink = blocked_unlink
+WorkspaceManager._cleanup = blocked_workspace_cleanup
 sys.argv = [sys.argv[0], *sys.argv[6:]]
 runpy.run_module("m3._preparation_worker", run_name="__main__")

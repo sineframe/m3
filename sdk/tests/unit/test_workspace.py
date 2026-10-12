@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,6 +23,131 @@ from m3.types import (
     WorkspacePolicy,
 )
 from m3.workspace import WorkspaceError, WorkspaceManager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind", [WorkspaceKind.COPY, WorkspaceKind.READ_ONLY, WorkspaceKind.IN_PLACE]
+)
+async def test_bounded_cleanup_preserves_source_and_removes_only_owned_roots(
+    tmp_path: Path, kind: WorkspaceKind
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "input.txt").write_text("source")
+    manager = _manager(
+        WorkspacePolicy(kind=kind, source=str(source), acknowledge_risk=True), tmp_path
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    await manager.cleanup_async(deadline=time.monotonic() + 5)
+    assert (source / "input.txt").read_text() == "source"
+    assert root.exists() == (kind is WorkspaceKind.IN_PLACE)
+    assert manager._preparation_root is not None
+    assert not manager._preparation_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_bounded_cleanup_rejects_replaced_root(tmp_path: Path) -> None:
+    from m3._bootstrap_operations import PrivateOperationError
+
+    manager = _manager(WorkspacePolicy(), tmp_path)
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    original = root.with_name("original")
+    root.rename(original)
+    root.mkdir()
+    (root / "must-survive.txt").write_text("replacement")
+    try:
+        with pytest.raises(PrivateOperationError):
+            await manager.cleanup_async(deadline=time.monotonic() + 5)
+        assert (root / "must-survive.txt").read_text() == "replacement"
+        with pytest.raises(WorkspaceError, match="quarantined"):
+            manager.cleanup()
+    finally:
+        root.joinpath("must-survive.txt").unlink()
+        root.rmdir()
+        original.rmdir()
+        assert manager._preparation_root is not None
+        manager._preparation_root.rmdir()
+
+
+@pytest.mark.asyncio
+async def test_expired_cleanup_never_removes_workspace(tmp_path: Path) -> None:
+    manager = _manager(WorkspacePolicy(), tmp_path)
+    root = manager.create()
+    with pytest.raises(asyncio.TimeoutError):
+        await manager.cleanup_async(deadline=time.monotonic() - 1)
+    assert root.exists()
+    # The expired call cannot start its helper; fixture disposal is safe.
+    root.rmdir()
+
+
+@pytest.mark.asyncio
+async def test_bounded_worktree_cleanup_removes_only_its_registration(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "repository"
+    source.mkdir()
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    (source / "input.txt").write_text("source")
+    subprocess.run(["git", "add", "input.txt"], cwd=source, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "initial",
+        ],
+        cwd=source,
+        check=True,
+        capture_output=True,
+    )
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.GIT_WORKTREE, source=str(source)), tmp_path
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    await manager.cleanup_async(deadline=time.monotonic() + 5)
+    registered = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert str(root) not in registered
+    assert (source / "input.txt").read_text() == "source"
+    assert not root.exists()
+
+
+@pytest.mark.asyncio
+async def test_blocked_cleanup_is_fenced_without_late_workspace_deletion(
+    tmp_path: Path, blocked_helper: Any
+) -> None:
+    from m3._bootstrap_operations import PrivateOperationError
+
+    _, _, marker, _, _ = blocked_helper("workspace_remove")
+    manager = _manager(WorkspacePolicy(), tmp_path)
+    root = manager.create()
+    (root / "evidence.txt").write_text("keep")
+    started = time.monotonic()
+    with pytest.raises((asyncio.TimeoutError, PrivateOperationError)):
+        await manager.cleanup_async(deadline=started + 0.5)
+    assert time.monotonic() - started < 1.5
+    assert marker.exists()
+    assert (root / "evidence.txt").read_text() == "keep"
+    with pytest.raises(WorkspaceError, match="quarantined"):
+        manager.cleanup()
+    # The retained owner must acknowledge writer death before fixture disposal.
+    assert manager._cleanup_operations is not None
+    await asyncio.to_thread(
+        manager._cleanup_operations.close, deadline=time.monotonic() + 3
+    )
+    assert manager._cleanup_operations.cleanup_complete
+    (root / "evidence.txt").unlink()
+    root.rmdir()
 
 
 def _manager(

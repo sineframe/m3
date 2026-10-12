@@ -152,8 +152,12 @@ def _job(operation: str, root: Path, payload: dict[str, Any]) -> dict[str, Any]:
                     manager._copy_tree(source, target)
                     if policy.kind is WorkspaceKind.READ_ONLY:
                         manager._make_read_only(target)
+        identity = target.stat(follow_symlinks=False)
+        staging_identity = root.stat(follow_symlinks=False)
         return {
             "root": str(target),
+            "root_identity": [identity.st_dev, identity.st_ino],
+            "staging_identity": [staging_identity.st_dev, staging_identity.st_ino],
             "owned": owned,
             "baseline": manager._snapshot(target),
         }
@@ -506,6 +510,7 @@ def _supervise(
                 "private_remove",
                 "private_native_auth",
                 "private_read_auth",
+                "private_workspace_cleanup",
             }
             short_endpoint = request[
                 "operation"

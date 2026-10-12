@@ -16,6 +16,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from glob import has_magic
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ._bootstrap_operations import OwnedBootstrapOperations
     from .preparation import PreparationSupervisor
 
 from . import _timing
@@ -170,6 +172,7 @@ class WorkspaceManager:
         )
         self._include_excluded = include_excluded
         self._root: Path | None = None
+        self._root_identity: tuple[int, int] | None = None
         self._owned_root = False
         self._baseline: dict[str, tuple[int, str]] = {}
         self._lock = threading.RLock()
@@ -177,8 +180,11 @@ class WorkspaceManager:
         self._cleaned = False
         self._cleanup_error: WorkspaceError | None = None
         self._preparation_root: Path | None = None
+        self._preparation_root_identity: tuple[int, int] | None = None
         self._async_create_lock = asyncio.Lock()
         self._preparing = False
+        self._async_cleanup_lock = asyncio.Lock()
+        self._cleanup_operations: OwnedBootstrapOperations | None = None
 
     async def create_async(
         self,
@@ -239,7 +245,11 @@ class WorkspaceManager:
                 }
                 self._owned_root = material.data["owned"]
                 self._preparation_root = material.staging_root
+                self._preparation_root_identity = tuple(
+                    material.data["staging_identity"]
+                )
                 self._root = Path(material.data["root"])
+                self._root_identity = tuple(material.data["root_identity"])
                 return self._root
         finally:
             with self._lock:
@@ -311,6 +321,8 @@ class WorkspaceManager:
                     if kind is WorkspaceKind.READ_ONLY:
                         self._make_read_only(root)
             self._root = root
+            identity = root.stat(follow_symlinks=False)
+            self._root_identity = (identity.st_dev, identity.st_ino)
             self._baseline = self._snapshot(root)
             return root
 
@@ -626,11 +638,16 @@ class WorkspaceManager:
 
     @_timing.timed("workspace.cleanup")
     def cleanup(self) -> None:
+        self._cleanup(bounded=False)
+
+    def _cleanup(self, *, bounded: bool) -> None:
         with self._lock:
             if self._preparing:
                 raise WorkspaceError("workspace preparation is in progress")
             if self._cleaned:
                 return
+            if self._cleanup_operations is not None:
+                raise WorkspaceError("workspace cleanup remains quarantined")
             root = self._root
             if root is None:
                 self._cleaned = True
@@ -662,8 +679,14 @@ class WorkspaceManager:
                     )
                     if source is None:
                         raise WorkspaceError("git worktree source is unavailable")
+                    if bounded:
+                        from ._preparation_worker import _bounded_git_argv
+
+                        git_argv = _bounded_git_argv(source)
+                    else:
+                        git_argv = ["git"]
                     subprocess.run(
-                        ["git", "worktree", "remove", "--force", str(root)],
+                        [*git_argv, "worktree", "remove", "--force", str(root)],
                         cwd=str(source),
                         check=True,
                         capture_output=True,
@@ -682,6 +705,59 @@ class WorkspaceManager:
                 self._cleanup_error = WorkspaceError("workspace cleanup failed")
                 raise self._cleanup_error from None
             self._cleaned = True
+
+    async def cleanup_async(
+        self,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        """Remove a workspace through an owned job when cleanup is bounded."""
+        if deadline is None:
+            await asyncio.to_thread(self.cleanup)
+            return
+        if deadline <= time.monotonic():
+            raise asyncio.TimeoutError
+        if os.name != "posix":
+            raise WorkspaceError("bounded workspace cleanup is unsupported")
+        from ._bootstrap_operations import OwnedBootstrapOperations
+
+        async with self._async_cleanup_lock:
+            with self._lock:
+                if self._cleaned:
+                    return
+                if self._preparing:
+                    raise WorkspaceError("workspace preparation is in progress")
+                if self._root is None:
+                    self._cleaned = True
+                    return
+                if self._cleanup_operations is not None:
+                    raise WorkspaceError("workspace cleanup remains quarantined")
+                operations = OwnedBootstrapOperations()
+                self._cleanup_operations = operations
+                payload = {
+                    "policy": self.policy.model_dump(mode="json"),
+                    "root": str(self._root),
+                    "owned": self._owned_root,
+                    "identity": self._root_identity,
+                    "preparation_identity": self._preparation_root_identity,
+                    "preparation_root": (
+                        str(self._preparation_root)
+                        if self._preparation_root is not None
+                        else None
+                    ),
+                }
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        operations.remove_workspace, payload, deadline=deadline
+                    ),
+                    timeout=max(0, deadline - time.monotonic()),
+                )
+                with self._lock:
+                    self._cleaned = True
+            except BaseException:
+                self._cleanup_error = WorkspaceError("workspace cleanup failed")
+                raise
 
 
 __all__ = [
