@@ -293,3 +293,231 @@ async def test_duplicate_unqualified_tool_and_unknown_server_are_violations() ->
     ) as session2:
         unknown = await session2.send("run")
     assert unknown.error is not None and unknown.error.code is ErrorCode.UNSUPPORTED
+
+
+def _codex_reported_calls(*items: Mapping[str, object]) -> tuple[dict, ...]:
+    """Decode Codex App Server ``mcpToolCall`` items the way a turn reports them."""
+
+    from datetime import datetime, timezone
+
+    from m3.harness.codex import CodexHarnessAdapter
+
+    adapter = CodexHarnessAdapter(executable="codex")
+    calls: list[dict] = []
+    for index, item in enumerate(items):
+        _, _, decoded = adapter.consume_frame(
+            {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": f"call-{index}",
+                        "status": "completed",
+                        **item,
+                    }
+                },
+            },
+            1,
+            datetime.now(timezone.utc),
+            0.0,
+            [],
+        )  # type: ignore[arg-type]
+        calls.extend(decoded)
+    return tuple(calls)
+
+
+async def _send_with_bound(
+    calls: tuple[Mapping[str, object], ...],
+    *,
+    server: str,
+    tools: tuple[str, ...],
+    allowed: tuple[str, ...],
+):
+    class Reporting(ReportingAdapter):
+        async def send(self, message, *, timeout=None, metadata=None) -> AdapterTurn:
+            turn = await super().send(message, timeout=timeout, metadata=metadata)
+            return AdapterTurn(response=turn.response, tool_calls=calls)
+
+    binding = ServerBinding(server=StdioServer(name=server, command=server))
+    manager = ServerGroupManager((binding,))
+    await manager.start()
+    manager.register_tools(server, tools)
+    spec = AgentSpec(
+        harness=ACPAgent(model="fixture"),
+        servers=(binding,),
+        tool_policy=RestrictiveToolPolicy(allowed_tools=allowed),
+    )
+    async with AsyncAgentSession(
+        spec, Reporting({"kind": "tool_call"}), server_manager=manager
+    ) as session:
+        return await session.send("answer")
+
+
+@pytest.mark.asyncio
+async def test_codex_resource_introspection_is_not_evaluated_as_mcp_tool_traffic() -> (
+    None
+):
+    calls = _codex_reported_calls(
+        {"server": "codex", "tool": "list_mcp_resources", "arguments": {}},
+        {
+            "server": "fixture",
+            "tool": "list_mcp_resource_templates",
+            "arguments": {"server": "fixture"},
+        },
+        {
+            "server": "fixture",
+            "tool": "read_mcp_resource",
+            "arguments": {"server": "fixture", "uri": "file:///notes"},
+        },
+    )
+    result = await _send_with_bound(
+        calls, server="fixture", tools=("allowed",), allowed=("fixture:allowed",)
+    )
+    assert result.error is None
+    assert result.response is not None
+
+
+@pytest.mark.asyncio
+async def test_introspection_of_an_unbound_server_is_a_violation() -> None:
+    calls = _codex_reported_calls(
+        {
+            "server": "missing",
+            "tool": "read_mcp_resource",
+            "arguments": {"server": "missing", "uri": "file:///notes"},
+        }
+    )
+    result = await _send_with_bound(
+        calls, server="fixture", tools=("allowed",), allowed=("fixture:allowed",)
+    )
+    assert result.error is not None
+    violations = result.error.details["policy_violations"]
+    assert [(v["server"], v["reason"]) for v in violations] == [
+        ("missing", "server_unavailable")
+    ]
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [("list_mcp_resources",), ()],
+    ids=["advertises-colliding-tool", "unknown-tool-list"],
+)
+@pytest.mark.asyncio
+async def test_bound_server_named_codex_cannot_use_the_introspection_exemption(
+    tools: tuple[str, ...],
+) -> None:
+    calls = _codex_reported_calls(
+        {"server": "codex", "tool": "list_mcp_resources", "arguments": {}}
+    )
+    result = await _send_with_bound(
+        calls, server="codex", tools=tools, allowed=("codex:other",)
+    )
+    assert result.error is not None
+    assert result.error.details["policy_violations"][0]["tool"] == (
+        "list_mcp_resources"
+    )
+
+
+@pytest.mark.parametrize("gated", [True, False], ids=["wire-gated", "ungated"])
+@pytest.mark.asyncio
+async def test_unknown_tool_list_exempts_introspection_only_behind_a_wire_gate(
+    gated: bool,
+) -> None:
+    from m3.server_group import ServerRecord
+
+    class Capture:
+        def snapshots(self) -> tuple[()]:
+            return ()
+
+        def enforces_portable_policy(self, connection_ids) -> bool:
+            return gated and tuple(connection_ids) == ("conn-fixture",)
+
+    class Manager:
+        capture = Capture()
+
+        def snapshot(self):
+            record = ServerRecord(
+                key="fixture",
+                server=StdioServer(name="fixture", command="fixture"),
+                required=True,
+                available=True,
+                connection_id="conn-fixture",
+            )
+            return type("Snapshot", (), {"records": (record,)})()
+
+    adapter = ReportingAdapter({"kind": "tool_call"})
+    session = AsyncAgentSession(
+        _spec(RestrictiveToolPolicy(allowed_tools=("fixture:allowed",))), adapter
+    )
+    session._tool_policy_evidence = adapter.last_policy_evidence
+    session._server_manager = Manager()  # type: ignore[assignment]
+    raw = AdapterTurn(
+        response=TurnResponse(content=(TextContent(text="done"),)),
+        tool_calls=_codex_reported_calls(
+            {
+                "server": "fixture",
+                "tool": "read_mcp_resource",
+                "arguments": {"server": "fixture", "uri": "file:///notes"},
+            }
+        ),
+    )
+    violations = session._evaluate_reported_tool_calls(raw)
+    assert (violations == ()) is gated
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        # ``read_mcp_resource`` always names its server in the arguments.
+        {"server": "codex", "tool": "read_mcp_resource", "arguments": {}},
+        # The reported server must be the one Codex derives from arguments.
+        {
+            "server": "codex",
+            "tool": "list_mcp_resources",
+            "arguments": {"server": "fixture"},
+        },
+        {"server": "fixture", "tool": "list_mcp_resources", "arguments": {}},
+    ],
+    ids=["read-without-server", "server-argument-mismatch", "unqualified-list"],
+)
+@pytest.mark.asyncio
+async def test_calls_outside_codex_introspection_shape_remain_mcp_traffic(
+    item: Mapping[str, object],
+) -> None:
+    result = await _send_with_bound(
+        _codex_reported_calls(item),
+        server="fixture",
+        tools=("allowed",),
+        allowed=("fixture:allowed",),
+    )
+    assert result.error is not None
+    assert result.error.details["policy_violations"]
+
+
+@pytest.mark.asyncio
+async def test_policy_violation_fails_turn_but_retains_and_persists_response(
+    tmp_path,
+) -> None:
+    from m3.execution_trace import ExecutionTraceRecorder
+    from m3.storage.sqlite import SQLiteExecutionStore
+    from m3.types import TurnOutcome
+
+    database = tmp_path / "results.sqlite"
+    recorder = ExecutionTraceRecorder(SQLiteExecutionStore(database), "policy-retain")
+    async with AsyncAgentSession(
+        _spec(RestrictiveToolPolicy(allowed_tools=("fixture:allowed",))),
+        ReportingAdapter({"server": "fixture", "tool": "blocked"}),
+        trace_recorder=recorder,
+    ) as session:
+        result = await session.send("kept answer")
+
+    assert result.snapshot.outcome is TurnOutcome.FAILED
+    assert result.error is not None
+    assert result.error.message == "tool policy violation"
+    assert result.response is not None
+    assert result.response.content[0].text == "kept answer"
+
+    ((_, stored),) = SQLiteExecutionStore(database).turns(recorder.execution_id)
+    assert stored is not None
+    assert stored.snapshot.outcome is TurnOutcome.FAILED
+    assert stored.error is not None and stored.error.details["policy_violations"]
+    assert stored.response == result.response

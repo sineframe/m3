@@ -1114,14 +1114,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     else:
                         self._finish_native_mcp_tool_item(item)
                     if call_id not in self._observed_tool_call_ids:
-                        calls.append(
-                            {
-                                "call_id": call_id,
-                                "server": server,
-                                "tool": name,
-                                "arguments": args,
-                            }
+                        builtin, target = _codex_resource_introspection(
+                            server, name, args
                         )
+                        reported: dict[str, Any] = {
+                            "call_id": call_id,
+                            "server": server,
+                            "tool": name,
+                            "arguments": args,
+                        }
+                        if builtin:
+                            reported["harness_builtin"] = True
+                            reported["target_server"] = target
+                        calls.append(reported)
                         observations.append(
                             ToolCallObservedObservation(
                                 observation_id=f"codex-{sequence}-tool-{len(observations)}",
@@ -1808,6 +1813,42 @@ def _tool_error_message(error: Any) -> str | None:
         message = error.get("message")
         return message if isinstance(message, str) else None
     return None
+
+
+# Codex's own MCP resource introspection tools. Codex reports them as
+# ``mcpToolCall`` items, but they run inside Codex rather than calling a server
+# tool: the list tools use ``server = arguments.server or "codex"`` and
+# ``read_mcp_resource`` requires ``arguments.server``
+# (codex-rs/core/src/tools/handlers/mcp_resource/).
+_CODEX_RESOURCE_TOOLS = frozenset(
+    {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
+)
+
+
+def _codex_resource_introspection(
+    server: str | None, tool: str, arguments: Any
+) -> tuple[bool, str | None]:
+    """Return whether an item matches Codex's introspection shape, and its target.
+
+    Only the exact identity Codex derives from the arguments qualifies; the
+    server name ``codex`` alone is never sufficient.
+    """
+
+    if tool not in _CODEX_RESOURCE_TOOLS or server is None:
+        return False, None
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, Mapping):
+        return False, None
+    requested = arguments.get("server")
+    if requested is not None and not isinstance(requested, str):
+        return False, None
+    target = (requested.strip() or None) if isinstance(requested, str) else None
+    if target is None:
+        if tool == "read_mcp_resource" or server != "codex":
+            return False, None
+        return True, None
+    return (server in {target, requested}), server
 
 
 __all__ = ["CodexHarnessAdapter", "codex_configuration", "render_codex_config"]
