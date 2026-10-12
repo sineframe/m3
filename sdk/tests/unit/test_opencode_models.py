@@ -198,3 +198,31 @@ def test_concurrent_processes_download_once_and_read_complete_identical_snapshot
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_owned_catalog_is_accepted_and_shared_with_default_reader(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_bytes(CATALOG)
+    manager = RuntimeManager(project_root=tmp_path, _owned=True)
+    path, digest = await manager.prepare_models_owned(
+        tmp_path / "run", str(source), deadline=time.monotonic() + 10
+    )
+    assert path.read_bytes() == CATALOG
+    assert digest == hashlib.sha256(CATALOG).hexdigest()
+    source.unlink()
+    assert prepare_models(tmp_path / "run", str(source)) == (path, digest)
+    assert await manager.prepare_models_owned(
+        tmp_path / "run", str(source), deadline=time.monotonic() + 10
+    ) == (path, digest)
+    await manager.close()
+
+
+def test_default_catalog_reader_rejects_unaccepted_generation(tmp_path: Path) -> None:
+    snapshot = tmp_path / "opencode-models.json"
+    snapshot.write_bytes(CATALOG)
+    snapshot.with_name(snapshot.name + ".generation").write_text('{"accepted":false}')
+    with pytest.raises(RuntimeValidationError, match="publication is pending"):
+        prepare_models(tmp_path)

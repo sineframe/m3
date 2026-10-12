@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -27,12 +28,16 @@ import urllib.request
 import zipfile
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .. import _timing
+from .owned import RUNTIME_ENVIRONMENT, OwnedRuntimeLease, RuntimeAcquisition
 from .recipes import default_manifest_url
+
+if TYPE_CHECKING:
+    from .._startup_deadlines import StartupBudget
 
 RECEIPT_FORMAT = 2
 
@@ -60,9 +65,13 @@ class RuntimeValidationError(RuntimeErrorBase, ValueError):
     pass
 
 
+class _CacheBusy(RuntimeValidationError):
+    pass
+
+
 @contextmanager
-def _entry_lock(destination: Path, *, timeout: float = 300) -> Iterator[None]:
-    """Serialize lease creation and pruning with an install of this entry."""
+def _legacy_entry_lock(destination: Path, *, timeout: float = 300) -> Iterator[None]:
+    """Retain compatibility with markers from existing installed releases."""
     lock = destination.with_name(destination.name + ".lock")
     deadline = time.monotonic() + timeout
     owner_inode: tuple[int, int] | None = None
@@ -104,7 +113,7 @@ def _entry_lock(destination: Path, *, timeout: float = 300) -> Iterator[None]:
             except FileNotFoundError:
                 continue
             if time.monotonic() >= deadline:
-                raise RuntimeValidationError("runtime cache entry is busy") from None
+                raise _CacheBusy("runtime cache entry is busy") from None
             time.sleep(0.05)
     try:
         yield
@@ -117,6 +126,52 @@ def _entry_lock(destination: Path, *, timeout: float = 300) -> Iterator[None]:
                 lock.unlink()
         except FileNotFoundError:
             pass
+
+
+@contextmanager
+def _kernel_entry_lock(destination: Path, *, deadline: float) -> Iterator[int]:
+    """One kernel authority shared by managed writers, readers and pruning."""
+    if os.name != "posix":
+        yield -1
+        return
+    import fcntl
+
+    descriptor = os.open(
+        destination.with_name(destination.name + ".guard"),
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+        0o600,
+    )
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or info.st_nlink != 1
+        ):
+            raise RuntimeValidationError("runtime cache entry guard is invalid")
+        while True:
+            if time.monotonic() >= deadline:
+                raise _CacheBusy("runtime cache entry is busy")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(min(0.025, max(0, deadline - time.monotonic())))
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def _entry_lock(destination: Path, *, timeout: float = 300) -> Iterator[None]:
+    """Serialize legacy and owned acquisition without releasing live guards."""
+    deadline = time.monotonic() + timeout
+    with _kernel_entry_lock(destination, deadline=deadline):
+        with _legacy_entry_lock(
+            destination, timeout=max(0, deadline - time.monotonic())
+        ):
+            yield
 
 
 @contextlib.asynccontextmanager
@@ -362,8 +417,16 @@ class RuntimeLease:
     executable: Path
     provenance: Mapping[str, Any]
     _lease_path: Path | None = None
+    _owned: OwnedRuntimeLease | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def descriptors(self) -> tuple[int, ...]:
+        return self._owned.descriptors if self._owned is not None else ()
 
     async def release(self) -> None:
+        if self._owned is not None:
+            await self._owned.release()
+            return
         if self._lease_path:
             try:
                 self._lease_path.unlink()
@@ -417,20 +480,210 @@ class RuntimeManager:
         project_root: str | Path = ".",
         invocation_dir: str | Path | None = None,
         progress_file: str | Path | None = None,
+        *,
+        _owned: bool = False,
+        _startup_clock: StartupBudget | None = None,
     ):
+        self._leases: list[RuntimeLease] = []
+        self._startup_clock = _startup_clock
+        self._manifest_cache: dict[str, Mapping[str, Any]] = {}
+        self._owned_inputs = (cache_root, project_root, invocation_dir, progress_file)
+        self._filesystem_deferred = _owned
+        if _owned:
+            self.project_root = Path(project_root)
+            self.cache_root = Path(cache_root) if cache_root is not None else Path(".")
+            self.invocation_dir = (
+                Path(invocation_dir) if invocation_dir is not None else None
+            )
+            self.progress = ProgressEmitter(progress_file)
+            return
         self.project_root = Path(project_root).expanduser().resolve()
         self.cache_root = resolve_cache_root(self.project_root, cache_root)
         self.invocation_dir = (
             Path(invocation_dir).expanduser().resolve() if invocation_dir else None
         )
         self.progress = ProgressEmitter(progress_file)
-        self._leases: list[RuntimeLease] = []
-        self._manifest_cache: dict[str, Mapping[str, Any]] = {}
+        self._owned_inputs = (
+            self.cache_root,
+            self.project_root,
+            self.invocation_dir,
+            progress_file,
+        )
+
+    def _owned_clock(self) -> StartupBudget:
+        if self._startup_clock is not None:
+            return self._startup_clock
+        from .._startup_deadlines import StartupBudget
+        from .._types.settings import HarnessTimeouts
+
+        return StartupBudget(HarnessTimeouts())
+
+    @_timing.timed("runtime.acquire")
+    async def acquire_owned(
+        self, kind: str, selector: str | Mapping[str, Any], *, deadline: float
+    ) -> RuntimeLease:
+        """Resolve with one caller absolute deadline and owned private mutation."""
+        from .._bootstrap_operations import (
+            OwnedBootstrapOperations,
+            PrivateOperationError,
+            _PrivateResult,
+        )
+
+        if not math.isfinite(deadline) or deadline <= time.monotonic():
+            raise RuntimeValidationError("managed runtime deadline exceeded")
+        cache, project, invocation, progress = self._owned_inputs
+        request = RuntimeAcquisition(
+            kind,
+            selector,
+            Path(project),
+            Path(cache) if cache is not None else None,
+            Path(invocation) if invocation is not None else None,
+            Path(progress) if progress is not None else None,
+            {key: os.environ[key] for key in RUNTIME_ENVIRONMENT if key in os.environ},
+        )
+        operations = OwnedBootstrapOperations()
+        acquisition = asyncio.create_task(
+            asyncio.to_thread(operations.acquire_runtime, request, deadline=deadline)
+        )
+        adopted = False
+        cancelled = False
+
+        def discard_receipt(done: asyncio.Task[_PrivateResult]) -> None:
+            if not done.cancelled() and done.exception() is None:
+                descriptor = done.result().descriptor
+                if descriptor is not None:
+                    os.close(descriptor)
+
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(acquisition), timeout=max(0, deadline - time.monotonic())
+            )
+            if result.value is None or result.descriptor is None:
+                raise RuntimeValidationError(
+                    "owned managed runtime result is unavailable"
+                )
+            payload = json.loads(result.value.consume())
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"lease_path", "executable", "provenance"}
+                or not isinstance(payload["lease_path"], str)
+                or not isinstance(payload["executable"], str)
+                or not isinstance(payload["provenance"], dict)
+                or not Path(payload["lease_path"]).is_absolute()
+                or not Path(payload["executable"]).is_absolute()
+                or time.monotonic() >= deadline
+            ):
+                raise RuntimeValidationError("owned managed runtime result is invalid")
+            owned = OwnedRuntimeLease(
+                result.descriptor,
+                Path(payload["lease_path"]),
+                operations,
+                self._owned_clock(),
+            )
+            lease = RuntimeLease(
+                Path(payload["executable"]), payload["provenance"], _owned=owned
+            )
+            self._leases.append(lease)
+            adopted = True
+            return lease
+        except PrivateOperationError:
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError from None
+            raise
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            if not adopted:
+                operations.cancel_pending()
+                acquisition.add_done_callback(discard_receipt)
+                from .._startup_deadlines import retain_cleanup, wait_cleanup
+
+                clock = self._owned_clock()
+                cleanup_deadline = clock.begin_cleanup()
+
+                async def close_operations() -> None:
+                    await asyncio.to_thread(operations.close, deadline=cleanup_deadline)
+
+                await wait_cleanup(
+                    retain_cleanup(close_operations), clock, cancelled=cancelled
+                )
+
+    async def prepare_models_owned(
+        self, directory: Path, source: str | None = None, *, deadline: float
+    ) -> tuple[Path, str]:
+        """Prepare run catalog evidence within the same absolute resolution budget."""
+        from .._bootstrap_operations import (
+            OwnedBootstrapOperations,
+            PrivateOperationError,
+        )
+
+        if not directory.is_absolute() or (
+            source is not None and not Path(source).is_absolute()
+        ):
+            raise RuntimeValidationError("owned catalog inputs require absolute paths")
+        if not math.isfinite(deadline) or deadline <= time.monotonic():
+            raise RuntimeValidationError("managed catalog deadline exceeded")
+        operations = OwnedBootstrapOperations()
+        adopted = False
+        cancelled = False
+        acquisition = asyncio.create_task(
+            asyncio.to_thread(
+                operations.prepare_models, directory, source, deadline=deadline
+            )
+        )
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(acquisition), timeout=max(0, deadline - time.monotonic())
+            )
+            if result.value is None:
+                raise RuntimeValidationError("owned catalog result is unavailable")
+            material = json.loads(result.value.consume())
+            if (
+                not isinstance(material, dict)
+                or set(material) != {"path", "digest"}
+                or not isinstance(material["path"], str)
+                or not isinstance(material["digest"], str)
+                or not SHA_RE.fullmatch(material["digest"])
+                or time.monotonic() >= deadline
+            ):
+                raise RuntimeValidationError("owned catalog result is invalid")
+            adopted = True
+            return Path(material["path"]), material["digest"]
+        except PrivateOperationError:
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError from None
+            raise
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            from .._startup_deadlines import retain_cleanup, wait_cleanup
+
+            operations.cancel_pending()
+            acquisition.add_done_callback(
+                lambda done: done.exception() if not done.cancelled() else None
+            )
+            clock = self._owned_clock()
+            cleanup_deadline = deadline if adopted else clock.begin_cleanup()
+
+            async def close_operations() -> None:
+                await asyncio.to_thread(operations.close, deadline=cleanup_deadline)
+
+            await wait_cleanup(
+                retain_cleanup(close_operations),
+                clock if not adopted else None,
+                cancelled=cancelled,
+            )
 
     @_timing.timed("runtime.acquire")
     async def acquire(
         self, kind: str, selector: str | Mapping[str, Any]
     ) -> RuntimeLease:
+        if self._filesystem_deferred:
+            raise RuntimeValidationError(
+                "deferred runtime managers require owned acquisition"
+            )
         kind = {"open-code": "opencode", "claude_code": "claude"}.get(
             kind.lower(), kind.lower()
         )
@@ -812,7 +1065,9 @@ class RuntimeManager:
         pattern = rf"(?:^|[^0-9A-Za-z._])v?{re.escape(version)}(?![0-9A-Za-z._-])"
         return re.search(pattern, output, re.IGNORECASE) is not None
 
-    def _cached_version(self, kind: str, version: str, target: str) -> Path | None:
+    def _cached_version(
+        self, kind: str, version: str, target: str, *, deadline: float | None = None
+    ) -> Path | None:
         parent = self.cache_root / kind / version / target
         if _cache_path_has_symlink(parent, self.cache_root) or not parent.is_dir():
             return None
@@ -824,13 +1079,21 @@ class RuntimeManager:
             )
             if candidate
         }
-        candidates = [
-            path
-            for path in parent.glob("sha256-*")
-            if not _cache_path_has_symlink(path, self.cache_root)
-            and self._receipt_valid(path)
-            and self._receipt_manifest_url(path) in canonical
-        ]
+        candidates = []
+        for path in parent.glob("sha256-*"):
+            if _cache_path_has_symlink(path, self.cache_root) or not path.is_dir():
+                continue
+            with _entry_lock(
+                path,
+                timeout=300
+                if deadline is None
+                else max(0, deadline - time.monotonic()),
+            ):
+                if (
+                    self._receipt_valid(path)
+                    and self._receipt_manifest_url(path) in canonical
+                ):
+                    candidates.append(path)
         return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
@@ -876,10 +1139,15 @@ class RuntimeManager:
         return lease
 
     async def close(self) -> None:
-        await asyncio.gather(
-            *(x.release() for x in self._leases), return_exceptions=True
+        leases = tuple(self._leases)
+        outcomes = await asyncio.gather(
+            *(lease.release() for lease in leases), return_exceptions=True
         )
-        self._leases.clear()
+        self._leases = [
+            lease
+            for lease, outcome in zip(leases, outcomes, strict=True)
+            if lease._owned is not None and isinstance(outcome, BaseException)
+        ]
 
     async def release(self, lease: RuntimeLease) -> None:
         await lease.release()
@@ -1470,7 +1738,8 @@ class RuntimeManager:
                 raise RuntimeValidationError("runtime cache contains a symlink")
             if (
                 p.is_file()
-                and p.name not in {"receipt.json", "receipt.pending"}
+                and p.name
+                not in {"receipt.json", "receipt.pending", ".m3-owned-generation.json"}
                 and not p.name.startswith("lease-")
             ):
                 h = hashlib.sha256()
@@ -1489,7 +1758,8 @@ class RuntimeManager:
             if (
                 p.is_file()
                 and not p.is_symlink()
-                and p.name not in {"receipt.json", "receipt.pending"}
+                and p.name
+                not in {"receipt.json", "receipt.pending", ".m3-owned-generation.json"}
                 and not p.name.startswith("lease-")
                 and p.stat().st_mode & stat.S_IXUSR
             ):
@@ -1499,6 +1769,15 @@ class RuntimeManager:
     @classmethod
     def _receipt_valid(cls, root: Path) -> bool:
         receipt = root / "receipt.json"
+        generation = root / ".m3-owned-generation.json"
+        if generation.is_symlink():
+            return False
+        if generation.exists():
+            try:
+                if json.loads(generation.read_text()).get("accepted") is not True:
+                    return False
+            except (OSError, ValueError, AttributeError):
+                return False
         if not receipt.is_file():
             return False
         try:
@@ -1577,22 +1856,27 @@ def list_cache(cache_root: str | Path) -> list[Mapping[str, Any]]:
         try:
             if entry.is_symlink() or not entry.is_dir():
                 continue
-            receipt = entry / "receipt.json"
-            relative = entry.relative_to(root)
-            current = root
-            if any((current := current / part).is_symlink() for part in relative.parts):
-                continue
-            if receipt.is_symlink():
-                continue
-            parsed = (
-                json.loads(receipt.read_text(encoding="utf-8"))
-                if receipt.is_file()
-                else {}
-            )
-            item = dict(parsed) if isinstance(parsed, Mapping) else {}
-            item["path"] = str(receipt.parent)
-            item["status"] = RuntimeManager._receipt_status(entry)
-            result.append(item)
+            with _entry_lock(entry, timeout=10):
+                receipt = entry / "receipt.json"
+                relative = entry.relative_to(root)
+                current = root
+                if any(
+                    (current := current / part).is_symlink() for part in relative.parts
+                ):
+                    continue
+                if receipt.is_symlink():
+                    continue
+                parsed = (
+                    json.loads(receipt.read_text(encoding="utf-8"))
+                    if receipt.is_file()
+                    else {}
+                )
+                item = dict(parsed) if isinstance(parsed, Mapping) else {}
+                item["path"] = str(receipt.parent)
+                item["status"] = RuntimeManager._receipt_status(entry)
+                result.append(item)
+        except _CacheBusy:
+            result.append({"path": str(entry), "status": "busy"})
         except (OSError, TypeError, ValueError):
             if not entry.is_symlink() and entry.is_dir():
                 result.append({"path": str(entry), "status": "corrupt"})
@@ -1639,11 +1923,26 @@ def prune_cache(
 
 
 def _lease_is_active(path: Path) -> bool:
-    """Check the owning PID recorded in a lease marker."""
+    """Recognize kernel custody while retaining legacy PID lease compatibility."""
     if path.is_symlink():
         return False
     try:
-        pid = int(path.read_text(encoding="ascii").strip())
+        marker = path.read_text(encoding="ascii").strip()
+        if marker == "kernel-v1":
+            if os.name != "posix":
+                return True
+            import fcntl
+
+            descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                return False
+            finally:
+                os.close(descriptor)
+        pid = int(marker)
     except (OSError, ValueError):
         # Older m3 releases wrote empty lease files but included the PID in
         # the filename. Preserve those leases while their owner is alive.

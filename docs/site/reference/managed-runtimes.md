@@ -311,3 +311,23 @@ staging cleanup; if acquisition completes after its caller is cancelled, M3
 releases the resulting lease. Pruning skips an entry with an active lease.
 A runtime cache controls where M3 stores vendor executables. It does not
 restrict the harness process to a filesystem, network, or CPU sandbox.
+
+### Owned acquisition
+
+`RuntimeManager.acquire_owned(kind, selector, deadline=...)` uses an absolute
+`time.monotonic()` deadline. On POSIX, private helper processes own downloads,
+installation, version checks, publication, and cleanup. Paths and selector values
+travel over private IPC. Selectors must contain plain JSON values and paths must
+be absolute. `prepare_models_owned(directory, source, deadline=...)` uses the same
+clock for OpenCode catalog preparation; calling it does not reset the budget.
+
+Owned acquisition reuses verified shared packages. Its returned lease holds a
+kernel handle rather than relying on the preparation child's PID. Native adapters
+can retain that lease through their private launch contract until native process
+cleanup proves the process group is dead. Default acquisition and pruning respect
+these handles. Pending generations are unavailable to both default and owned
+readers. If a helper dies without proving writer death, its private staging root
+remains quarantined.
+
+The existing `acquire()` API remains available. These low-level owned methods do
+not themselves set session timeout policy or admit native startup.

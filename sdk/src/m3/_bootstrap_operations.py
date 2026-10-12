@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from ._immutable_cache import CacheRequest
     from ._workspace_operations import CapturedWorkspace
     from .preparation import PreparationSupervisor
+    from .runtime.owned import RuntimeAcquisition
 
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_FRAME = 12 * 1024 * 1024
@@ -159,6 +160,7 @@ class _PrivateResult:
     value: PrivateBytes | None = field(default=None, repr=False)
     channel: socket.socket | None = field(default=None, repr=False)
     absent: bool = False
+    descriptor: int | None = field(default=None, repr=False)
     workspace_capture: CapturedWorkspace | None = field(default=None, repr=False)
 
 
@@ -192,6 +194,8 @@ def _decode_result(
     elif operation in {
         "private_read",
         "private_read_auth",
+        "private_runtime",
+        "private_models",
         "private_capture_read",
         "private_native_support",
         "private_native_probe",
@@ -209,10 +213,14 @@ def _decode_result(
     elif set(frame) != {"version"}:
         raise PrivateOperationError("invalid private bootstrap result")
     wants_socket = operation in {"private_endpoint", "private_connect"}
-    if wants_socket != (descriptor is not None):
+    wants_descriptor = operation == "private_runtime"
+    if (wants_socket or wants_descriptor) != (descriptor is not None):
         raise PrivateOperationError("invalid private bootstrap handle")
     if descriptor is not None:
-        result.channel = socket.socket(fileno=descriptor)
+        if wants_socket:
+            result.channel = socket.socket(fileno=descriptor)
+        else:
+            result.descriptor = descriptor
     return result
 
 
@@ -303,8 +311,11 @@ def _receive_private(
 def _acknowledge_handle(
     channel: socket.socket, result: _PrivateResult, deadline: float
 ) -> None:
-    if result.channel is not None:
-        os.set_inheritable(result.channel.fileno(), False)
+    descriptor = (
+        result.channel.fileno() if result.channel is not None else result.descriptor
+    )
+    if descriptor is not None:
+        os.set_inheritable(descriptor, False)
         channel.settimeout(_remaining(deadline))
         channel.sendall(b"a")
 
@@ -438,6 +449,33 @@ def execute_private_operation(
                 transferred = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 transferred.settimeout(_remaining(deadline))
                 transferred.connect(request["path"])
+            elif operation == "private_runtime_release":
+                import fcntl
+
+                path = Path(request["path"])
+                try:
+                    handle = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+                except FileNotFoundError:
+                    pass
+                else:
+                    try:
+                        info = os.fstat(handle)
+                        if _identity(info) != (request["device"], request["inode"]):
+                            raise PrivateOperationError("managed runtime lease changed")
+                        try:
+                            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            pass
+                        else:
+                            if _identity(path.stat(follow_symlinks=False)) != _identity(
+                                info
+                            ):
+                                raise PrivateOperationError(
+                                    "managed runtime lease changed"
+                                )
+                            path.unlink()
+                    finally:
+                        os.close(handle)
             elif operation == "private_remove":
                 resource = OwnedResource.from_private_frame(request["resource"])
                 path, target_root = Path(resource.path), Path(resource.root)
@@ -542,7 +580,7 @@ class OwnedBootstrapOperations:
             while event not in job.events:
                 remaining = _remaining(deadline)
                 if job.fenced or job.events.intersection(
-                    {"failed", "lost", "rejected", "cleanup_failed"}
+                    {"failed", "lost", "rejected", "cleanup_failed", "guard_lost"}
                 ):
                     raise PrivateOperationError("private bootstrap operation failed")
                 self._condition.wait(remaining)
@@ -654,7 +692,11 @@ class OwnedBootstrapOperations:
             self._wait(job, "accepted", deadline)
             worker.send("release", ident)
             self._wait(job, "released", deadline)
-            if operation == "private_immutable_cache":
+            if operation in {
+                "private_immutable_cache",
+                "private_runtime",
+                "private_models",
+            }:
                 local.settimeout(_remaining(deadline))
                 local.sendall(b"c")
                 self._wait(job, "guard_closed", deadline)
@@ -691,8 +733,11 @@ class OwnedBootstrapOperations:
             if not published:
                 if descriptor is not None:
                     os.close(descriptor)
-                if result is not None and result.channel is not None:
-                    result.channel.close()
+                if result is not None:
+                    if result.channel is not None:
+                        result.channel.close()
+                    if result.descriptor is not None:
+                        os.close(result.descriptor)
                 with self._condition:
                     job.fenced = True
                     if not job.binding_requested:
@@ -703,6 +748,28 @@ class OwnedBootstrapOperations:
                     worker.send("discard", ident)
                 except (RuntimeError, ValueError):
                     pass
+
+    def release_runtime(
+        self, path: str, device: int, inode: int, *, deadline: float
+    ) -> None:
+        self._run(
+            "private_runtime_release",
+            {"path": path, "device": device, "inode": inode},
+            deadline,
+            closing=True,
+        )
+
+    def prepare_models(
+        self, directory: Path, source: str | None, *, deadline: float
+    ) -> _PrivateResult:
+        return self._run(
+            "private_models", {"directory": str(directory), "source": source}, deadline
+        )
+
+    def acquire_runtime(
+        self, request: RuntimeAcquisition, *, deadline: float
+    ) -> _PrivateResult:
+        return self._run("private_runtime", request.private_frame(), deadline)
 
     def create_capsule(
         self, value: PrivateBytesSource, *, deadline: float
@@ -960,7 +1027,9 @@ class OwnedBootstrapOperations:
             except PrivateOperationError:
                 break
         with self._condition:
-            while self._jobs:
+            # Missing guard death proof is permanent quarantine, not a cleanup
+            # retry. Keep its owner/root but do not consume later jobs' budgets.
+            while any("guard_lost" not in job.events for job in self._jobs.values()):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or (self._worker is not None and self._worker.failed):
                     return

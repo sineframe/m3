@@ -761,6 +761,11 @@ class OpenCodeHarnessAdapter:
                 cwd=workspace,
                 **startup_spawn_options(
                     launch._startup_lease,
+                    runtime_descriptors=(
+                        launch._runtime_lease.descriptors
+                        if launch._runtime_lease is not None
+                        else ()
+                    ),
                     owned_startup=preparation is not None,
                     startup_deadline=launch._startup_clock.deadline
                     if launch._startup_clock is not None

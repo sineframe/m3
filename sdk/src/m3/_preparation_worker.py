@@ -376,6 +376,30 @@ def _fork_job(
                         execute_cache_guard(
                             private_channel, root, payload["deadline"], artifact_custody
                         )
+                elif operation in {"private_runtime", "private_models"}:
+                    from .runtime._owned_guard import (
+                        execute_models_guard,
+                        execute_runtime_guard,
+                    )
+
+                    with private_channel:
+                        guard = (
+                            execute_runtime_guard
+                            if operation == "private_runtime"
+                            else execute_models_guard
+                        )
+                        try:
+                            assert artifact_custody is not None
+                            guard(
+                                private_channel,
+                                root,
+                                payload["deadline"],
+                                artifact_custody,
+                            )
+                        finally:
+                            # An orderly exit proves the fixed guard has reaped
+                            # every detached writer before staging cleanup.
+                            os.write(1, b'{"runtime_stopped":true}\n')
                 else:
                     execute_private_operation(
                         private_channel, root, operation, payload["deadline"]
@@ -447,6 +471,8 @@ class Job:
     private_kind: str | None = None
     cache_guard: bool = False
     cache_writers_dead: bool = False
+    runtime_guard: bool = False
+    guard_death_confirmed: bool = False
     artifact_custody: socket.socket | None = field(default=None, repr=False)
     artifact_lease: ArtifactLease | None = field(default=None, repr=False)
     artifact_deadline: float | None = None
@@ -509,7 +535,7 @@ def _supervise(
         job.state = "fenced"
         if job.stop_at is None:
             job.stop_at = time.monotonic()
-            if not job.cache_guard:
+            if not (job.cache_guard or job.runtime_guard):
                 job.process.signal(signal.SIGTERM)
 
     def spawn_cleanup(job: Job) -> None:
@@ -544,6 +570,7 @@ def _supervise(
         )
         job.process = process
         job.cache_guard = False
+        job.runtime_guard = False
         job.state = "removing"
         job.stop_at = None
         job.killed = False
@@ -592,6 +619,9 @@ def _supervise(
                 "private_native_probe",
                 "private_read_auth",
                 "private_immutable_cache",
+                "private_runtime",
+                "private_models",
+                "private_runtime_release",
                 "private_workspace_cleanup",
                 "private_workspace_capture",
             }
@@ -618,7 +648,11 @@ def _supervise(
                 return
             private_channel = private_channels.pop(ident, None)
             custody_parent = custody_child = None
-            if request["operation"] == "private_immutable_cache":
+            if request["operation"] in {
+                "private_immutable_cache",
+                "private_runtime",
+                "private_models",
+            }:
                 custody_parent, custody_child = socket.socketpair(
                     socket.AF_UNIX, socket.SOCK_DGRAM
                 )
@@ -638,6 +672,10 @@ def _supervise(
             os.set_blocking(process.stdout.fileno(), False)
             job = Job(ident, root, process)
             job.cache_guard = request["operation"] == "private_immutable_cache"
+            job.runtime_guard = request["operation"] in {
+                "private_runtime",
+                "private_models",
+            }
             if custody_parent is not None:
                 job.artifact_custody = custody_parent
                 job.artifact_deadline = request["payload"]["deadline"]
@@ -826,7 +864,7 @@ def _supervise(
         if raw == b"s":
             job.process.group_established = True
             if job.state == "fenced":
-                if not job.cache_guard:
+                if not (job.cache_guard or job.runtime_guard):
                     job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
             elif job.state in {"running", "removing"}:
                 if ownership_open:
@@ -860,6 +898,16 @@ def _supervise(
                             emit(job.ident, "ready", data={})
                     else:
                         break
+            if job.runtime_guard and job.output.startswith(b'{"runtime_ready":true}\n'):
+                del job.output[: len(b'{"runtime_ready":true}\n')]
+                if job.state == "running":
+                    job.state = "ready"
+                    emit(job.ident, "ready", data={})
+            if job.runtime_guard and job.output.startswith(
+                b'{"runtime_stopped":true}\n'
+            ):
+                del job.output[: len(b'{"runtime_stopped":true}\n')]
+                job.guard_death_confirmed = True
             if len(job.output) > MAX_FRAME:
                 stop(job)
         else:
@@ -916,6 +964,28 @@ def _supervise(
                     emit(ident, "guard_closed")
                     job.artifact_guard_closed = True
                     job.cache_guard = False
+                if job.runtime_guard:
+                    if (
+                        job.process.poll() is None
+                        or job.process.alive()
+                        or job.stream_open
+                    ):
+                        continue
+                    try:
+                        result = json.loads(job.output)
+                    except (ValueError, UnicodeError):
+                        result = {"ok": False}
+                    if result.get("ok") is not True or not job.guard_death_confirmed:
+                        emit(ident, "failed")
+                        stop(job)
+                        continue
+                    if job.artifact_deadline is None or now >= job.artifact_deadline:
+                        emit(ident, "failed")
+                        stop(job)
+                        continue
+                    emit(ident, "guard_closed")
+                    job.artifact_guard_closed = True
+                    job.runtime_guard = False
                 if job.artifact_lease is not None:
                     if not controller_open or (
                         job.artifact_deadline is not None
@@ -976,6 +1046,7 @@ def _supervise(
                         and now - job.stop_at >= TERM_GRACE
                         and not job.killed
                         and not job.cache_guard
+                        and not job.runtime_guard
                     ):
                         job.process.signal(signal.SIGKILL)
                         job.killed = True
@@ -990,7 +1061,14 @@ def _supervise(
                         # Missing death proof keeps both helper and kernel lease alive.
                         job.state = "quarantined"
                         continue
-                    if ownership_open:
+                    if job.runtime_guard and not job.guard_death_confirmed:
+                        # Helper loss cannot prove death of separately owned
+                        # writer groups. Leave their private root quarantined.
+                        if not job.quarantine_sent:
+                            emit(ident, "quarantined")
+                        emit(ident, "guard_lost")
+                        job.state = "quarantined"
+                    elif ownership_open:
                         spawn_cleanup(job)
                     else:
                         # No router remains to register/ACK a new mutation
@@ -1056,7 +1134,8 @@ def _supervise(
         # Protocol corruption cannot leave an unfenced writer. Kill owned
         # groups, retain roots (no deletion while writer death is uncertain).
         for job in jobs.values():
-            job.process.signal(signal.SIGKILL)
+            if not job.runtime_guard:
+                job.process.signal(signal.SIGKILL)
         selector.close()
         for channel in private_channels.values():
             channel.close()

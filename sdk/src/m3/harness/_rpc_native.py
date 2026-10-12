@@ -112,6 +112,7 @@ class JsonRpcProcess:
         startup_lease: StartupLease | None = None,
         owned_startup: bool = False,
         startup_deadline: float | None = None,
+        runtime_descriptors: tuple[int, ...] = (),
         prepared: bool = False,
     ) -> None:
         self.root = root or Path(tempfile.mkdtemp(prefix="m3-native-"))
@@ -125,6 +126,7 @@ class JsonRpcProcess:
                 startup_lease,
                 owned_startup=owned_startup,
                 startup_deadline=startup_deadline,
+                runtime_descriptors=runtime_descriptors,
             ),
         )
         self._reader = asyncio.create_task(self._read_stdout())
@@ -485,6 +487,11 @@ class NativeRPCAdapter:
                 root=root,
                 **startup_spawn_options(
                     launch._startup_lease,
+                    runtime_descriptors=(
+                        launch._runtime_lease.descriptors
+                        if launch._runtime_lease is not None
+                        else ()
+                    ),
                     owned_startup=preparation is not None,
                     startup_deadline=launch._startup_clock.deadline
                     if launch._startup_clock is not None

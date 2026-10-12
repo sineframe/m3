@@ -40,6 +40,8 @@ class NativeGuardian:
         self._death_confirmed = False
         self._admission_descriptor: int | None = None
         self._reader: tuple[asyncio.AbstractEventLoop, int] | None = None
+        self._runtime_handles: list[int] = []
+        self._writer: tuple[asyncio.AbstractEventLoop, int] | None = None
 
     @property
     def process(self) -> asyncio.subprocess.Process:
@@ -183,24 +185,36 @@ class NativeGuardian:
         limit: int,
         on_spawn: Callable[[NativeGuardian], None] | None = None,
         deadline: float | None = None,
+        runtime_descriptors: tuple[int, ...] = (),
     ) -> NativeGuardian:
-        if lease is not None and isinstance(lease.owner, cls):
-            guardian = lease.owner
-            if guardian._closed or guardian.native_pid is not None:
-                raise HarnessStartupError(
-                    "native ownership lease has already been used"
-                )
-            guardian._deadline = deadline
-            reused = True
-        else:
-            guardian = await cls._create(
-                deadline,
-                limit,
-                on_spawn,
-                inherited_slot=lease.descriptor if lease is not None else -1,
-            )
-            reused = False
+        if len(runtime_descriptors) > 32 or not all(
+            type(handle) is int and handle >= 0 for handle in runtime_descriptors
+        ):
+            raise HarnessStartupError("native runtime custody handle is invalid")
+        retained: list[int] = []
+        guardian: NativeGuardian | None = None
         try:
+            # Retain package custody before helper creation can yield to cleanup.
+            for handle in runtime_descriptors:
+                retained.append(os.dup(handle))
+            if lease is not None and isinstance(lease.owner, cls):
+                guardian = lease.owner
+                if guardian._closed or guardian.native_pid is not None:
+                    raise HarnessStartupError(
+                        "native ownership lease has already been used"
+                    )
+                guardian._deadline = deadline
+                reused = True
+            else:
+                guardian = await cls._create(
+                    deadline,
+                    limit,
+                    on_spawn,
+                    inherited_slot=lease.descriptor if lease is not None else -1,
+                )
+                reused = False
+            guardian._runtime_handles.extend(retained)
+            retained.clear()
             if reused and on_spawn is not None:
                 on_spawn(guardian)
             if lease is not None and lease.owner is not guardian:
@@ -211,7 +225,9 @@ class NativeGuardian:
                     "environment": dict(environment),
                     "cwd": str(cwd),
                     "deadline": deadline,
-                }
+                    "runtime_descriptor_count": len(guardian._runtime_handles),
+                },
+                descriptors=tuple(guardian._runtime_handles),
             )
             received = await guardian._receive()
             pid = received.get("pid")
@@ -230,18 +246,68 @@ class NativeGuardian:
                 raise HarnessStartupError("native startup acknowledgement is invalid")
             return guardian
         except BaseException:
-            guardian.disconnect()
+            if guardian is not None:
+                guardian.disconnect()
             raise
+        finally:
+            for handle in retained:
+                os.close(handle)
 
-    async def _send(self, value: dict[str, object]) -> None:
+    async def _send(
+        self, value: dict[str, object], *, descriptors: tuple[int, ...] = ()
+    ) -> None:
         data = json.dumps(value).encode("utf-8")
         if len(data) > _MAX_FRAME:
             raise HarnessStartupError("native launch exceeds ownership frame limit")
+        header = struct.pack("!I", len(data))
+        loop = asyncio.get_running_loop()
+        if descriptors:
+            if not all(type(handle) is int and handle >= 0 for handle in descriptors):
+                raise HarnessStartupError("native runtime custody handle is invalid")
+            if len(descriptors) > 32:
+                raise HarnessStartupError("native runtime custody exceeds handle limit")
+            sent: asyncio.Future[int] = loop.create_future()
+
+            def remove_writer() -> None:
+                if self._writer is binding:
+                    if self._channel.fileno() == descriptor:
+                        loop.remove_writer(descriptor)
+                    self._writer = None
+
+            def transfer() -> None:
+                if sent.done():
+                    remove_writer()
+                    return
+                try:
+                    count = self._channel.sendmsg(
+                        [header],
+                        [
+                            (
+                                socket.SOL_SOCKET,
+                                socket.SCM_RIGHTS,
+                                array.array("i", descriptors),
+                            )
+                        ],
+                    )
+                except BlockingIOError:
+                    return
+                except OSError as exc:
+                    sent.set_exception(exc)
+                else:
+                    sent.set_result(count)
+                remove_writer()
+
+            descriptor = self._channel.fileno()
+            binding = (loop, descriptor)
+            self._writer = binding
+            loop.add_writer(descriptor, transfer)
+            try:
+                count = await asyncio.wait_for(sent, timeout=self._remaining())
+            finally:
+                remove_writer()
+            header = header[count:]
         await asyncio.wait_for(
-            asyncio.get_running_loop().sock_sendall(
-                self._channel, struct.pack("!I", len(data)) + data
-            ),
-            timeout=self._remaining(),
+            loop.sock_sendall(self._channel, header + data), timeout=self._remaining()
         )
 
     async def _read_block(self, size: int) -> _SocketMessage:
@@ -378,6 +444,9 @@ class NativeGuardian:
                 self._death_descriptor = None
             if self.native_pid is None or self._death_confirmed:
                 self._close_admission()
+                for handle in self._runtime_handles:
+                    os.close(handle)
+                self._runtime_handles.clear()
                 _OWNED_GUARDIANS.discard(self)
 
     def disconnect(self) -> None:
@@ -388,6 +457,11 @@ class NativeGuardian:
                 if self._channel.fileno() == descriptor:
                     loop.remove_reader(descriptor)
                 self._reader = None
+            if self._writer is not None:
+                loop, descriptor = self._writer
+                if self._channel.fileno() == descriptor:
+                    loop.remove_writer(descriptor)
+                self._writer = None
             self._channel.close()
         if self._reap_task is None:
             self._reap_task = asyncio.create_task(self._reap())

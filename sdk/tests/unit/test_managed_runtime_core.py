@@ -1467,3 +1467,517 @@ async def test_generic_manifest_cannot_set_provenance_source(
     plain = await manager.acquire("claude", "1.2.3")
     await plain.release()
     assert _Server.requests == requests
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="owned runtime custody requires POSIX")
+async def test_owned_acquisition_publishes_only_accepted_runtime_and_holds_lease(
+    tmp_path: Path, archive_server: str
+) -> None:
+    import time
+
+    project = tmp_path / "project"
+    project.mkdir()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, project, _owned=True)
+    selector = {
+        "version": "1.2.3",
+        "url": archive_server,
+        "sha256": hashlib.sha256(_Server.body).hexdigest(),
+    }
+    try:
+        lease = await manager.acquire_owned(
+            "claude", selector, deadline=time.monotonic() + 10
+        )
+        assert lease.executable.read_bytes() == FAKE_BINARY
+        assert lease.descriptors
+        assert list_cache(cache)[0]["status"] == "ready"
+        assert prune_cache(cache) == []
+        requests_before = _Server.requests
+        identity = lease.executable.stat().st_ino
+        warm = await manager.acquire_owned(
+            "claude", selector, deadline=time.monotonic() + 10
+        )
+        assert _Server.requests == requests_before
+        assert warm.executable.stat().st_ino == identity
+        legacy = RuntimeManager(cache, project)
+        default = await legacy.acquire("claude", selector)
+        assert _Server.requests == requests_before
+        assert default.executable.stat().st_ino == identity
+        assert prune_cache(cache) == []
+        await legacy.release(default)
+        await legacy.close()
+        await manager.release(lease)
+        assert not lease.descriptors
+        assert prune_cache(cache) == []
+        await manager.release(warm)
+        assert prune_cache(cache)
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="owned runtime custody requires POSIX")
+async def test_owned_download_cancellation_cannot_publish_after_response_resumes(
+    tmp_path: Path,
+) -> None:
+    import time
+
+    entered = threading.Event()
+    resume = threading.Event()
+    body = _archive()
+
+    class BlockedDownload(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            entered.set()
+            resume.wait(timeout=10)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), BlockedDownload)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    project = tmp_path / "project"
+    project.mkdir()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, project, _owned=True)
+    acquisition = asyncio.create_task(
+        manager.acquire_owned(
+            "claude",
+            {
+                "version": "1.2.3",
+                "url": f"http://127.0.0.1:{server.server_port}/asset.zip",
+                "sha256": hashlib.sha256(body).hexdigest(),
+            },
+            deadline=time.monotonic() + 10,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        acquisition.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(acquisition, 4)
+        resume.set()
+        await asyncio.sleep(0.1)
+        assert list_cache(cache) == []
+        assert not list(cache.glob("**/receipt.json"))
+        assert prune_cache(cache) == []
+    finally:
+        resume.set()
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="owned runtime custody requires POSIX")
+async def test_owned_warm_resolution_keeps_original_deadline_while_entry_is_busy(
+    tmp_path: Path, archive_server: str
+) -> None:
+    import time
+
+    from m3.runtime.core import _kernel_entry_lock
+
+    project = tmp_path / "project"
+    project.mkdir()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, project, _owned=True)
+    selector = {
+        "version": "1.2.3",
+        "url": archive_server,
+        "sha256": hashlib.sha256(_Server.body).hexdigest(),
+    }
+    lease = await manager.acquire_owned(
+        "claude", selector, deadline=time.monotonic() + 10
+    )
+    entry = lease.executable.parent
+    try:
+        with _kernel_entry_lock(entry, deadline=time.monotonic() + 5):
+            started = time.monotonic()
+            with pytest.raises(asyncio.TimeoutError):
+                await manager.acquire_owned("claude", selector, deadline=started + 0.2)
+            assert time.monotonic() - started < 2
+        assert list_cache(cache)[0]["status"] == "ready"
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="owned runtime custody requires POSIX")
+async def test_lost_runtime_guard_quarantines_staging_before_detached_writer_dies(
+    tmp_path: Path,
+) -> None:
+    import signal
+    import subprocess
+    import time
+
+    from m3._bootstrap_operations import OwnedBootstrapOperations, PrivateOperationError
+    from m3.runtime.owned import RUNTIME_ENVIRONMENT, RuntimeAcquisition
+
+    entered = threading.Event()
+    resume = threading.Event()
+    body = _archive()
+
+    class BlockedDownload(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            entered.set()
+            resume.wait(timeout=10)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), BlockedDownload)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    project = tmp_path / "project"
+    project.mkdir()
+    cache = tmp_path / "cache"
+    operations = OwnedBootstrapOperations()
+    request = RuntimeAcquisition(
+        "claude",
+        {
+            "version": "1.2.3",
+            "url": f"http://127.0.0.1:{server.server_port}/asset.zip",
+            "sha256": hashlib.sha256(body).hexdigest(),
+        },
+        project,
+        cache,
+        environment={
+            key: os.environ[key] for key in RUNTIME_ENVIRONMENT if key in os.environ
+        },
+    )
+    acquisition = asyncio.create_task(
+        asyncio.to_thread(
+            operations.acquire_runtime, request, deadline=time.monotonic() + 10
+        )
+    )
+    writer = -1
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        assert operations._worker is not None
+        with operations._condition:
+            ident, job = next(iter(operations._jobs.items()))
+            root = job.root
+        guardian = operations._worker._groups[ident]
+        listing = subprocess.check_output(["ps", "-axo", "pid=,ppid="], text=True)
+        children = [
+            int(line.split()[0])
+            for line in listing.splitlines()
+            if len(line.split()) == 2 and int(line.split()[1]) == guardian
+        ]
+        assert len(children) == 1
+        writer = children[0]
+        os.kill(guardian, signal.SIGKILL)
+        with pytest.raises(PrivateOperationError):
+            await asyncio.wait_for(acquisition, 2)
+        await asyncio.to_thread(operations.close, deadline=time.monotonic() + 0.2)
+        assert root.is_dir()
+        os.kill(writer, 0)
+        assert not list(cache.glob("**/receipt.json"))
+        resume.set()
+        for _ in range(100):
+            if list(root.glob("cache/**/receipt.json")):
+                break
+            await asyncio.sleep(0.02)
+        assert list(root.glob("cache/**/receipt.json"))
+        assert root.is_dir()
+        assert list_cache(cache) == []
+    finally:
+        resume.set()
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+        await asyncio.to_thread(operations.close, deadline=time.monotonic() + 0.2)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="owned runtime custody requires POSIX")
+def test_native_guard_retains_package_after_controller_sigkill(
+    tmp_path: Path, archive_server: str
+) -> None:
+    import signal
+    import socket
+    import subprocess
+    import time
+
+    from m3._bootstrap_operations import _receive_private, _send_private
+
+    binary = (
+        b'#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.2.3; exit 0; fi\n'
+        b"trap '' TERM\nprintf 'ready\\n'\nwhile :; do sleep 1; done\n"
+    )
+    _Server.body = _archive(payload=binary)
+    cache = tmp_path / "cache"
+    project = tmp_path / "project"
+    native_root = tmp_path / "native"
+    project.mkdir()
+    native_root.mkdir()
+    fixture = Path(__file__).parents[1] / "fixtures" / "owned_runtime_controller.py"
+    parent, child = socket.socketpair()
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    controller = subprocess.Popen(
+        [sys.executable, str(fixture), str(child.fileno())],
+        pass_fds=(child.fileno(),),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    child.close()
+    guardian = None
+    guardian_stopped = False
+    try:
+        _send_private(
+            parent,
+            {
+                "version": 1,
+                "cache": str(cache),
+                "project": str(project),
+                "native_root": str(native_root),
+                "selector": {
+                    "version": "1.2.3",
+                    "url": archive_server,
+                    "sha256": hashlib.sha256(_Server.body).hexdigest(),
+                },
+            },
+            time.monotonic() + 10,
+        )
+        receipt, descriptor = _receive_private(parent, time.monotonic() + 10)
+        assert descriptor is None
+        guardian = receipt["guardian"]
+        native = receipt["native"]
+        os.kill(guardian, signal.SIGSTOP)
+        guardian_stopped = True
+        controller.kill()
+        controller.wait(timeout=2)
+        os.kill(native, 0)
+        assert prune_cache(cache) == []
+        assert list_cache(cache)[0]["status"] == "ready"
+        os.kill(guardian, signal.SIGCONT)
+        guardian_stopped = False
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            removed = prune_cache(cache)
+            if removed:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("native cleanup did not release managed package custody")
+        observed = subprocess.run(
+            ["ps", "-p", str(native), "-o", "stat="],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=False,
+        )
+        assert observed.returncode in {0, 1}
+        status = observed.stdout.strip()
+        assert not status or status.startswith("Z")
+    finally:
+        if controller.poll() is None:
+            controller.kill()
+        controller.wait(timeout=2)
+        parent.close()
+        if guardian is not None and guardian_stopped:
+            try:
+                os.kill(guardian, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_reused_owned_manager_starts_independent_cleanup_clocks(
+    tmp_path: Path, archive_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+    from types import SimpleNamespace
+
+    import m3._startup_deadlines as deadlines
+
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = RuntimeManager(tmp_path / "cache", project, _owned=True)
+    selector = {
+        "version": "1.2.3",
+        "url": archive_server,
+        "sha256": hashlib.sha256(_Server.body).hexdigest(),
+    }
+    first = await manager.acquire_owned(
+        "claude", selector, deadline=time.monotonic() + 10
+    )
+    assert first._owned is not None
+    first_clock = first._owned._clock
+    await manager.release(first)
+    assert first_clock.cleanup_deadline is not None
+    elapsed = time.monotonic() + 20
+    monkeypatch.setattr(deadlines, "time", SimpleNamespace(monotonic=lambda: elapsed))
+    second = await manager.acquire_owned(
+        "claude", selector, deadline=time.monotonic() + 10
+    )
+    assert second._owned is not None
+    try:
+        assert second._owned._clock is not first_clock
+        assert first_clock.cleanup_deadline < elapsed
+        await manager.release(second)
+        assert second._owned._clock.cleanup_deadline == elapsed + 10
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_cancellation_fences_download_before_cleanup_executor_is_available(
+    tmp_path: Path,
+) -> None:
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    entered = threading.Event()
+    resume = threading.Event()
+    body = _archive()
+
+    class BlockedDownload(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            entered.set()
+            resume.wait(timeout=10)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), BlockedDownload)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    executor = ThreadPoolExecutor(max_workers=1)
+    loop = asyncio.get_running_loop()
+    previous = loop._default_executor
+    loop.set_default_executor(executor)
+    project = tmp_path / "project"
+    project.mkdir()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, project, _owned=True)
+    acquisition = asyncio.create_task(
+        manager.acquire_owned(
+            "claude",
+            {
+                "version": "1.2.3",
+                "url": f"http://127.0.0.1:{server.server_port}/asset.zip",
+                "sha256": hashlib.sha256(body).hexdigest(),
+            },
+            deadline=time.monotonic() + 10,
+        )
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not entered.is_set():
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.01)
+        acquisition.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(acquisition, 3)
+        assert not resume.is_set()
+        assert list_cache(cache) == []
+    finally:
+        resume.set()
+        if not acquisition.done():
+            acquisition.cancel()
+            await asyncio.gather(acquisition, return_exceptions=True)
+        await manager.close()
+        loop.set_default_executor(previous or ThreadPoolExecutor())
+        executor.shutdown(wait=True)
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+@pytest.mark.parametrize("kind", ["runtime", "catalog"])
+def test_late_complete_acceptance_marker_stays_excluded_after_guardian_loss(
+    tmp_path: Path, archive_server: str, kind: str
+) -> None:
+    import socket
+    import subprocess
+    import time
+
+    from m3._bootstrap_operations import _receive_private, _send_private
+
+    (tmp_path / "project").mkdir()
+    os.mkfifo(tmp_path / "write", 0o600)
+    os.mkfifo(tmp_path / "return", 0o600)
+    source = tmp_path / "models-source.json"
+    source.write_bytes(
+        (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
+    )
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "owned_runtime_publication_controller.py"
+    )
+    parent, child = socket.socketpair()
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    controller = subprocess.Popen(
+        [sys.executable, str(fixture), str(child.fileno())],
+        pass_fds=(child.fileno(),),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    child.close()
+    try:
+        _send_private(
+            parent,
+            {
+                "version": 1,
+                "kind": kind,
+                "directory": str(tmp_path),
+                "source": str(source),
+                "selector": {
+                    "version": "1.2.3",
+                    "url": archive_server,
+                    "sha256": hashlib.sha256(_Server.body).hexdigest(),
+                },
+            },
+            time.monotonic() + 5,
+        )
+        try:
+            result, descriptor = _receive_private(parent, time.monotonic() + 12)
+        except Exception:
+            controller.wait(timeout=2)
+            assert controller.stderr is not None
+            pytest.fail(controller.stderr.read().decode())
+        assert descriptor is None
+        assert result == {"version": 1, "late_marker_fenced": True}
+        controller.wait(timeout=3)
+        assert controller.returncode == 0
+        assert (tmp_path / "late").exists()
+        assert (tmp_path / "rejected").exists()
+    finally:
+        parent.close()
+        if controller.poll() is None:
+            controller.kill()
+        controller.wait(timeout=3)
