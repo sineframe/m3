@@ -76,3 +76,28 @@ async def test_async_kit_explicit_admission_overlays_file_settings() -> None:
     ) as kit:
         assert kit.config.admission.enabled
         assert kit.config.admission.slots == 3
+
+
+def test_sync_session_keeps_kit_override_above_file_harness_settings() -> None:
+    with MCPTestKit(
+        Config(harnesses={"codex": {"admission": {"enabled": True, "slots": 6}}}),
+        admission=StartupAdmission(enabled=False, slots=2),
+    ) as kit:
+        session = kit.agent_session(_spec())
+        assert not session._portal._runtime.session(
+            session._handle
+        ).spec.admission.enabled
+        assert (
+            session._portal._runtime.session(session._handle).spec.admission.slots == 2
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_session_keeps_kit_override_above_file_harness_settings() -> None:
+    async with AsyncMCPTestKit(
+        Config(harnesses={"codex": {"admission": {"enabled": True, "slots": 6}}}),
+        admission=StartupAdmission(enabled=False, slots=2),
+    ) as kit:
+        session = kit.agent_session(_spec())
+        assert not session.spec.admission.enabled
+        assert session.spec.admission.slots == 2

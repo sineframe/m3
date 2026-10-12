@@ -469,7 +469,7 @@ class ProcessOwner:
 
     def _attach_guardian(self, guardian: NativeGuardian) -> None:
         self._guardian = guardian
-        self.process = guardian.process
+        self.process = guardian.process_if_started
 
     async def startup_ready(self) -> None:
         if self._guardian is not None:

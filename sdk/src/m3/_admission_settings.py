@@ -20,12 +20,20 @@ def override_admission_config(
 
 
 def resolve_admission(
-    spec: AgentSpec, config: Config, override: StartupAdmission | Unset = UNSET
+    spec: AgentSpec,
+    config: Config,
+    override: StartupAdmission | Unset = UNSET,
+    *,
+    kit_override: StartupAdmission | Unset = UNSET,
 ) -> AgentSpec:
     layers = [config.admission]
     harness = spec.harness
     if isinstance(harness, (Codex, ClaudeCode, OpenCode)):
         layers.append(getattr(config.harnesses, harness.kind).admission)
+    if kit_override is not UNSET:
+        if not isinstance(kit_override, StartupAdmission):
+            raise ModelValidationError("admission requires typed startup settings")
+        layers.append(kit_override)
     layers.append(spec.admission)
     if override is not UNSET:
         if not isinstance(override, StartupAdmission):

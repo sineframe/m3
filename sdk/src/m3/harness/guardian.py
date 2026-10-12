@@ -18,22 +18,137 @@ from .admission import StartupLease
 from .contracts import HarnessStartupError
 
 _MAX_FRAME = 1024 * 1024
+_OWNED_GUARDIANS: set[NativeGuardian] = set()
 
 
 class NativeGuardian:
-    def __init__(
-        self,
-        process: asyncio.subprocess.Process,
-        channel: socket.socket,
-        deadline: float | None,
-    ) -> None:
-        self.process = process
+    """Own a pending helper spawn, private channel and eventual native group."""
+
+    def __init__(self, channel: socket.socket, deadline: float | None) -> None:
+        self._process: asyncio.subprocess.Process | None = None
+        self._spawn_task: asyncio.Task[asyncio.subprocess.Process] | None = None
+        self._reap_task: asyncio.Task[None] | None = None
         self._channel = channel
         self.native_pid: int | None = None
         self._commands = asyncio.Lock()
         self._closed = False
         self._deadline = deadline
         self._ready = False
+
+    @property
+    def process(self) -> asyncio.subprocess.Process:
+        if self._process is None:
+            raise HarnessStartupError("native owner has not started")
+        return self._process
+
+    @property
+    def process_if_started(self) -> asyncio.subprocess.Process | None:
+        return self._process
+
+    @classmethod
+    async def _create(
+        cls,
+        deadline: float | None,
+        limit: int,
+        on_spawn: Callable[[NativeGuardian], None] | None = None,
+        inherited_slot: int = -1,
+    ) -> NativeGuardian:
+        if os.name != "posix":
+            raise UnsupportedFeature("owned native startup requires POSIX child status")
+        if deadline is not None:
+            if not math.isfinite(deadline):
+                raise ValueError("native ownership deadline is invalid")
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError
+        retained_slot = os.dup(inherited_slot) if inherited_slot >= 0 else -1
+        try:
+            parent, child = socket.socketpair()
+        except OSError:
+            if retained_slot >= 0:
+                os.close(retained_slot)
+            raise
+        parent.setblocking(False)
+        guardian = cls(parent, deadline)
+        _OWNED_GUARDIANS.add(guardian)
+        if on_spawn is not None:
+            try:
+                on_spawn(guardian)
+            except BaseException:
+                parent.close()
+                child.close()
+                if retained_slot >= 0:
+                    os.close(retained_slot)
+                _OWNED_GUARDIANS.discard(guardian)
+                raise
+
+        async def create() -> asyncio.subprocess.Process:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-I",
+                    str(Path(__file__).with_name("_startup_guardian.py")),
+                    str(child.fileno()),
+                    str(retained_slot),
+                    pass_fds=(child.fileno(), retained_slot)
+                    if retained_slot >= 0
+                    else (child.fileno(),),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env={"PATH": os.defpath},
+                    start_new_session=True,
+                    limit=limit,
+                )
+                guardian._process = process
+                return process
+            finally:
+                child.close()
+                if retained_slot >= 0:
+                    os.close(retained_slot)
+
+        guardian._spawn_task = asyncio.create_task(create())
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(guardian._spawn_task), timeout=guardian._remaining()
+            )
+            if on_spawn is not None:
+                on_spawn(guardian)
+            return guardian
+        except BaseException:
+            # The task remains owned: late helper creation observes EOF before
+            # any native begin gate, then the retained reaper collects it.
+            guardian.disconnect()
+            raise
+
+    @classmethod
+    async def acquire(
+        cls,
+        root: Path,
+        slots: int,
+        threshold: float | None,
+        deadline: float,
+    ) -> NativeGuardian:
+        guardian = await cls._create(deadline, _MAX_FRAME + 1)
+        try:
+            await guardian._send(
+                {
+                    "action": "admit",
+                    "root": str(root),
+                    "slots": slots,
+                    "threshold": threshold,
+                    "deadline": deadline,
+                }
+            )
+            receipt = await guardian._receive()
+            if receipt == {"event": "queue_timeout"}:
+                raise asyncio.TimeoutError
+            if receipt != {"event": "admitted"}:
+                raise HarnessStartupError("native admission acknowledgement is invalid")
+            guardian._deadline = None
+            return guardian
+        except BaseException:
+            guardian.disconnect()
+            raise
 
     @classmethod
     async def spawn(
@@ -47,40 +162,27 @@ class NativeGuardian:
         on_spawn: Callable[[NativeGuardian], None] | None = None,
         deadline: float | None = None,
     ) -> NativeGuardian:
-        if os.name != "posix" or not hasattr(os, "waitid"):
-            raise UnsupportedFeature("owned native startup requires POSIX child status")
-        if deadline is not None:
-            if not math.isfinite(deadline):
-                raise ValueError("native ownership deadline is invalid")
-            if time.monotonic() >= deadline:
-                raise asyncio.TimeoutError
-        parent, child = socket.socketpair()
-        parent.setblocking(False)
-        guardian: NativeGuardian | None = None
-        try:
-            process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-I",
-                str(Path(__file__).with_name("_startup_guardian.py")),
-                str(child.fileno()),
-                str(lease.descriptor if lease is not None else -1),
-                pass_fds=(child.fileno(), lease.descriptor)
-                if lease is not None
-                else (child.fileno(),),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(cwd),
-                env={"PATH": os.defpath},
-                start_new_session=True,
-                limit=limit,
+        if lease is not None and isinstance(lease.owner, cls):
+            guardian = lease.owner
+            if guardian._closed or guardian.native_pid is not None:
+                raise HarnessStartupError(
+                    "native ownership lease has already been used"
+                )
+            guardian._deadline = deadline
+            reused = True
+        else:
+            guardian = await cls._create(
+                deadline,
+                limit,
+                on_spawn,
+                inherited_slot=lease.descriptor if lease is not None else -1,
             )
-            child.close()
-            guardian = cls(process, parent, deadline)
-            if lease is not None:
-                lease.attach(guardian)
-            if on_spawn is not None:
+            reused = False
+        try:
+            if reused and on_spawn is not None:
                 on_spawn(guardian)
+            if lease is not None and lease.owner is not guardian:
+                lease.attach(guardian)
             await guardian._send(
                 {
                     "argv": argv,
@@ -94,27 +196,20 @@ class NativeGuardian:
             if (
                 received.get("event") != "received"
                 or not isinstance(pid, int)
+                or isinstance(pid, bool)
                 or pid <= 1
             ):
                 raise HarnessStartupError("native ownership acknowledgement is invalid")
             guardian.native_pid = pid
-            # The guardian acknowledged both the slot FD and the gated child.
-            # Only now may the sender drop its copy and authorize native exec.
             if lease is not None:
-                lease.close()
+                lease.transferred()
             await guardian._send({"action": "begin"})
-            started = await guardian._receive()
-            if started != {"event": "started", "pid": pid}:
+            if await guardian._receive() != {"event": "started", "pid": pid}:
                 raise HarnessStartupError("native startup acknowledgement is invalid")
             return guardian
         except BaseException:
-            if guardian is not None:
-                guardian.disconnect()
-            else:
-                parent.close()
+            guardian.disconnect()
             raise
-        finally:
-            child.close()
 
     async def _send(self, value: dict[str, object]) -> None:
         data = json.dumps(value).encode("utf-8")
@@ -156,7 +251,7 @@ class NativeGuardian:
         )
         if remaining <= 0:
             raise asyncio.TimeoutError
-        return min(15.0, remaining)
+        return remaining
 
     async def ready(self) -> None:
         async with self._commands:
@@ -168,16 +263,28 @@ class NativeGuardian:
             self._ready = True
             self._deadline = None
 
+    async def _reap(self) -> None:
+        try:
+            if self._spawn_task is not None:
+                process = await asyncio.shield(self._spawn_task)
+                await process.wait()
+        except (OSError, ValueError):
+            # A failed helper spawn created no native begin gate.
+            pass
+        finally:
+            _OWNED_GUARDIANS.discard(self)
+
     def disconnect(self) -> None:
         if not self._closed:
             self._closed = True
             self._channel.close()
+        if self._reap_task is None:
+            self._reap_task = asyncio.create_task(self._reap())
 
     async def stop(self) -> None:
         self.disconnect()
+        assert self._reap_task is not None
         try:
-            await asyncio.wait_for(asyncio.shield(self.process.wait()), timeout=2)
+            await asyncio.wait_for(asyncio.shield(self._reap_task), timeout=2)
         except asyncio.TimeoutError:
-            # Killing the guardian would drop its slot while a native child
-            # may still write. EOF has fenced it; ownership remains there.
             raise CleanupError("native group remains fenced by its guardian") from None
