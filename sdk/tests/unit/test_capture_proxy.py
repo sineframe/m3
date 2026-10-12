@@ -27,9 +27,11 @@ from m3.harness.contracts import (
     HarnessSession,
     HarnessTurnRequest,
 )
+from m3.harness.native import _server_configuration
 from m3.server_group import (
     HarnessServerConfig,
     ServerGroupManager,
+    ServerGroupSnapshot,
     _LoopbackEndpoint,
     _SSECaptureParser,
 )
@@ -82,6 +84,7 @@ async def _run_stdio_proxy(
     *,
     environment: dict[str, str],
     input_bytes: bytes = b"",
+    read_reply_before_eof: bool = False,
 ) -> tuple[int, bytes, bytes]:
     runtime_environment = {
         **os.environ,
@@ -96,7 +99,23 @@ async def _run_stdio_proxy(
         stderr=asyncio.subprocess.PIPE,
         env=runtime_environment,
     )
-    stdout, stderr = await asyncio.wait_for(process.communicate(input_bytes), timeout=5)
+    if read_reply_before_eof:
+        assert process.stdin is not None and process.stdout is not None
+        try:
+            process.stdin.write(input_bytes)
+            await process.stdin.drain()
+            reply = await asyncio.wait_for(process.stdout.readline(), timeout=5)
+            process.stdin.close()
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
+            stdout = reply + stdout
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+    else:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(input_bytes), timeout=5
+        )
     assert process.returncode is not None
     return process.returncode, stdout, stderr
 
@@ -211,10 +230,107 @@ async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(
     instrumented = (await manager.instrument((config,)))[0]
     assert instrumented.command == sys.executable
     assert "m3.transport.stdio_proxy" in instrumented.args
-    assert "--" in instrumented.args
-    marker = instrumented.args.index("--")
-    assert instrumented.args[marker + 1 :] == ("echo-server", "--fixture")
+    assert "echo-server" not in instrumented.args
+    assert "--fixture" not in instrumented.args
+    env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+    handoff = json.loads(env_file.read_text())
+    assert handoff["command"] == ["echo-server", "--fixture"]
     await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("launch_style", ["interpreter", "executable"])
+async def test_stdio_handoff_preserves_literal_argv_environment_and_cwd(
+    tmp_path: Path, launch_style: str
+) -> None:
+    from dataclasses import replace
+
+    directory = tmp_path / "${WORKDIR:-fallback}"
+    directory.mkdir()
+    server = directory / "${SERVER:-fallback}.py"
+    server.write_text(
+        "#!"
+        + sys.executable
+        + "\n"
+        + """import json
+import os
+import sys
+
+request = json.loads(sys.stdin.readline())
+result = {
+    "arguments": sys.argv[1:],
+    "environment": os.environ["ONLY_IN_SERVER"],
+    "cwd": os.getcwd(),
+}
+print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+"""
+    )
+    server.chmod(0o700)
+    arguments = (
+        "${ONLY_IN_SERVER:-fallback}",
+        "$ONLY_IN_SERVER",
+        "space and 'quotes'",
+        '"double quotes"',
+        "$(must-stay-literal)",
+        "`must-stay-literal`",
+        "",
+        "日本語",
+    )
+    configuration = replace(
+        _stdio_config(
+            key="literal",
+            connection_id="literal-connection",
+            command=sys.executable if launch_style == "interpreter" else str(server),
+            args=(str(server), *arguments)
+            if launch_style == "interpreter"
+            else arguments,
+            environment={"ONLY_IN_SERVER": "server-value"},
+        ),
+        cwd=str(directory),
+    )
+    manager = McpCaptureManager(tmp_path / "capture")
+    try:
+        instrumented = (await manager.instrument((configuration,)))[0]
+        assert all("${" not in part for part in instrumented.args)
+        assert instrumented.cwd is None
+        spec = AgentSpec(
+            harness=ClaudeCode(model="fixture"),
+            servers=(
+                ServerBinding(
+                    server=StdioServer(
+                        name="literal",
+                        command=configuration.command,
+                        args=configuration.args,
+                        cwd=configuration.cwd,
+                        environment=configuration.environment,
+                    )
+                ),
+            ),
+        )
+        native = _server_configuration(
+            HarnessLaunch(
+                spec, ServerGroupSnapshot(), (instrumented,), spec.tool_policy
+            )
+        )
+        assert "cwd" not in native["mcpServers"]["literal"]
+        assert str(directory) not in json.dumps(native)
+        handoff = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+        assert handoff.stat().st_mode & 0o777 == 0o600
+        returncode, stdout, stderr = await _run_stdio_proxy(
+            instrumented,
+            environment={"ONLY_IN_SERVER": "harness-value"},
+            input_bytes=b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+            read_reply_before_eof=True,
+        )
+        assert returncode == 0, stderr.decode(errors="replace")
+        assert json.loads(stdout)["result"] == {
+            "arguments": list(arguments),
+            "environment": "server-value",
+            "cwd": str(directory),
+        }
+        assert not handoff.exists()
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio
@@ -442,7 +558,7 @@ async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
     handoff = json.loads(env_file.read_text(encoding="utf-8"))
     assert handoff["environment"]["TOKEN"] == "capture-secret-value"
     assert handoff["environment"]["PATH"]
-    assert handoff["canaries"] == ["capture-secret-value"]
+    assert set(handoff["canaries"]) == {"capture-secret-value", "echo-server"}
     writer = manager.writer_for("connection-secret")
     writer.write(
         transport="stdio",

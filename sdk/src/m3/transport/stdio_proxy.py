@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from m3.trace.capture import CaptureWriter, parse_json_payload
+from m3.transport._stdio_handoff import StdioHandoff
 from m3.transport.tool_policy import ProxyToolPolicy
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
@@ -513,8 +514,7 @@ def main() -> int:
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
-    if not command:
-        parser.error("server command is required after --")
+    cwd = args.cwd
 
     # The handoff is the complete child environment. In particular, do not
     # inherit ambient provider credentials into a legacy MCP process.
@@ -524,35 +524,18 @@ def main() -> int:
     if args.env_file:
         try:
             handoff = Path(args.env_file)
-            payload = _read_handoff(handoff)
-            if not isinstance(payload, dict):
-                raise ValueError
-            if set(payload) not in (
-                {"environment", "canaries"},
-                {"environment", "canaries", "observer"},
-            ):
-                raise ValueError
-            values = payload.get("environment")
-            raw_canaries = payload.get("canaries")
-            if not isinstance(values, dict) or not isinstance(raw_canaries, list):
-                raise ValueError
-            if any(not isinstance(value, str) for value in raw_canaries):
-                raise ValueError
-            canaries.update(raw_canaries)
-            if "observer" in payload:
-                raw_observer = payload.get("observer")
-                if (
-                    isinstance(raw_observer, dict)
-                    and set(raw_observer) == {"host", "port", "connection_id", "token"}
-                    and all(isinstance(value, str) for value in raw_observer.values())
-                ):
-                    observation = raw_observer
-            if any(
-                not isinstance(key, str) or not isinstance(value, str)
-                for key, value in values.items()
-            ):
-                raise ValueError
-            environment.update(values)
+            payload = StdioHandoff.model_validate(_read_handoff(handoff))
+            if payload.command is not None:
+                if command or args.cwd is not None:
+                    raise ValueError("ambiguous stdio launch data")
+                command = list(payload.command)
+                cwd = payload.cwd
+            elif payload.cwd is not None:
+                raise ValueError("working directory requires a handoff command")
+            environment.update(payload.environment)
+            canaries.update(payload.canaries)
+            if payload.observer is not None:
+                observation = payload.observer.model_dump()
         except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
             return 78
         finally:
@@ -563,6 +546,8 @@ def main() -> int:
                 Path(args.env_file).unlink(missing_ok=True)
             except OSError:
                 return 78
+    if not command:
+        parser.error("server command is required in the handoff or after --")
     writer = CaptureWriter(
         args.capture,
         args.baseline,
@@ -602,7 +587,7 @@ def main() -> int:
         stderr=None,
         shell=False,
         bufsize=0,
-        cwd=args.cwd,
+        cwd=cwd,
         env=environment,
     )
     assert process.stdin is not None and process.stdout is not None
