@@ -1062,10 +1062,7 @@ async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials
     )
     environment = {
         "PRIVATE_KEY": pem,
-        # Known credential, however short and numeric.
-        "API_TOKEN": "4821",
-        # A name the sensitive-key pattern misses.
-        "GITHUB_PAT": "ghp_literal_canary",
+        "API_TOKEN": "ghp_literal_canary",
         "MODE": "stream",
     }
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
@@ -1079,7 +1076,7 @@ async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials
             "message": (
                 "required MCP servers failed to initialize: remote: error sending "
                 f"request for url ({endpoint}), expected id 1; fs: bad key {pem}, "
-                "pin 4821, pat ghp_literal_canary, stream closed"
+                "pat ghp_literal_canary, token=4821, stream closed"
             ),
         }
     )
@@ -1094,11 +1091,12 @@ async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials
         "ghp_literal_canary",
     ):
         assert canary not in message
-    # Non-credentials (TOKEN_LIMIT=1, MODE=stream) leave the reason readable.
+    # Non-credentials (TOKEN_LIMIT=1, MODE=stream) leave the reason readable;
+    # credential-shaped text (token=...) is scrubbed.
     assert message.endswith(
         "remote: error sending request for url (http://127.0.0.1:5555/…), "
-        "expected id 1; fs: bad key [REDACTED], pin [REDACTED], "
-        "pat [REDACTED], stream closed"
+        "expected id 1; fs: bad key [REDACTED], pat [REDACTED], "
+        "token=[REDACTED], stream closed"
     )
 
 

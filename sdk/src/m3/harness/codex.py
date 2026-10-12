@@ -20,7 +20,7 @@ from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
 from ..trace.redaction import (
     is_sensitive_key,
-    native_text_redaction,
+    native_text_secrets,
     redact_native_text,
 )
 from ..types import (
@@ -935,21 +935,18 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     ) -> str | None:
         """Return Codex's error text with credentials redacted.
 
-        Always redacted: the adapter's runtime secrets, values the capture
-        manager resolved, sensitive-named literal MCP values and ``known``.
-        Other literal MCP values are redacted when they could be credentials,
-        and embedded URLs are reduced to their origin. Redaction runs on the
-        raw text, because normalizing whitespace first would stop a secret
-        containing whitespace from matching, and before any cut, so a cut
-        cannot split a secret.
+        Redacted: the adapter's runtime secrets, the launch's MCP credentials,
+        ``known`` values, embedded URLs beyond their origin, and
+        credential-shaped text. Redaction runs on the raw text, because
+        normalizing whitespace first would stop a secret containing
+        whitespace from matching, and before any cut, so a cut cannot split
+        a secret.
         """
 
-        secrets = launch_secrets(launch)
-        config = native_text_redaction(
-            (*self._runtime_secrets, *secrets.known, *known),
-            guessed=secrets.guessed,
+        secrets = native_text_secrets(
+            (*self._runtime_secrets, *launch_secrets(launch), *known)
         )
-        redacted = redact_native_text(text, config)[:_REASON_SCAN_LIMIT]
+        redacted = redact_native_text(text, secrets)[:_REASON_SCAN_LIMIT]
         reason = _collapse_repeated_chain(" ".join(redacted.split()))
         if not reason:
             return None
