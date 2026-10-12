@@ -59,8 +59,10 @@ from ._native_settings import NativePermissions as _NativePermissions
 from ._native_settings import permission_override as _permission_override
 from ._native_settings import resolve_native_settings as _resolve_native_settings
 from ._native_settings import resolve_runtime_settings as _resolve_runtime_settings
+from ._native_settings import timeout_override as _timeout_override
 from ._native_settings import validate_bound_settings as _validate_bound_settings
 from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import HarnessTimeouts as _HarnessTimeouts
 from ._types.settings import StartupAdmission as _StartupAdmission
 from ._types.settings import Unset as _Unset
 from ._types.specs import AgentSpec as _AgentSpec
@@ -951,7 +953,13 @@ class AsyncMCPTestKit:
         max_judge_requests: int | None = None,
         harness_cache_dir: str | _Path | None = None,
         admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
+        harness_timeouts: _HarnessTimeouts | None = None,
     ) -> None:
+        if harness_timeouts is not None and not isinstance(
+            harness_timeouts, _HarnessTimeouts
+        ):
+            raise ValueError("kit harness timeouts must be typed")
+        self._harness_timeouts = harness_timeouts
         from ._test_runs import active_test
 
         active = active_test()
@@ -1545,6 +1553,7 @@ class AsyncMCPTestKit:
         harness_cache_dir: str | _Path | None = None,
         harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
         admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
+        harness_timeouts: _HarnessTimeouts | _Unset = _NATIVE_UNSET,
     ) -> AsyncAgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
@@ -1563,7 +1572,11 @@ class AsyncMCPTestKit:
                 )
             spec, session_profile_provenance = _resolve_agent_spec(spec, resolver)
         spec = _resolve_native_settings(
-            _permission_override(spec, harness_permissions), self.config
+            _timeout_override(
+                _permission_override(spec, harness_permissions), harness_timeouts
+            ),
+            self.config,
+            kit_timeouts=self._harness_timeouts,
         )
         spec = _resolve_admission(spec, self.config, admission)
         server_profile_by_ordinal = {

@@ -38,7 +38,9 @@ from ..types import (
 
 if TYPE_CHECKING:
     from .._literal_store import LiteralHandle, RunLiteralStore
+    from .._startup_deadlines import StartupBudget
     from ..managed_runtime import ManagedInputRuntime
+    from ..preparation import PreparationSupervisor
     from ..server_group import HarnessServerConfig, ServerGroupSnapshot
     from ._launch_credentials import LaunchCredentialBundle
     from ._native_auth import NativeAuthOperations
@@ -279,6 +281,12 @@ class HarnessLaunch:
         default=(), repr=False, compare=False
     )
     _startup_lease: StartupLease | None = field(default=None, repr=False, compare=False)
+    _startup_clock: StartupBudget | None = field(
+        default=None, repr=False, compare=False
+    )
+    _preparation: PreparationSupervisor | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""

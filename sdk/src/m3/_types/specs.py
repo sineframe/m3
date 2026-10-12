@@ -40,6 +40,7 @@ from .base import (
 from .settings import (
     ClaudeCodePermissions,
     CodexPermissions,
+    HarnessTimeouts,
     McpTimeouts,
     OpenCodePermissions,
     StartupAdmission,
@@ -180,6 +181,7 @@ class HarnessValue(FrozenModel):
     executable: str | None = None
     runtime: _Literal["system", "managed"] = "system"
     version: str | None = _Field(default=None, min_length=1, max_length=64)
+    timeouts: HarnessTimeouts = _Field(default_factory=HarnessTimeouts)
 
     @_field_validator("runtime", mode="before")
     @classmethod
@@ -214,6 +216,8 @@ class HarnessValue(FrozenModel):
             value.pop("version", None)
         if not value.get("permissions"):
             value.pop("permissions", None)
+        if not value.get("timeouts"):
+            value.pop("timeouts", None)
         return value
 
     def with_model(self, model: str) -> HarnessValue:
@@ -600,6 +604,7 @@ class AgentSpec(_ExecutionSpecBase):
     elicitation: _ElicitationPlan | None = None
     elicitation_round_limit: int = 10
     admission: StartupAdmission = _Field(default_factory=StartupAdmission)
+    harness_timeouts: HarnessTimeouts = _Field(default_factory=HarnessTimeouts)
     harness_permissions: (
         CodexPermissions | ClaudeCodePermissions | OpenCodePermissions | None
     ) = None
@@ -637,6 +642,8 @@ class AgentSpec(_ExecutionSpecBase):
         value = dict(handler(self))
         if not self.admission.model_dump():
             value.pop("admission", None)
+        if not value.get("harness_timeouts"):
+            value.pop("harness_timeouts", None)
         if self.harness_permissions is None:
             value.pop("harness_permissions", None)
         else:

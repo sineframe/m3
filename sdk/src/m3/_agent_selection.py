@@ -355,6 +355,7 @@ class _Selection:
             "permission_policy",
             "harness_permissions",
             "admission",
+            "harness_timeouts",
             "sampling_policy",
             "filesystem_policy",
             "terminal_policy",
