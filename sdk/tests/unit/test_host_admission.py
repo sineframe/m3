@@ -534,3 +534,126 @@ async def test_killed_guardian_cannot_authorize_native_root_cleanup(
         )
     assert await owner.process.stdout.readline() == b"finished\n"
     assert (root / "late-write").exists()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_completed_receive_closes_real_transferred_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import array
+    import json
+    import socket
+    import struct
+
+    marker = tmp_path / "transferred"
+    marker.write_text("private")
+    handle = os.open(marker, os.O_RDWR)
+    parent, sender = socket.socketpair()
+    parent.setblocking(False)
+    guardian = NativeGuardian(parent, None)
+    loop = asyncio.get_running_loop()
+    register = loop.add_reader
+    received: list[int] = []
+    registered = asyncio.Event()
+    waiting: asyncio.Task | None = None
+
+    class ReceiptSocket(socket.socket):
+        def recvmsg(self, *args: object) -> tuple:
+            message = super().recvmsg(*args)
+            for level, kind, raw in message[1]:
+                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                    handles = array.array("i")
+                    handles.frombytes(raw)
+                    received.extend(handles)
+            return message
+
+    guardian._channel = ReceiptSocket(fileno=parent.detach())
+    guardian._channel.setblocking(False)
+
+    def cancel_after_ready(descriptor: int, callback: object, *args: object) -> None:
+        nonlocal waiting
+        waiting = asyncio.current_task()
+        assert waiting is not None
+
+        def observe() -> None:
+            callback(*args)
+            if received:
+                assert waiting is not None
+                waiting.cancel()
+
+        register(descriptor, observe)
+        registered.set()
+
+    monkeypatch.setattr(loop, "add_reader", cancel_after_ready)
+    task = asyncio.create_task(guardian._receive(admission=True))
+    await registered.wait()
+    payload = json.dumps({"event": "admitted"}).encode()
+    sender.sendmsg(
+        [struct.pack("!I", len(payload)) + payload],
+        [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [handle]))],
+    )
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert len(received) == 1
+        with pytest.raises(OSError):
+            os.fstat(received[0])
+        assert guardian._admission_descriptor is None
+        assert guardian._reader is None
+    finally:
+        sender.close()
+        os.close(handle)
+        guardian.disconnect()
+        await guardian.stop()
+
+
+@pytest.mark.asyncio
+async def test_disconnected_receive_does_not_remove_reused_descriptor_watcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+
+    parent, peer = socket.socketpair()
+    parent.setblocking(False)
+    descriptor = parent.fileno()
+    guardian = NativeGuardian(parent, None)
+    registered = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    register = loop.add_reader
+
+    def observe_registration(fd: int, callback: object, *args: object) -> None:
+        register(fd, callback, *args)
+        registered.set()
+
+    monkeypatch.setattr(loop, "add_reader", observe_registration)
+    pending = asyncio.create_task(guardian._receive())
+    await registered.wait()
+    guardian.disconnect()
+    receiver, sender = socket.socketpair()
+    if sender.fileno() == descriptor:
+        receiver, sender = sender, receiver
+    if receiver.fileno() != descriptor:
+        os.dup2(receiver.fileno(), descriptor)
+        receiver.close()
+        receiver = socket.socket(fileno=descriptor)
+    receiver.setblocking(False)
+    loop = asyncio.get_running_loop()
+    delivered: asyncio.Future[bytes] = loop.create_future()
+
+    def observe() -> None:
+        delivered.set_result(receiver.recv(1))
+        loop.remove_reader(descriptor)
+
+    loop.add_reader(descriptor, observe)
+    try:
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        sender.sendall(b"x")
+        assert await asyncio.wait_for(delivered, timeout=1) == b"x"
+    finally:
+        loop.remove_reader(descriptor)
+        receiver.close()
+        sender.close()
+        peer.close()
+        await guardian.stop()

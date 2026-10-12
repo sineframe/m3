@@ -39,6 +39,7 @@ class NativeGuardian:
         self._death_descriptor: int | None = None
         self._death_confirmed = False
         self._admission_descriptor: int | None = None
+        self._reader: tuple[asyncio.AbstractEventLoop, int, object] | None = None
 
     @property
     def process(self) -> asyncio.subprocess.Process:
@@ -264,11 +265,31 @@ class NativeGuardian:
                 available.set_result(value)
             loop.remove_reader(descriptor)
 
+        binding = (loop, descriptor, object())
+        self._reader = binding
         loop.add_reader(descriptor, receive_block)
+        delivered = False
         try:
-            return await available
+            message = await available
+            delivered = True
+            return message
         finally:
-            loop.remove_reader(descriptor)
+            if self._reader is binding:
+                if self._channel.fileno() == descriptor:
+                    loop.remove_reader(descriptor)
+                self._reader = None
+            if (
+                not delivered
+                and available.done()
+                and not available.cancelled()
+                and available.exception() is None
+            ):
+                for level, kind, raw in available.result()[1]:
+                    if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                        handles = array.array("i")
+                        handles.frombytes(raw[: len(raw) - len(raw) % handles.itemsize])
+                        for handle in handles:
+                            os.close(handle)
 
     async def _receive(self, *, admission: bool = False) -> dict[str, object]:
         async def receive() -> dict[str, object]:
@@ -362,6 +383,11 @@ class NativeGuardian:
     def disconnect(self) -> None:
         if not self._closed:
             self._closed = True
+            if self._reader is not None:
+                loop, descriptor, _ = self._reader
+                if self._channel.fileno() == descriptor:
+                    loop.remove_reader(descriptor)
+                self._reader = None
             self._channel.close()
         if self._reap_task is None:
             self._reap_task = asyncio.create_task(self._reap())
