@@ -354,6 +354,7 @@ class _Selection:
             "workspace",
             "permission_policy",
             "harness_permissions",
+            "admission",
             "sampling_policy",
             "filesystem_policy",
             "terminal_policy",

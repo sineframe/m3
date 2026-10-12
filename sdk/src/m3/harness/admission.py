@@ -203,6 +203,7 @@ class HostAdmission:
     def _claim_slot(slots: Path, limit: int) -> StartupLease | None:
         available: list[int] = []
         occupied = 0
+        effective_limit = limit
         try:
             for path in slots.iterdir():
                 descriptor = _open(path)
@@ -210,16 +211,36 @@ class HostAdmission:
                     available.append(descriptor)
                 else:
                     occupied += 1
-                    os.close(descriptor)
-            if occupied >= limit:
+                    try:
+                        recorded = os.read(descriptor, 4097)
+                        held_limit = int(recorded)
+                        if len(recorded) > 4096 or held_limit <= 0:
+                            raise ValueError
+                        effective_limit = min(effective_limit, held_limit)
+                    except ValueError:
+                        raise UnsupportedFeature(
+                            "startup admission slot policy is invalid"
+                        ) from None
+                    finally:
+                        os.close(descriptor)
+            if occupied >= effective_limit:
                 return None
             if available:
-                return StartupLease(available.pop())
-            path = slots / f"{occupied:020d}"
-            descriptor = _open(path)
-            if not _lock(descriptor):
+                descriptor = available.pop()
+            else:
+                path = slots / f"{occupied:020d}"
+                descriptor = _open(path)
+                if not _lock(descriptor):
+                    os.close(descriptor)
+                    raise UnsupportedFeature("startup admission slot collided")
+            encoded = str(limit).encode("ascii")
+            try:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                os.write(descriptor, encoded)
+                os.ftruncate(descriptor, len(encoded))
+            except BaseException:
                 os.close(descriptor)
-                raise UnsupportedFeature("startup admission slot collided")
+                raise
             return StartupLease(descriptor)
         finally:
             for descriptor in available:
