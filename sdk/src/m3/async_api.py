@@ -989,7 +989,7 @@ class AsyncMCPTestKit:
         self.config = _resolve_kit_config(config, env=env, cwd=cwd)
         self._owns_store = False
         if store is None:
-            scoped_store = _make_default_store()
+            scoped_store = _make_default_store(self.config)
             if scoped_store is not None:
                 store = scoped_store
                 self._owns_store = True

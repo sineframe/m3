@@ -406,12 +406,11 @@ def _configure(config: _Any) -> None:
     config._m3_judge_limit_previous = _install_default_judge_limit_factory(
         lambda: config._m3_judge_max_requests
     )
-    busy_ms = config._m3_busy_timeout_ms
     config._m3_store_token = _install_default_store_factory(
-        lambda: SQLiteExecutionStore(
+        lambda kit_config: SQLiteExecutionStore(
             path,
             execution_queue=f"pytest-{_uuid4().hex}",
-            busy_timeout_ms=busy_ms,
+            busy_timeout_ms=round(kit_config.results.busy_timeout_seconds * 1000),
         )
     )
     config._m3_progress = _Progress(config)

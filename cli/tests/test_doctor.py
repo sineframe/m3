@@ -87,25 +87,6 @@ def test_doctor_discovers_project_root_env(tmp_path: Path, monkeypatch, capsys) 
     assert report["configuration"]["settings"]["artifact_policy"] == "always"
 
 
-def test_doctor_reads_config_from_the_invocation_directory(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    # Implicit-root test runs keep the invocation cwd, so the SDK reads the
-    # nearest pyproject.toml from there; doctor must validate the same file.
-    (tmp_path / "m3.toml").write_text("", encoding="utf-8")
-    package = tmp_path / "packages" / "server"
-    package.mkdir(parents=True)
-    (package / "pyproject.toml").write_text(
-        '[tool.m3]\nartifact_policy = "sometimes"\n', encoding="utf-8"
-    )
-    monkeypatch.delenv("M3_ARTIFACT_POLICY", raising=False)
-    monkeypatch.chdir(package)
-
-    assert main(["doctor", "--require", "config", "--json"]) == 2
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error"]["field"] == "artifact_policy"
-
-
 def test_doctor_rejects_invalid_requirement_without_echoing_input(capsys) -> None:
     secret = "secret-token-value"
     assert main(["doctor", "--require", secret]) == 2
@@ -347,15 +328,115 @@ def test_doctor_m3_config_missing_file(tmp_path: Path, capsys) -> None:
     assert payload["error"]["field"] == "config_file"
 
 
-def test_doctor_m3_config_requires_config_requirement(capsys) -> None:
+def _capture_project_python_timeout(monkeypatch) -> list[float]:
+    import m3_cli.supervisor as supervisor
+
+    timeouts: list[float] = []
+
+    def fake(*_args, timeout_seconds: float, **_kwargs) -> str:
+        timeouts.append(timeout_seconds)
+        return "3.13.0"
+
+    monkeypatch.setattr(supervisor, "validate_project_python", fake)
+    return timeouts
+
+
+def test_doctor_uses_cli_timeout_without_config_requirement(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 60\n", encoding="utf-8"
+    )
+    timeouts = _capture_project_python_timeout(monkeypatch)
     assert (
         main(
-            ["doctor", "--require", "storage:memory", "--m3-config", "c.toml", "--json"]
+            [
+                "doctor",
+                "--require",
+                "storage:memory",
+                "--project-root",
+                str(tmp_path),
+                "--python",
+                sys.executable,
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert timeouts == [60.0]
+    assert json.loads(capsys.readouterr().out)["configuration"] is None
+
+
+def test_doctor_m3_config_is_honored_without_config_requirement(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    cfg = tmp_path / "c.toml"
+    cfg.write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 45\n", encoding="utf-8"
+    )
+    timeouts = _capture_project_python_timeout(monkeypatch)
+    assert (
+        main(
+            [
+                "doctor",
+                "--require",
+                "storage:memory",
+                "--project-root",
+                str(tmp_path),
+                "--python",
+                sys.executable,
+                "--m3-config",
+                str(cfg),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert timeouts == [45.0]
+    capsys.readouterr()
+
+
+def test_doctor_invalid_config_fails_without_config_requirement(
+    tmp_path: Path, capsys
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 0\n", encoding="utf-8"
+    )
+    assert (
+        main(
+            [
+                "doctor",
+                "--require",
+                "storage:memory",
+                "--project-root",
+                str(tmp_path),
+                "--json",
+            ]
         )
         == 2
     )
-    captured = capsys.readouterr()
-    assert "--m3-config requires a config requirement" in captured.out + captured.err
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "invalid_configuration"
+
+
+def test_doctor_discovers_config_from_resolved_project_root(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo = tmp_path / "repo"
+    pkg = repo / "pkg"
+    pkg.mkdir(parents=True)
+    (repo / "m3.toml").write_text("schema_version = 1\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 30\n", encoding="utf-8"
+    )
+    (pkg / "pyproject.toml").write_text("[project]\nname = 'pkg'\n", encoding="utf-8")
+    monkeypatch.chdir(pkg)
+    assert main(["doctor", "--require", "config", "--json"]) in {0, 1}
+    settings = json.loads(capsys.readouterr().out)["configuration"]["settings"]
+    assert settings["results"]["busy_timeout_seconds"] == 30.0
+    assert settings["sources"]["results.busy_timeout_seconds"]["origin"] == (
+        f"pyproject:{(repo / 'pyproject.toml').resolve()}"
+    )
 
 
 def test_doctor_requires_dotted_config_leaf(capsys) -> None:

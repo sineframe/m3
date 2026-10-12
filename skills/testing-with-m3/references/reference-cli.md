@@ -58,7 +58,8 @@ otherwise the current directory. Configuration checks load the project root
 `.env` automatically; `--env-file PATH` selects a custom file instead.
 
 `--m3-config PATH` reads `[tool.m3]` from PATH instead of discovering
-`pyproject.toml`; it requires a `config` requirement. See
+`pyproject.toml`. Doctor reads `cli.project_python_timeout_seconds` on every
+run, and a configuration error fails it even without a `config` requirement. See
 [Configuration](reference-configuration.md).
 
 ## `m3 test`

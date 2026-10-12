@@ -217,10 +217,6 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         kind == "config" for kind, _ in requirements
     ):
         raise DoctorArgumentError("--env-file requires a config requirement")
-    if getattr(args, "m3_config", None) is not None and not any(
-        kind == "config" for kind, _ in requirements
-    ):
-        raise DoctorArgumentError("--m3-config requires a config requirement")
     if args.project_root is not None:
         try:
             if not args.project_root.is_dir():
@@ -266,25 +262,22 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     selected_path = None
 
     include_config = any(kind == "config" for kind, _ in requirements)
+    try:
+        config = load_config(
+            env=environment if include_config else {},
+            cwd=root,
+            config_file=getattr(args, "m3_config", None),
+        )
+    except ConfigError as error:
+        raise DoctorConfigurationError(error) from None
+    except (OSError, TypeError, ValueError):
+        raise DoctorCLIError("invalid configuration") from None
     if include_config:
-        try:
-            config = load_config(
-                env=environment,
-                cwd=args.project_root,
-                config_file=getattr(args, "m3_config", None),
-            )
-        except ConfigError as error:
-            raise DoctorConfigurationError(error) from None
-        except (OSError, TypeError, ValueError):
-            raise DoctorCLIError("invalid configuration") from None
         configuration = {
             "status": "ready",
             "settings": _json_value(config),
             "digest": configuration_digest(config),
         }
-    project_python_timeout = (
-        config.cli.project_python_timeout_seconds if include_config else 15.0
-    )
     try:
         selected = resolve_project_python(
             getattr(args, "python", None),
@@ -304,7 +297,7 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
             selected,
             cli_sdk_version=bundled_sdk_version,
             project_root=root,
-            timeout_seconds=project_python_timeout,
+            timeout_seconds=config.cli.project_python_timeout_seconds,
         )
     except ProjectPythonError as error:
         reason = str(error)
