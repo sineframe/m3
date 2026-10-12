@@ -133,6 +133,9 @@ def _resolve_runtime_value(
             secrets.update((resolved, "${" + name + "}"))
         output = output[:begin] + resolved + output[end + 1 :]
         start = begin + len(resolved)
+    if secrets is not None and output:
+        # Pin the entire rendered env/header value as well as substitutions.
+        secrets.add(output)
     return output
 
 
