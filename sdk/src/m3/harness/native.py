@@ -17,7 +17,7 @@ import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .. import _timing
 from ..errors import CleanupError
@@ -31,6 +31,28 @@ from .contracts import (
 )
 
 MAX_FRAME_BYTES = 1024 * 1024
+
+if TYPE_CHECKING:
+    from .admission import StartupLease
+    from .guardian import NativeGuardian
+
+
+class StartupSpawnOptions(TypedDict, total=False):
+    startup_lease: StartupLease
+    owned_startup: bool
+
+
+def startup_spawn_options(
+    lease: StartupLease | None, *, owned_startup: bool = False
+) -> StartupSpawnOptions:
+    options: StartupSpawnOptions = {}
+    if lease is not None:
+        options["startup_lease"] = lease
+    if owned_startup:
+        options["owned_startup"] = True
+    return options
+
+
 MAX_STDERR_BYTES = 256 * 1024
 MAX_QUEUE_ITEMS = 128
 
@@ -372,6 +394,7 @@ class ProcessOwner:
         self.process: asyncio.subprocess.Process | None = None
         self.stderr_task: asyncio.Task[bytes] | None = None
         self.pgid: int | None = None
+        self._guardian: NativeGuardian | None = None
         self._closed = False
 
     @_timing.timed("harness.spawn")
@@ -381,27 +404,45 @@ class ProcessOwner:
         environment: Mapping[str, str],
         *,
         cwd: Path | str | None = None,
+        startup_lease: StartupLease | None = None,
+        owned_startup: bool = False,
     ) -> None:
         try:
-            self.process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # ``root`` is the adapter-control directory.  Native harnesses
-                # must execute in the SDK workspace when one was selected;
-                # keeping this separate prevents provider config/cache files
-                # from becoming workspace artifacts.
-                cwd=str(cwd if cwd is not None else self.root),
-                env=dict(environment),
-                start_new_session=True,
-                limit=MAX_FRAME_BYTES + 1,
-            )
+            if startup_lease is not None or owned_startup:
+                from .guardian import NativeGuardian
+
+                self._guardian = await NativeGuardian.spawn(
+                    startup_lease,
+                    argv,
+                    environment,
+                    cwd if cwd is not None else self.root,
+                    limit=MAX_FRAME_BYTES + 1,
+                    on_spawn=self._attach_guardian,
+                )
+            else:
+                self.process = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    # ``root`` is the adapter-control directory.  Native harnesses
+                    # must execute in the SDK workspace when one was selected;
+                    # keeping this separate prevents provider config/cache files
+                    # from becoming workspace artifacts.
+                    cwd=str(cwd if cwd is not None else self.root),
+                    env=dict(environment),
+                    start_new_session=True,
+                    limit=MAX_FRAME_BYTES + 1,
+                )
         except (OSError, ValueError):
             raise HarnessStartupError("harness process could not start") from None
-        assert self.process.stderr is not None
+        assert self.process is not None and self.process.stderr is not None
         self.stderr_task = asyncio.create_task(drain_bounded(self.process.stderr))
-        if os.name == "posix" and self.process.pid is not None:
+        if (
+            self._guardian is None
+            and os.name == "posix"
+            and self.process.pid is not None
+        ):
             # ``start_new_session=True`` makes the child its own group leader.
             # Keep this identity even if a very short-lived child is already
             # gone by the time ``getpgid`` runs; the termination helper still
@@ -414,8 +455,15 @@ class ProcessOwner:
             except (ProcessLookupError, PermissionError, OSError):
                 pass
 
+    def _attach_guardian(self, guardian: NativeGuardian) -> None:
+        self._guardian = guardian
+        self.process = guardian.process
+
     @_timing.timed("harness.terminate")
     async def terminate(self) -> None:
+        if self._guardian is not None:
+            await self._guardian.stop()
+            return
         process = self.process
         if process is None:
             return

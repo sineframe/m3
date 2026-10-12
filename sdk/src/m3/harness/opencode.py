@@ -78,6 +78,7 @@ from .native import (
     probe_help,
     read_bounded_line,
     run_probe,
+    startup_spawn_options,
     workspace_for_launch,
 )
 from .native_capabilities import NativeRuntimeIdentity
@@ -655,6 +656,7 @@ class OpenCodeHarnessAdapter:
                 [self.executable, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                 environment,
                 cwd=workspace,
+                **startup_spawn_options(launch._startup_lease),
             )
             assert owner.process is not None and owner.process.stdout is not None
             base_url = await self._read_server_url(owner.process.stdout)
