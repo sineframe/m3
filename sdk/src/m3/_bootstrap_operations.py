@@ -409,6 +409,10 @@ def execute_private_operation(
                     shutil.rmtree(target_root)
                 else:
                     target_root.rmdir()
+            elif operation == "private_workspace_cleanup":
+                from ._workspace_operations import cleanup_workspace
+
+                cleanup_workspace(request)
             else:
                 raise PrivateOperationError("unsupported private bootstrap operation")
             _send_private(
@@ -676,6 +680,9 @@ class OwnedBootstrapOperations:
         with self._condition:
             if resource in self._resources:
                 self._resources.remove(resource)
+
+    def remove_workspace(self, payload: dict[str, Any], *, deadline: float) -> None:
+        self._run("private_workspace_cleanup", payload, deadline)
 
     def close(self, *, deadline: float) -> None:
         with _closed_owners_lock:
