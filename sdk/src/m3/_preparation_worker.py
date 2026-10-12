@@ -244,6 +244,7 @@ class _ForkJob:
         self._gate_fd: int | None = gate_write if gated else None
         self.returncode: int | None = None
         self._reaped = False
+        self.exited = False
         self.pid = os.fork()
         if self.pid == 0:
             try:
@@ -319,6 +320,7 @@ class _ForkJob:
             # Both proofs are needed: a running leader could fork after a
             # member query. A zombie leader cannot create a new writer.
             zombie, descendants = group_snapshot(self.pid)
+            self.exited = self.exited or zombie
             if zombie and not descendants:
                 pid, status = os.waitpid(self.pid, 0)
                 assert pid == self.pid
@@ -330,6 +332,7 @@ class _ForkJob:
             return self.returncode
         if self.returncode is None:
             self.returncode = exited_status(self.pid)
+            self.exited = self.returncode is not None
         if self.returncode is not None and not self._reaped:
             if not self.group_established or not members_alive(self.pid):
                 pid, status = os.waitpid(self.pid, 0)
@@ -747,7 +750,8 @@ def _supervise(
                 # Provisional acceptance is not publication. Only release
                 # transfers ownership; EOF fences unreleased material.
                 continue
-            exited = job.process.poll() is not None
+            job.process.poll()
+            exited = job.process.exited
             alive = job.process.alive()
             if job.state == "running" and exited and not job.stream_open:
                 if alive:
