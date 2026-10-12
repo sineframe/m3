@@ -23,12 +23,7 @@ from pydantic import JsonValue
 
 from ..agent_session import AdapterTurn, _bounded_cause
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..trace.redaction import (
-    RedactionConfig,
-    native_text_secrets,
-    redact_for_api,
-    redact_native_text,
-)
+from ..trace.redaction import RedactionConfig, redact_for_api, redact_native_text
 from ..types import (
     Capability,
     CapabilityStatus,
@@ -436,7 +431,9 @@ class NativeRPCAdapter:
         try:
             text = redact_native_text(
                 text,
-                native_text_secrets(self._runtime_secrets | self._launch_secrets),
+                RedactionConfig.from_environment(
+                    secrets=self._runtime_secrets | self._launch_secrets
+                ),
             )
         except Exception:
             return {"stderr_state": "unavailable"}

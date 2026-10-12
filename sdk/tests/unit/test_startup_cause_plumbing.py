@@ -21,7 +21,7 @@ from m3.errors import MCPError, TransportError, UnsupportedFeature
 from m3.execution_runtime import _error_info
 from m3.harness._rpc_native import NativeRPCAdapter
 from m3.harness.contracts import HarnessLaunch, HarnessStartupError
-from m3.harness.native import ProcessOwner, launch_secrets
+from m3.harness.native import MAX_STDERR_BYTES, ProcessOwner, launch_secrets
 from m3.harness.observations import startup_evidence
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.transport.capture_proxy import McpCaptureManager
@@ -185,13 +185,23 @@ def test_launch_secrets_without_capture_take_sensitive_literals() -> None:
         available=True,
         connection_id="fs",
         command="server",
-        environment={"API_TOKEN": "literal-token-1", "NODE_ENV": "production"},
+        environment={
+            "API_TOKEN": "literal-token-1",
+            "DB_PASS": "hunter2",
+            "GITHUB_PAT": "ghp_literal",
+            "NODE_ENV": "production",
+        },
         headers={"Authorization": "Bearer literal-header"},
     )
     secrets = launch_secrets(
         HarnessLaunch(spec, ServerGroupSnapshot(), (local,), spec.tool_policy)
     )
-    assert secrets == {"literal-token-1", "Bearer literal-header"}
+    assert secrets == {
+        "literal-token-1",
+        "hunter2",
+        "ghp_literal",
+        "Bearer literal-header",
+    }
 
 
 @pytest.mark.asyncio
@@ -311,3 +321,10 @@ async def test_turn_process_observation_keeps_whole_lines_of_a_stopped_drain(
     stderr = adapter._stderr_fields(SimpleNamespace(owner=owner))["stderr"]  # type: ignore[arg-type]
     assert stderr.startswith("line\n") and stderr.endswith("fatal: last\n")
     assert "cret-canary" not in stderr
+
+    # Stderr that filled the drain's size limit was cut too: its unfinished
+    # last line is dropped the same way.
+    full = b"line\n" * (MAX_STDERR_BYTES // 5) + b"key adapter-secret-can"
+    owner = SimpleNamespace(stderr_task=drain, stderr_retained=bytearray(full))
+    stderr = adapter._stderr_fields(SimpleNamespace(owner=owner))["stderr"]  # type: ignore[arg-type]
+    assert stderr.endswith("line\n") and "adapter-secret-can" not in stderr

@@ -16,10 +16,10 @@ from m3.trace.redaction import (
     RedactionConfig,
     RedactionError,
     assertion_view,
-    native_text_secrets,
     project_redacted,
     redact,
     redact_artifact_bytes,
+    redact_for_persistence,
     redact_model_json,
     redact_native_text,
     redact_raw_evidence,
@@ -27,6 +27,8 @@ from m3.trace.redaction import (
     redacted_json,
     serialize_redacted,
 )
+
+_NO_SECRETS = RedactionConfig(include_environment=False)
 
 
 def test_native_text_reduces_embedded_urls_to_their_origin() -> None:
@@ -41,7 +43,7 @@ def test_native_text_reduces_embedded_urls_to_their_origin() -> None:
         "at load (file:///home/u/.pi/extensions/foo/dist/index.js:45:11)"
     )
     # Only a plain local file URL (a Node stack frame) stays whole.
-    assert redact_native_text(text, native_text_secrets(())) == (
+    assert redact_native_text(text, _NO_SECRETS) == (
         "remote: error sending request for url (http://127.0.0.1:5555/…), "
         "then https://example.com/…, and https://example.com. "
         "db postgres://…, sock unix://…, http://…, wss://h/… "
@@ -49,49 +51,38 @@ def test_native_text_reduces_embedded_urls_to_their_origin() -> None:
     )
 
 
-def test_native_text_redacts_known_values_whole_and_in_echoed_forms() -> None:
-    pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----"
-    quoted = 'pa"ss/wd 1'
-    secrets = native_text_secrets(
-        {pem, "Bearer  XYZ-double", "tok-abc\n", "p(ss9word", "AbCdEf123Tok", quoted}
+def test_native_text_replaces_known_values_before_reducing_urls() -> None:
+    # A URL match stops at a quote and hostnames are lowercased when a URL is
+    # reduced, so known values must already be gone.
+    config = RedactionConfig(
+        secrets=frozenset({"s3cr3t'x", "AbCdEf123Tok"}), include_environment=False
     )
-    text = (
-        f"bad key {pem}; header Bearer  XYZ-double; token tok-abc rejected; "
-        "connect https://u:p(ss9word@host.com/ ; https://AbCdEf123Tok.ngrok.app/mcp; "
-        'json "pa\\"ss/wd 1"; url pa%22ss%2Fwd%201; form pa%22ss%2Fwd+1'
-    )
-    redacted = redact_native_text(text, secrets)
-    for fragment in ("MIIEvQ", "XYZ-double", "tok-abc", "ss9word", "AbCdEf123Tok"):
+    text = "https://u:s3cr3t'x@host.com/ failed; https://AbCdEf123Tok.ngrok.app/mcp"
+    redacted = redact_native_text(text, config)
+    for fragment in ("s3cr3t", "'x", "abcdef123tok", "AbCdEf123Tok"):
         assert fragment not in redacted
-    assert "ss/wd" not in redacted and "ss%2Fwd" not in redacted
-    assert redacted.startswith(
-        f"bad key {REDACTED}; header {REDACTED}; token {REDACTED} rejected"
-    )
 
 
-def test_native_text_merges_overlapping_secrets() -> None:
-    secrets = native_text_secrets({"abcdef12", "ef12ghij"})
-    assert redact_native_text("x abcdef12ghij y", secrets) == f"x {REDACTED} y"
-
-
-def test_native_text_skips_values_too_short_or_plain_to_be_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("TOKEN_LIMIT", "1")
-    monkeypatch.setenv("TOKEN_TTL", "3600")
-    monkeypatch.setenv("AUTH_TYPE", "bearer")
-    monkeypatch.setenv("AUTH_TOKEN", "ambient-auth-secret")
-    secrets = native_text_secrets({"18081", "true", "4821"})
+def test_native_text_scrubs_credential_shaped_text() -> None:
     text = (
-        "retry 1 of 3 after 3600ms; using bearer auth on port 18081; "
-        "ambient-auth-secret; token=4821 and Bearer abc.def.ghi"
+        "args --header Authorization: Bearer abc.def.ghi; token=4821, using bearer auth"
     )
-    # Short or plain values stay readable; credential-shaped text is
-    # scrubbed regardless.
-    assert redact_native_text(text, secrets) == (
-        "retry 1 of 3 after 3600ms; using bearer auth on port 18081; "
-        f"{REDACTED}; token={REDACTED} and Bearer {REDACTED}"
+    assert redact_native_text(text, _NO_SECRETS) == (
+        f"args --header Authorization: Bearer {REDACTED}; token={REDACTED}, "
+        "using bearer auth"
     )
+
+
+def test_native_text_starting_with_a_url_keeps_its_other_lines() -> None:
+    assert redact_native_text("https://h/x?q=1\nError: boom happened", _NO_SECRETS) == (
+        "https://h/…\nError: boom happened"
+    )
+
+
+def test_pass_named_keys_stay_readable_in_projections() -> None:
+    assert redact_for_persistence(
+        {"pass_rate": 0.5, "pass": 3, "pass_at_1": True}, config=_NO_SECRETS
+    ) == {"pass_rate": 0.5, "pass": 3, "pass_at_1": True}
 
 
 def test_native_text_url_matching_stays_linear() -> None:
@@ -99,7 +90,7 @@ def test_native_text_url_matching_stays_linear() -> None:
 
     # A quadratic scan of this 256 KiB dotted run took about a minute.
     started = time.monotonic()
-    redact_native_text("a." * 128 * 1024, native_text_secrets(()))
+    redact_native_text("a." * 128 * 1024, _NO_SECRETS)
     assert time.monotonic() - started < 5.0
 
 

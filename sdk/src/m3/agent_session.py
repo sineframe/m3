@@ -2467,47 +2467,49 @@ class AsyncAgentSession:
         was recorded; the evidence text never enters an error.
         """
 
-        from .harness.observation_sink import HarnessObservationSink
         from .harness.observations import startup_evidence
 
         evidence = startup_evidence(error)
         if evidence is None or len(evidence.observations) != 1:
             return None
-        observation = evidence.observations[0]
-        sink = HarnessObservationSink(
-            self._trace_recorder,
-            monotonic_origin=evidence.monotonic_origin,
-            lifecycle_phase=LifecyclePhase.STARTUP,
-        )
-        recorded = sink.emit(observation)
-        for limitation in (*evidence.limitations, *sink.limitations):
-            if limitation not in self._trace_limitations:
-                self._trace_limitations = (*self._trace_limitations, limitation)
-        return observation.observation_id if recorded else None
+        if not self._record_evidence(evidence, lifecycle_phase=LifecyclePhase.STARTUP):
+            return None
+        return evidence.observations[0].observation_id
 
-    def _record_turn_evidence(self, turn_id: TurnId, typed_evidence: object) -> None:
+    def _record_evidence(
+        self,
+        typed_evidence: object,
+        *,
+        turn_id: TurnId | None = None,
+        lifecycle_phase: LifecyclePhase | None = None,
+    ) -> bool:
         """Persist typed adapter observations through the failure-safe sink.
 
         Provider adapters use the typed boundary, so finalized TraceView
         contains provider output without making the session state machine
-        understand schemas.
+        understand schemas. Evidence belongs to ``turn_id``, or with
+        ``lifecycle_phase`` to no turn (a failed startup). Returns whether
+        every observation was recorded.
         """
 
         from .harness.observation_sink import HarnessObservationSink
         from .harness.observations import TurnEvidence
 
         if not isinstance(typed_evidence, TurnEvidence):
-            return
+            return False
         sink = HarnessObservationSink(
             self._trace_recorder,
             turn_id=turn_id,
             monotonic_origin=typed_evidence.monotonic_origin,
+            lifecycle_phase=lifecycle_phase,
         )
-        for observation in typed_evidence.observations:
-            sink.emit(observation)
+        recorded = [
+            sink.emit(observation) for observation in typed_evidence.observations
+        ]
         for limitation in (*typed_evidence.limitations, *sink.limitations):
             if limitation not in self._trace_limitations:
                 self._trace_limitations = (*self._trace_limitations, limitation)
+        return all(recorded)
 
     def _record_partial_turn_evidence(self, turn_id: TurnId) -> None:
         """Keep what a timed-out or cancelled turn observed before it stopped.
@@ -2530,7 +2532,7 @@ class AsyncAgentSession:
                     "capture_incomplete",
                 )
             return
-        self._record_turn_evidence(turn_id, evidence)
+        self._record_evidence(evidence, turn_id=turn_id)
         from .harness.observations import (
             ToolCallObservedObservation,
             ToolResultObservedObservation,
@@ -2563,7 +2565,7 @@ class AsyncAgentSession:
     def _turn_result(self, turn_id: TurnId, raw: object) -> TurnResult:
         typed_evidence = getattr(raw, "turn_evidence", None)
         if typed_evidence is not None:
-            self._record_turn_evidence(turn_id, typed_evidence)
+            self._record_evidence(typed_evidence, turn_id=turn_id)
         if isinstance(raw, AdapterTurn):
             response, error, outcome = raw.response, raw.error, raw.outcome
         elif isinstance(raw, TurnResponse):

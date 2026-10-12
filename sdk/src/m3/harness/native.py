@@ -12,6 +12,7 @@ import asyncio
 import errno
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -371,13 +372,20 @@ def _exception_kind(error: BaseException) -> str:
     return kind if symbol is None else f"{kind} ({symbol})"
 
 
+# Credential name parts the shared sensitive-key pattern leaves out on
+# purpose (it also redacts keys like ``pass_rate``); only MCP launch
+# credentials, which harness text can echo, are matched by them.
+_LAUNCH_CREDENTIAL_PART = re.compile(r"(^|[_-])(pass|pat)([_-]|$)", re.IGNORECASE)
+
+
 def launch_secrets(launch: HarnessLaunch) -> frozenset[str]:
     """Return the MCP credentials a launch hands its harness.
 
     With capture, the launch holds rewritten configurations, so the capture
     manager reports what it resolved and classified from the originals.
     Without it, the launch's configurations are the originals: their literal
-    env and header values under sensitive names.
+    env and header values under sensitive names (``DB_PASS`` and
+    ``GITHUB_PAT`` included).
     """
 
     values: set[str] = set()
@@ -389,7 +397,8 @@ def launch_secrets(launch: HarnessLaunch) -> frozenset[str]:
             values.update(
                 value
                 for key, value in mapping.items()
-                if isinstance(value, str) and is_sensitive_key(key)
+                if isinstance(value, str)
+                and (is_sensitive_key(key) or _LAUNCH_CREDENTIAL_PART.search(key))
             )
     return frozenset(values)
 

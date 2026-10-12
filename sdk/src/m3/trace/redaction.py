@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import PurePath
 from types import MappingProxyType
 from typing import Any, Final, Literal
-from urllib.parse import parse_qsl, quote, quote_plus, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -79,13 +79,6 @@ _URL_IN_TEXT: Final[re.Pattern[str]] = re.compile(
 )
 # Punctuation that ends a URL quoted in prose or in parentheses.
 _URL_TRAILING_PUNCTUATION: Final[str] = ".,;:!?)]}"
-# Values a credential-named setting can hold without being a credential.
-_NON_SECRET_WORDS: Final[frozenset[str]] = frozenset(
-    {"true", "false", "yes", "no", "on", "off", "null", "none", "bearer", "basic"}
-)
-# Shorter values are too likely to be ordinary numbers or words
-# (``TOKEN_LIMIT=1``, ``TOKEN_TTL=3600``) to replace everywhere in free text.
-_NATIVE_SECRET_MIN_LENGTH: Final[int] = 6
 # Credential-shaped text: a bearer token (token characters, eight or more, so
 # prose such as "bearer auth" stays), or a credential-named assignment.
 CREDENTIAL_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -398,7 +391,9 @@ def _replace_secrets(
 def _redact_url(
     value: str, config: RedactionConfig, path: str, paths: list[str]
 ) -> str:
-    if not value.lower().startswith(_URL_PREFIX):
+    # Only a whole value can be one URL; text that merely starts with one
+    # (stderr, a message) would otherwise be parsed as a URL and lose lines.
+    if not value.lower().startswith(_URL_PREFIX) or any(c.isspace() for c in value):
         return value
     try:
         parts = urlsplit(value)
@@ -740,73 +735,6 @@ def redact_for_api(
     return project_redacted(value, projection="api", config=config, path=path)
 
 
-def _plausible_secret(value: str) -> bool:
-    stripped = value.strip()
-    return (
-        len(stripped) >= _NATIVE_SECRET_MIN_LENGTH
-        and not stripped.isdigit()
-        and stripped.lower() not in _NON_SECRET_WORDS
-    )
-
-
-def native_text_secrets(values: Iterable[str]) -> frozenset[str]:
-    """Return the values to redact from harness-authored free text.
-
-    ``values`` (adapter runtime secrets, values resolved for the MCP servers)
-    and the ambient environment's credential-named values are kept unless
-    they cannot be credentials and would garble the text if replaced
-    everywhere: shorter than six characters, numeric or boolean. Such forms
-    are left to the credential-text scrub. Each value also matches trimmed,
-    JSON-escaped and percent-encoded, as harnesses echo it.
-    """
-
-    secrets: set[str] = set()
-    for value in (*values, *known_secret_values()):
-        if not isinstance(value, str):
-            continue
-        for item in (value, value.strip()):
-            if _plausible_secret(item):
-                secrets.update(
-                    (
-                        item,
-                        json.dumps(item)[1:-1],
-                        quote(item, safe=""),
-                        quote_plus(item),
-                    )
-                )
-    return frozenset(secrets)
-
-
-def _replace_known(text: str, secrets: Iterable[str]) -> str:
-    """Replace every occurrence of every secret, merging overlaps.
-
-    Replacing one secret at a time would leave the rest of an overlapping
-    one (``abcdef12`` then ``ef12ghij`` in ``abcdef12ghij``).
-    """
-
-    spans: list[tuple[int, int]] = []
-    for secret in secrets:
-        start = text.find(secret)
-        while start >= 0:
-            spans.append((start, start + len(secret)))
-            start = text.find(secret, start + 1)
-    if not spans:
-        return text
-    merged: list[list[int]] = []
-    for start, end in sorted(spans):
-        if merged and start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
-        else:
-            merged.append([start, end])
-    parts: list[str] = []
-    position = 0
-    for start, end in merged:
-        parts.extend((text[position:start], REDACTED))
-        position = end
-    parts.append(text[position:])
-    return "".join(parts)
-
-
 def _url_origin(url: str) -> str:
     """Keep a URL's scheme, host and port; mark anything after them.
 
@@ -844,22 +772,26 @@ def _url_origin(url: str) -> str:
     return f"{parts.scheme}://{netloc}" + ("/…" if elided else "")
 
 
-def redact_native_text(text: str, secrets: Iterable[str]) -> str:
+def redact_native_text(text: str, config: RedactionConfig) -> str:
     """Redact harness-authored free text (an error message, stderr).
 
-    Known values are replaced first, whole, as they appear; every embedded
-    URL is then reduced to its origin; credential-shaped text that remains
-    (``Bearer x``, ``token=x``) is scrubbed last. Whitespace is preserved:
-    callers normalize only afterwards, otherwise a secret containing a
-    newline or a double space would no longer match.
+    The usual persistence redaction replaces the configured values first;
+    every URL embedded in the text is then reduced to its origin (the usual
+    redaction only handles a value that is a URL as a whole); credential-
+    shaped text that remains (``Bearer x``, ``token=x``) is scrubbed last.
+    Raises ``RedactionError`` when the text cannot be projected.
     """
+
+    projected = redact_for_persistence(text, config=config)
+    if not isinstance(projected, str):
+        raise RedactionError("$")
 
     def reduce(match: re.Match[str]) -> str:
         url = match.group(0)
         trimmed = url.rstrip(_URL_TRAILING_PUNCTUATION)
         return _url_origin(trimmed) + url[len(trimmed) :]
 
-    reduced = _URL_IN_TEXT.sub(reduce, _replace_known(text, secrets))
+    reduced = _URL_IN_TEXT.sub(reduce, projected)
     return CREDENTIAL_TEXT_PATTERN.sub(
         lambda match: f"{match.group(1) or match.group(2)}{REDACTED}", reduced
     )
@@ -940,7 +872,6 @@ __all__ = [
     "is_sensitive_key",
     "is_sensitive_query_key",
     "known_secret_values",
-    "native_text_secrets",
     "project_redacted",
     "redact",
     "redact_artifact_bytes",
