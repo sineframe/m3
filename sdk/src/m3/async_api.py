@@ -43,6 +43,7 @@ from ._check_recording import (
 from ._check_recording import (
     record_checks_enabled as _record_checks_enabled,
 )
+from ._configuration_context import resolve_configuration as _resolve_configuration
 from ._default_store import (
     make_default_judge_limit as _make_default_judge_limit,
 )
@@ -990,11 +991,9 @@ class AsyncMCPTestKit:
             )
         )
         self._record_checks = _record_checks_enabled(record_checks)
-        self.config = (
-            config
-            if isinstance(config, Config)
-            else load_config(config, env=env, cwd=cwd)
-        )
+        configuration = _resolve_configuration(config, env=env, cwd=cwd)
+        self.config = configuration.config
+        self._literal_registry = configuration.literal_registry
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()
@@ -1027,6 +1026,9 @@ class AsyncMCPTestKit:
         self._close_lock = asyncio.Lock()
         self._active_direct: set[AsyncDirectClient] = set()
         self._active_sessions: set[AsyncAgentSession] = set()
+        from .preparation import PreparationSupervisor
+
+        self._preparation_supervisor = PreparationSupervisor()
         self._adapter_registry = (
             adapter_registry if adapter_registry is not None else _default_adapters()
         )
@@ -1202,6 +1204,10 @@ class AsyncMCPTestKit:
                     await session.aclose()
                 except BaseException as exc:
                     failures.append(exc)
+            try:
+                await self._preparation_supervisor.close()
+            except BaseException as exc:
+                failures.append(exc)
             owned_store = self.store if self._owns_store else None
             self._owns_store = False
             if owned_store is not None:
@@ -1656,6 +1662,7 @@ class AsyncMCPTestKit:
             runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,
             managed_input_runtime=_managed_input_runtime,
+            preparation_supervisor=self._preparation_supervisor,
         )
         if self._record_checks:
             _bind_execution(

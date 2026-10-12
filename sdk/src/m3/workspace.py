@@ -8,6 +8,7 @@ redacts bytes before they are persisted.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import shutil
@@ -19,6 +20,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from glob import has_magic
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .preparation import PreparationSupervisor
 
 from . import _timing
 from .storage import ArtifactStore, InMemoryArtifactStore
@@ -171,6 +176,76 @@ class WorkspaceManager:
         self._captured: WorkspaceCapture | None = None
         self._cleaned = False
         self._cleanup_error: WorkspaceError | None = None
+        self._preparation_root: Path | None = None
+        self._async_create_lock = asyncio.Lock()
+        self._preparing = False
+
+    async def create_async(
+        self,
+        supervisor: PreparationSupervisor | None = None,
+        *,
+        deadline: float | None = None,
+    ) -> Path:
+        async with self._async_create_lock:
+            return await self._create_async(supervisor, deadline=deadline)
+
+    async def _create_async(
+        self,
+        supervisor: PreparationSupervisor | None,
+        *,
+        deadline: float | None,
+    ) -> Path:
+        """Materialize privately; publish only after the complete writer dies.
+
+        ``deadline`` supplies an absolute total clock. Windows retains the
+        existing default path; a requested bounded path is unsupported until
+        descendant ownership through native Job Objects is implemented.
+        """
+        with self._lock:
+            if self._root is not None:
+                return self._root
+        if self.policy.kind is WorkspaceKind.TEMPORARY and deadline is None:
+            # No source reads, copying or background writer in this default
+            # path. A requested total budget always uses owned jobs below.
+            return self.create()
+        if os.name != "posix":
+            if deadline is not None:
+                raise WorkspaceError("bounded workspace preparation is unsupported")
+            return await asyncio.to_thread(self.create)
+        from .preparation import PreparationSupervisor
+
+        owned_supervisor = supervisor is None
+        supervisor = supervisor or PreparationSupervisor()
+        with self._lock:
+            if self._cleaned:
+                raise WorkspaceError("workspace has already been cleaned")
+            self._preparing = True
+        try:
+            material = await supervisor.prepare(
+                "workspace",
+                {
+                    "policy": self.policy.model_dump(mode="json"),
+                    "include_excluded": self._include_excluded,
+                    "bounded": deadline is not None,
+                },
+                deadline=deadline,
+            )
+            # No suspension between ownership transfer and atomic publication
+            # into session state. Only this controller accepts generations.
+            with self._lock:
+                self._baseline = {
+                    name: (value[0], value[1])
+                    for name, value in material.data["baseline"].items()
+                }
+                self._owned_root = material.data["owned"]
+                self._preparation_root = material.staging_root
+                self._root = Path(material.data["root"])
+                return self._root
+        finally:
+            with self._lock:
+                self._preparing = False
+            if owned_supervisor:
+                await supervisor.close()
 
     @property
     def root(self) -> Path:
@@ -213,6 +288,8 @@ class WorkspaceManager:
     @_timing.timed("workspace.create")
     def create(self) -> Path:
         with self._lock:
+            if self._preparing:
+                raise WorkspaceError("workspace preparation is in progress")
             if self._root is not None:
                 return self._root
             kind = self.policy.kind
@@ -550,6 +627,8 @@ class WorkspaceManager:
     @_timing.timed("workspace.cleanup")
     def cleanup(self) -> None:
         with self._lock:
+            if self._preparing:
+                raise WorkspaceError("workspace preparation is in progress")
             if self._cleaned:
                 return
             root = self._root
@@ -557,6 +636,8 @@ class WorkspaceManager:
                 self._cleaned = True
                 return
             if not self._owned_root:
+                if self._preparation_root is not None:
+                    self._preparation_root.rmdir()
                 self._cleaned = True
                 return
             try:
@@ -595,6 +676,8 @@ class WorkspaceManager:
                     raise WorkspaceError(
                         "workspace cleanup did not remove the owned root"
                     )
+                if self._preparation_root is not None:
+                    self._preparation_root.rmdir()
             except (OSError, subprocess.SubprocessError, WorkspaceError):
                 self._cleanup_error = WorkspaceError("workspace cleanup failed")
                 raise self._cleanup_error from None
