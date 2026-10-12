@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import shutil
 import tempfile
 import time
@@ -440,16 +439,29 @@ class ClaudeCodeHarnessAdapter:
         )
         return self._capabilities.readiness()
 
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._launch_credentials import activate_native_launch
+
+        return await activate_native_launch(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+        )
+
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("Claude Code streaming is unavailable")
         if self._session is not None:
             raise HarnessStartupError("Claude Code session is already open")
+        launch = await self.prepare_launch_credentials(launch)
         root = Path(tempfile.mkdtemp(prefix="m3-claude-"))
         owner = ProcessOwner(root)
         try:
-            environment = _isolated_environment(root, self.environment)
+            assert launch._credentials is not None
+            environment = _isolated_environment(
+                root, launch._credentials.child_environment()
+            )
             environment["DISABLE_UPDATES"] = "1"
             harness = launch.spec.harness
             if harness is None:
@@ -465,9 +477,8 @@ class ClaudeCodeHarnessAdapter:
                     raise HarnessStartupError(
                         "Claude Code credential reference is unavailable"
                     )
-                value = self.environment.get(reference.name)
-                if value is None:
-                    value = os.environ.get(reference.name)
+                assert launch._credentials is not None
+                value = launch._credentials.credential_environment()[target]
                 if not value:
                     raise HarnessStartupError("Claude Code credential is unavailable")
                 environment[target] = value
@@ -479,7 +490,9 @@ class ClaudeCodeHarnessAdapter:
             config = write_config(
                 root,
                 launch,
-                environment=self._resolver_environment,
+                environment=launch._credentials.reference_environment()
+                if launch._credentials is not None
+                else None,
                 secrets=runtime_secrets,
             )
             self._native_error_redaction = launch_error_redaction(
@@ -528,6 +541,9 @@ class ClaudeCodeHarnessAdapter:
                     argv.extend(
                         ["--tools", "default", "--dangerously-skip-permissions"]
                     )
+            from ._launch_credentials import check_credential_deadline
+
+            check_credential_deadline(launch)
             await owner.spawn(argv, environment, cwd=workspace)
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(
                 maxsize=MAX_QUEUE_ITEMS
@@ -647,6 +663,9 @@ class ClaudeCodeHarnessAdapter:
         self._owner = None
         self._config = None
         self._output = None
+        from ._launch_credentials import release_native_credentials
+
+        release_native_credentials(self._launch)
         self._launch = None
         self._root = None
         self._native_error_redaction = None
