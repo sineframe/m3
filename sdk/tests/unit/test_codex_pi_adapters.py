@@ -395,13 +395,22 @@ async def test_pi_open_closes_native_session_when_control_extension_does_not_con
 ):
     launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
     adapter = PiHarnessAdapter(
-        executable=str(PI_FIXTURE), environment={"M3_PI_FIXTURE_NO_CONTROL": "1"}
+        executable=str(PI_FIXTURE),
+        environment={
+            "M3_PI_FIXTURE_NO_CONTROL": "1",
+            "M3_PI_FIXTURE_STDERR": "extension failed to load: TypeError",
+        },
     )
     with pytest.raises(HarnessStartupError, match="managed-control extension"):
         await adapter.open(launch)
     assert adapter.control_channel is None
     assert adapter._session is None
     assert adapter._process is None
+    # The base handshake had succeeded; the child's stderr is still evidence.
+    evidence = adapter.take_startup_evidence()
+    assert evidence is not None
+    stderr = evidence.observations[0].stderr
+    assert stderr is not None and "extension failed to load" in stderr
 
 
 @pytest.mark.asyncio

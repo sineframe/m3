@@ -48,7 +48,20 @@ def test_native_text_keeps_urls_visible_when_a_known_value_matches_the_scheme() 
     text = "failed: https://example.com/mcp?access_token=UNKNOWN-TOKEN"
     redacted = redact_native_text(text, config)
     assert "UNKNOWN-TOKEN" not in redacted
-    assert redacted == f"failed: {REDACTED}://example.com/…"
+    assert redacted == f"failed: {REDACTED}"
+
+
+def test_native_text_redacts_known_values_with_url_delimiters_or_case() -> None:
+    # Generated passwords contain quotes and parentheses that end a URL
+    # match, and hostnames are lowercased when a URL is reduced.
+    config = native_text_redaction({"p(ss9word", "s3cr3t'x", "AbCdEf123Tok"})
+    text = (
+        "connect https://u:p(ss9word@host.com/ failed; "
+        "https://u:s3cr3t'x@host.com/ failed; https://AbCdEf123Tok.ngrok.app/mcp"
+    )
+    redacted = redact_native_text(text, config)
+    for fragment in ("ss9word", "s3cr3t", "'x", "abcdef123tok", "AbCdEf123Tok"):
+        assert fragment not in redacted
 
 
 def test_native_text_matches_secrets_with_whitespace_before_normalizing() -> None:

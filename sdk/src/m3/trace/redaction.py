@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import PurePath
 from types import MappingProxyType
 from typing import Any, Final, Literal
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote_plus, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -71,9 +71,10 @@ _SENSITIVE_QUERY_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _URL_PREFIX: Final[tuple[str, ...]] = ("http://", "https://")
-# A URL inside free text, ending before whitespace, quotes or parentheses.
+# A URL inside free text, of any scheme (``wss://`` too) or a scheme a known
+# value replaced, ending before whitespace, quotes or parentheses.
 _URL_IN_TEXT: Final[re.Pattern[str]] = re.compile(
-    r"https?://[^\s\"'<>(){}]+", re.IGNORECASE
+    rf"(?:{re.escape(REDACTED)}|\b[A-Za-z][A-Za-z0-9+.\-]*)://[^\s\"'<>(){{}}]+"
 )
 # Sentence punctuation that ends a URL quoted in prose.
 _URL_TRAILING_PUNCTUATION: Final[str] = ".,;:!?"
@@ -84,6 +85,15 @@ _NON_SECRET_WORDS: Final[frozenset[str]] = frozenset(
 # Guessed values shorter than this are too likely to be ordinary words or
 # numbers (``TOKEN_LIMIT=1``, ``MODE=stream``) to replace everywhere.
 _GUESSED_SECRET_MIN_LENGTH: Final[int] = 8
+# Name parts that suggest a credential but escape the sensitive-key pattern
+# (``GITHUB_PAT``, ``STRIPE_KEY``, ``DB_PASS``).
+_CREDENTIAL_NAME_PART: Final[re.Pattern[str]] = re.compile(
+    r"(?:^|[_-])(?:key|pat|pass|passwd|pwd|secret|token|auth|creds?|credentials?|"
+    r"sig|signature|cookie|session|private)(?:[_-]|$)",
+    re.IGNORECASE,
+)
+# A value shaped like a generated token: long, unbroken, letters and digits.
+_TOKEN_SHAPED: Final[re.Pattern[str]] = re.compile(r"(?=\S*[A-Za-z])(?=\S*\d)\S{16,}")
 _MAX_NESTING_DEPTH: Final[int] = 64
 _SAFE_PATH_COMPONENTS: Final[frozenset[str]] = frozenset(
     {
@@ -767,6 +777,80 @@ def native_text_redaction(
     return RedactionConfig(secrets=frozenset(values), include_environment=False)
 
 
+@dataclass(frozen=True, slots=True)
+class NativeTextSecrets:
+    """Values a launch handed its harness, split for ``native_text_redaction``.
+
+    ``known`` values are credentials; ``guessed`` values only might be.
+    """
+
+    known: frozenset[str] = frozenset()
+    guessed: frozenset[str] = frozenset()
+
+    def union(self, other: NativeTextSecrets) -> NativeTextSecrets:
+        return NativeTextSecrets(self.known | other.known, self.guessed | other.guessed)
+
+
+def _credential_url_part(value: str) -> bool:
+    return len(value) >= 16 or (
+        len(value) >= _GUESSED_SECRET_MIN_LENGTH
+        and any(character.isdigit() for character in value)
+    )
+
+
+def mcp_configuration_secrets(configurations: Iterable[Any]) -> NativeTextSecrets:
+    """Collect what MCP server configurations can make a harness echo.
+
+    Pass configurations as written, before a capture proxy rewrites them:
+    the rewritten forms hold no environment or headers, but the proxy still
+    forwards the original endpoint path and query to the harness.
+
+    Known: literal env/header values under sensitive names, the endpoint's
+    password, and endpoint path segments and query values shaped like
+    credentials (16+ characters, or 8+ with a digit), raw and decoded.
+    Guessed: other literal env/header values whose name still suggests a
+    credential (``GITHUB_PAT``) or whose value is token-shaped. Ordinary
+    settings such as ``NODE_ENV=production`` are not collected.
+    """
+
+    known: set[str] = set()
+    guessed: set[str] = set()
+    for configuration in configurations:
+        for name in ("environment", "headers"):
+            mapping = getattr(configuration, name, None)
+            if not isinstance(mapping, Mapping):
+                continue
+            for key, value in mapping.items():
+                if not isinstance(key, str) or not isinstance(value, str) or not value:
+                    continue
+                if _is_sensitive_key(key, frozenset()):
+                    known.add(value)
+                elif _CREDENTIAL_NAME_PART.search(key) or _TOKEN_SHAPED.fullmatch(
+                    value
+                ):
+                    guessed.add(value)
+        endpoint = getattr(configuration, "endpoint", None)
+        if not isinstance(endpoint, str) or not endpoint:
+            continue
+        try:
+            parts = urlsplit(endpoint)
+            password = parts.password
+        except ValueError:
+            continue
+        if password:
+            known.add(password)
+        candidates = [*parts.path.split("/")]
+        for pair in parts.query.split("&"):
+            candidates.append(pair.partition("=")[2])
+        for candidate in candidates:
+            known.update(
+                value
+                for value in (candidate, unquote_plus(candidate))
+                if _credential_url_part(value)
+            )
+    return NativeTextSecrets(frozenset(known), frozenset(guessed))
+
+
 def _url_origin(url: str) -> str:
     """Keep a URL's scheme, host and port; mark anything after them.
 
@@ -780,8 +864,10 @@ def _url_origin(url: str) -> str:
         host, port = parts.hostname, parts.port
     except ValueError:
         return REDACTED
-    if not host:
+    if not parts.scheme:
         return REDACTED
+    if not host:
+        return f"{parts.scheme}://…"
     netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc += f":{port}"
@@ -793,22 +879,35 @@ def _url_origin(url: str) -> str:
     return f"{parts.scheme}://{netloc}" + ("/…" if elided else "")
 
 
-def redact_native_text(text: str, config: RedactionConfig) -> str:
+def redact_native_text(
+    text: str, config: RedactionConfig, *, truncated: bool = False
+) -> str:
     """Redact free text, reducing every embedded URL to its origin.
 
-    URLs are reduced first, so a known value replaced afterwards cannot hide
-    a URL (for example a value equal to ``https``). Then every known value is
-    replaced as it appears. Whitespace is preserved: callers normalize only
-    afterwards, otherwise a secret containing a newline or a double space
-    would no longer match.
+    Known values are replaced first, whole and as they appear, so a value
+    containing URL delimiters (``p(ss'word``) or upper case cannot be split
+    or lowercased by URL handling. Every URL is then reduced to its origin;
+    the URL pattern also matches a scheme a known value has replaced. A final
+    pass replaces known values that only a reduction exposed. Whitespace is
+    preserved: callers normalize only afterwards, otherwise a secret
+    containing a newline or a double space would no longer match.
+
+    ``truncated`` marks text cut at a size limit: its tail could hold only a
+    prefix of a secret, which no exact match would find, so the tail as long
+    as the longest secret is dropped.
     """
+
+    secrets = set(config.secrets).union(config.credential_file_contents)
+    if truncated and secrets:
+        text = text[: max(0, len(text) - max(map(len, secrets)))]
 
     def reduce(match: re.Match[str]) -> str:
         url = match.group(0)
         trimmed = url.rstrip(_URL_TRAILING_PUNCTUATION)
         return _url_origin(trimmed) + url[len(trimmed) :]
 
-    return _replace_secrets(_URL_IN_TEXT.sub(reduce, text), config, "$", [])
+    replaced = _replace_secrets(text, config, "$", [])
+    return _replace_secrets(_URL_IN_TEXT.sub(reduce, replaced), config, "$", [])
 
 
 def redact_for_ui(
@@ -877,6 +976,7 @@ __all__ = [
     "REDACTED",
     "ArtifactBytesResult",
     "InProcessAssertionView",
+    "NativeTextSecrets",
     "Projection",
     "RedactionConfig",
     "RedactionError",
@@ -885,6 +985,7 @@ __all__ = [
     "is_sensitive_key",
     "is_sensitive_query_key",
     "known_secret_values",
+    "mcp_configuration_secrets",
     "native_text_redaction",
     "project_redacted",
     "redact",

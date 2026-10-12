@@ -29,6 +29,7 @@ from m3.types import (
     ErrorCode,
     ErrorInfo,
     EventKind,
+    LifecyclePhase,
     ServerBinding,
     StdioServer,
     TransportKind,
@@ -141,6 +142,11 @@ async def test_failed_startup_references_stderr_evidence_not_its_text() -> None:
     assert [e.kind for e in process] == [EventKind.PROCESS_EXITED]
     assert process[0].payload["exit_code"] == 3
     assert process[0].payload["stderr"].startswith("boom ")
+    # Startup evidence belongs to the startup phase, not to a turn that never
+    # ran: the result has no turns and the trace invents none.
+    assert process[0].turn_id is None
+    assert process[0].lifecycle_phase is LifecyclePhase.STARTUP
+    assert session.result.turns == ()
     diagnostics = [
         e.payload for e in events if e.payload.get("code") == "startup_failed"
     ]
@@ -213,16 +219,18 @@ def test_launch_secrets_keep_ordinary_settings_readable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_startup_stderr_evidence_redacts_resolved_and_url_credentials(
+async def test_startup_stderr_evidence_redacts_credentials_the_proxy_forwards(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Zapier-style URL: the key is a path segment under a non-sensitive name.
-    # The capture proxy resolves it and copies the path into the URL the
-    # harness receives, which the harness quotes and may repeat on its own.
+    # The adapter only sees configurations the capture manager rewrote: the
+    # stdio environment is gone and the URL is the loopback proxy's, which
+    # still carries the original path. A literal Zapier-style path key, a
+    # resolved ${VAR} key and a literal GITHUB_PAT must all be redacted, also
+    # where the harness repeats them outside the URL.
     monkeypatch.setenv("ZAPIER_MCP_KEY_TEST", "84736251")
-    manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote"})
+    manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote", "local"})
     try:
-        (instrumented,) = await manager.instrument(
+        instrumented = await manager.instrument(
             (
                 HarnessServerConfig(
                     key="remote",
@@ -230,21 +238,38 @@ async def test_startup_stderr_evidence_redacts_resolved_and_url_credentials(
                     required=True,
                     available=True,
                     connection_id="remote",
-                    endpoint="http://127.0.0.1:1/api/mcp/s/${ZAPIER_MCP_KEY_TEST}/mcp",
+                    endpoint=(
+                        "http://127.0.0.1:1/api/mcp/s/ZapLiteralKey9137/"
+                        "${ZAPIER_MCP_KEY_TEST}/mcp"
+                    ),
+                ),
+                HarnessServerConfig(
+                    key="local",
+                    transport=TransportKind.STDIO,
+                    required=True,
+                    available=True,
+                    connection_id="local",
+                    command=sys.executable,
+                    environment={
+                        "GITHUB_PAT": "ghp_patvalue123",
+                        "NODE_ENV": "production",
+                    },
                 ),
             )
         )
-        assert "84736251" in instrumented.endpoint
+        assert "ZapLiteralKey9137" in instrumented[0].endpoint
+        assert instrumented[1].environment == {}
         adapter = _FailingHandshake(
             "import sys; sys.stderr.write("
-            f"'error sending request for url ({instrumented.endpoint}); "
-            "key 84736251 rejected\\n'); sys.exit(3)"
+            f"'error sending request for url ({instrumented[0].endpoint}); "
+            "key ZapLiteralKey9137 / 84736251 rejected; pat ghp_patvalue123; "
+            "env production\\n'); sys.exit(3)"
         )
         spec = _spec()
         launch = HarnessLaunch(
             spec,
             ServerGroupSnapshot(),
-            (instrumented,),
+            instrumented,
             spec.tool_policy,
             capture=manager,
         )
@@ -256,29 +281,45 @@ async def test_startup_stderr_evidence_redacts_resolved_and_url_credentials(
     assert evidence is not None
     stderr = evidence.observations[0].stderr
     assert stderr is not None
-    assert "84736251" not in stderr
-    assert "error sending request for url (http://127.0.0.1:" in stderr
-    assert "key [REDACTED] rejected" in stderr
+    for secret in ("ZapLiteralKey9137", "84736251", "ghp_patvalue123"):
+        assert secret not in stderr
+    assert stderr.startswith("error sending request for url (http://127.0.0.1:")
+    assert stderr.endswith(
+        "/…); key [REDACTED] / [REDACTED] rejected; pat [REDACTED]; env production\n"
+    )
 
 
 @pytest.mark.asyncio
-async def test_turn_process_observation_reads_only_a_finished_drain() -> None:
+async def test_turn_process_observation_reads_only_a_stopped_drain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only this adapter's secret: ambient credentials would change the cut.
+    monkeypatch.setattr("m3.trace.redaction.known_secret_values", set)
     adapter = NativeRPCAdapter(executable=sys.executable)
     adapter._runtime_secrets = {"adapter-secret-canary"}
+    retained = bytearray(b"fatal: adapter-secret-canary rejected")
     drain: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
-    process = SimpleNamespace(owner=SimpleNamespace(stderr_task=drain))
+    owner = SimpleNamespace(stderr_task=drain, stderr_retained=retained)
+    process = SimpleNamespace(owner=owner)
 
     # A running child's drain is never awaited or read.
     assert adapter._stderr_fields(process) == {"stderr_state": "unavailable"}  # type: ignore[arg-type]
 
-    drain.set_result(b"fatal: adapter-secret-canary rejected")
+    drain.set_result(bytes(retained))
     fields = adapter._stderr_fields(process)  # type: ignore[arg-type]
-    assert fields["stderr_state"] == "observed"
-    assert "fatal:" in fields["stderr"]
-    assert "adapter-secret-canary" not in fields["stderr"]
+    assert fields == {
+        "stderr": "fatal: [REDACTED] rejected",
+        "stderr_state": "observed",
+    }
 
-    failed: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
-    failed.set_exception(RuntimeError("drain broke"))
-    assert adapter._stderr_fields(  # type: ignore[arg-type]
-        SimpleNamespace(owner=SimpleNamespace(stderr_task=failed))
-    ) == {"stderr_state": "unavailable"}
+    # A drain cancelled because a detached descendant held the pipe keeps what
+    # it read; its tail may hold a cut secret, so that much is dropped.
+    cancelled: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+    cancelled.cancel()
+    owner = SimpleNamespace(
+        stderr_task=cancelled,
+        stderr_retained=bytearray(b"fatal: auth failed for adapter-sec"),
+    )
+    fields = adapter._stderr_fields(SimpleNamespace(owner=owner))  # type: ignore[arg-type]
+    # The 21-character secret's length is dropped from the end.
+    assert fields == {"stderr": "fatal: auth f", "stderr_state": "observed"}

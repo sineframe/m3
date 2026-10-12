@@ -302,10 +302,18 @@ class PiHarnessAdapter(NativeRPCAdapter):
                     "Pi managed-control extension did not authenticate"
                 ) from error
             return session
-        except BaseException:
-            await super().close()
-            await control.close("adapter_open_failed")
-            self._control_channel = None
+        except BaseException as error:
+            process = self._process
+            try:
+                if isinstance(error, Exception) and process is not None:
+                    # The base handshake succeeded, so its own failure path
+                    # never ran: keep the child's stderr (an extension stack
+                    # trace, say) as evidence for this failed startup.
+                    await self._fail_startup(process)
+            finally:
+                await super().close()
+                await control.close("adapter_open_failed")
+                self._control_channel = None
             raise
 
     def environment_for_launch(

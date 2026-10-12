@@ -2465,8 +2465,10 @@ class AsyncAgentSession:
         """Persist what a failed startup left behind; return its observation ID.
 
         Adapters that can (the child's stderr after a failed handshake) hand
-        over typed evidence once startup has failed. The ID is a reference
-        for the startup diagnostic; the evidence text never enters an error.
+        over typed evidence once startup has failed. It is recorded in the
+        startup phase, outside any turn. The ID is a reference for the startup
+        diagnostic, returned only if the evidence was recorded; the evidence
+        text never enters an error.
         """
 
         from .harness.observations import TurnEvidence
@@ -2480,34 +2482,47 @@ class AsyncAgentSession:
             return None
         if not isinstance(evidence, TurnEvidence) or not evidence.observations:
             return None
-        self._record_turn_evidence(None, evidence)
-        return evidence.observations[0].observation_id
+        reference = evidence.observations[0].observation_id
+        recorded = self._record_turn_evidence(
+            None, evidence, lifecycle_phase=LifecyclePhase.STARTUP
+        )
+        return reference if reference in recorded else None
 
     def _record_turn_evidence(
-        self, turn_id: TurnId | None, typed_evidence: object
-    ) -> None:
+        self,
+        turn_id: TurnId | None,
+        typed_evidence: object,
+        *,
+        lifecycle_phase: LifecyclePhase | None = None,
+    ) -> frozenset[str]:
         """Persist typed adapter observations through the failure-safe sink.
 
         Provider adapters use the typed boundary, so finalized TraceView
         contains provider output without making the session state machine
-        understand schemas.
+        understand schemas. ``lifecycle_phase`` records evidence from outside
+        any turn. Returns the IDs of the observations actually recorded.
         """
 
         from .harness.observation_sink import HarnessObservationSink
         from .harness.observations import TurnEvidence
 
         if not isinstance(typed_evidence, TurnEvidence):
-            return
+            return frozenset()
         sink = HarnessObservationSink(
             self._trace_recorder,
             turn_id=turn_id,
             monotonic_origin=typed_evidence.monotonic_origin,
+            lifecycle_phase=lifecycle_phase,
         )
-        for observation in typed_evidence.observations:
-            sink.emit(observation)
+        recorded = frozenset(
+            observation.observation_id
+            for observation in typed_evidence.observations
+            if sink.emit(observation)
+        )
         for limitation in (*typed_evidence.limitations, *sink.limitations):
             if limitation not in self._trace_limitations:
                 self._trace_limitations = (*self._trace_limitations, limitation)
+        return recorded
 
     def _record_partial_turn_evidence(self, turn_id: TurnId) -> None:
         """Keep what a timed-out or cancelled turn observed before it stopped.

@@ -24,6 +24,7 @@ from pydantic import JsonValue
 from ..agent_session import AdapterTurn, _bounded_cause
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..trace.redaction import (
+    NativeTextSecrets,
     RedactionConfig,
     native_text_redaction,
     redact_for_api,
@@ -55,7 +56,7 @@ from .contracts import (
 )
 from .native import (
     MAX_FRAME_BYTES,
-    LaunchSecrets,
+    MAX_STDERR_BYTES,
     NativeSessionBase,
     ProcessOwner,
     _executable,
@@ -261,9 +262,9 @@ class NativeRPCAdapter:
         self._process_observed = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
         self._startup_evidence: TurnEvidence | None = None
-        # Credentials the launch handed to the child (resolved and literal MCP
-        # configuration values); the child can echo them on stderr.
-        self._launch_secrets = LaunchSecrets()
+        # What the launch handed the child through its MCP configurations;
+        # the child can echo it on stderr.
+        self._launch_secrets = NativeTextSecrets()
 
     @property
     def name(self) -> str:
@@ -352,12 +353,14 @@ class NativeRPCAdapter:
         # Evidence belongs to this open attempt only; never hand over an
         # earlier failure's stderr for a later, unrelated startup failure.
         self._startup_evidence = None
-        self._launch_secrets = launch_secrets(launch)
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
         if self._session is not None:
             raise HarnessStartupError(f"{self.name} session is already open")
+        # Only after the checks: a rejected open must not change the secrets
+        # an open session redacts its stderr with.
+        self._launch_secrets = launch_secrets(launch)
         root = Path(tempfile.mkdtemp(prefix=f"m3-{self.name}-"))
         process = JsonRpcProcess(self.executable, self.process_argv(launch))
         try:
@@ -381,33 +384,47 @@ class NativeRPCAdapter:
             self._session = NativeRPCSession(self, process, session_id)
             return self._session
         except Exception:
-            started_at = time.monotonic()
-            await process.close()
-            # Closing waits for the stderr drain, so the child's diagnostics
-            # are available here and nowhere later.
-            self._startup_evidence = self._startup_failure_evidence(process, started_at)
+            await self._fail_startup(process)
             raise
 
-    def _stderr_fields(self, process: JsonRpcProcess) -> dict[str, Any]:
-        """Return stderr evidence once the bounded drain has finished.
+    async def _fail_startup(self, process: JsonRpcProcess) -> None:
+        """Close a process whose startup failed; keep its stderr as evidence.
 
-        A drain still running (the child is alive) is never awaited here: this
-        runs on the turn path. Text is redacted with this adapter's secrets
-        and the launch's configured credentials, including those in URLs,
-        before it reaches the observation; the sink redacts again and applies
-        the capture policy.
+        Subclasses whose startup continues after ``open`` (Pi's control
+        channel) call this too, before closing the session. Closing waits a
+        bounded time for the stderr drain; a drain cancelled because a detached
+        descendant holds the pipe still leaves what it read.
         """
 
-        task = process.owner.stderr_task if process.owner is not None else None
-        if task is None or not task.done() or task.cancelled():
+        started_at = time.monotonic()
+        try:
+            await process.close()
+        finally:
+            self._startup_evidence = self._startup_failure_evidence(process, started_at)
+
+    def _stderr_fields(self, process: JsonRpcProcess) -> dict[str, Any]:
+        """Return stderr evidence once the bounded drain has stopped.
+
+        A drain still running (the child is alive) is never awaited or read
+        here: this runs on the turn path. A finished or cancelled drain leaves
+        its bytes in the owner's buffer. Text is redacted with this adapter's
+        secrets and the launch's configured credentials before it reaches the
+        observation; the sink redacts again and applies the capture policy.
+        """
+
+        owner = process.owner
+        task = owner.stderr_task if owner is not None else None
+        if owner is None or task is None or not task.done():
             return {"stderr_state": "unavailable"}
+        retained = bytes(owner.stderr_retained)
         try:
             text = redact_native_text(
-                task.result().decode("utf-8", errors="replace"),
+                retained.decode("utf-8", errors="replace"),
                 native_text_redaction(
                     self._runtime_secrets | self._launch_secrets.known,
                     guessed=self._launch_secrets.guessed,
                 ),
+                truncated=task.cancelled() or len(retained) >= MAX_STDERR_BYTES,
             )
         except Exception:
             return {"stderr_state": "unavailable"}
@@ -759,5 +776,5 @@ class NativeRPCAdapter:
         self._session = None
         self._process = None
         self._runtime_secrets.clear()
-        self._launch_secrets = LaunchSecrets()
+        self._launch_secrets = NativeTextSecrets()
         self._process_observed = False

@@ -12,20 +12,17 @@ import asyncio
 import errno
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from .. import _timing
 from ..errors import CleanupError
-from ..trace.redaction import is_sensitive_key
+from ..trace.redaction import NativeTextSecrets, mcp_configuration_secrets
 from ..types import ErrorCode, ErrorInfo, SecretReference
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -265,7 +262,12 @@ async def read_bounded_line(
     return line or None
 
 
-async def drain_bounded(stream: Any, *, maximum: int = MAX_STDERR_BYTES) -> bytes:
+async def drain_bounded(
+    stream: Any,
+    *,
+    maximum: int = MAX_STDERR_BYTES,
+    retained: bytearray | None = None,
+) -> bytes:
     """Drain a diagnostic stream to EOF while retaining a bounded prefix.
 
     Reading must continue after the retained diagnostic limit is reached.  A
@@ -273,13 +275,16 @@ async def drain_bounded(stream: Any, *, maximum: int = MAX_STDERR_BYTES) -> byte
     inherited pipe, making a successful startup look like a hung harness and
     preventing process cleanup from completing.  The retained bytes are only
     diagnostic evidence; callers redact them before exposing them publicly.
+    A caller-owned ``retained`` buffer keeps what was read even if the drain
+    is cancelled because a detached descendant holds the pipe open.
     """
 
     if stream is None:
         return b""
     if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum <= 0:
         raise ValueError("diagnostic limit must be a positive integer")
-    retained = bytearray()
+    if retained is None:
+        retained = bytearray()
     while True:
         chunk = await stream.read(8192)
         if not chunk:
@@ -366,66 +371,19 @@ def _exception_kind(error: BaseException) -> str:
     return kind if symbol is None else f"{kind} ({symbol})"
 
 
-# Name parts that suggest a credential but escape ``is_sensitive_key``
-# (``GITHUB_PAT``, ``STRIPE_KEY``, ``DB_PASS``).
-_CREDENTIAL_NAME_PART = re.compile(
-    r"(?:^|[_-])(?:key|pat|pass|passwd|pwd|secret|token|auth|creds?|credentials?|"
-    r"sig|signature|cookie|session|private)(?:[_-]|$)",
-    re.IGNORECASE,
-)
-# A value shaped like a generated token: long, unbroken, letters and digits.
-_TOKEN_SHAPED = re.compile(r"(?=[^\s]*[A-Za-z])(?=[^\s]*\d)\S{16,}")
-
-
-@dataclass(frozen=True, slots=True)
-class LaunchSecrets:
-    """Credentials a launch handed to its harness, for redacting its text.
-
-    ``known`` values are credentials and are always redacted; ``guessed``
-    values only might be (see ``native_text_redaction``).
-    """
-
-    known: frozenset[str] = frozenset()
-    guessed: frozenset[str] = frozenset()
-
-
-def launch_secrets(launch: HarnessLaunch) -> LaunchSecrets:
+def launch_secrets(launch: HarnessLaunch) -> NativeTextSecrets:
     """Collect what a harness can echo back from its MCP configurations.
 
-    Known: values the capture manager resolved (``${VAR}`` in endpoint URLs,
-    headers and environments), literal env/header values under sensitive
-    names, and endpoint passwords. Guessed: other literal env/header values
-    whose name still suggests a credential (``GITHUB_PAT``, ``DB_PASS``) or
-    whose value is shaped like a token. Ordinary settings such as
-    ``NODE_ENV=production`` are not collected, so they stay readable.
-    Endpoint paths and queries are not collected either:
-    ``redact_native_text`` reduces embedded URLs to their origin instead.
+    With capture, the launch holds rewritten configurations, so the capture
+    manager reports what the originals carried and what it resolved. Without
+    it, the launch's configurations are the originals.
     """
 
-    known: set[str] = set()
-    guessed: set[str] = set()
-    resolved = getattr(launch.capture, "resolved_secrets", None)
-    if callable(resolved):
-        known.update(value for value in resolved() if isinstance(value, str))
-    for configuration in launch.configurations:
-        for mapping in (configuration.environment, configuration.headers):
-            for key, value in mapping.items():
-                if not isinstance(value, str) or not value:
-                    continue
-                if is_sensitive_key(key):
-                    known.add(value)
-                elif _CREDENTIAL_NAME_PART.search(key) or _TOKEN_SHAPED.fullmatch(
-                    value
-                ):
-                    guessed.add(value)
-        if configuration.endpoint:
-            try:
-                password = urlsplit(configuration.endpoint).password
-            except ValueError:
-                password = None
-            if password:
-                known.add(password)
-    return LaunchSecrets(frozenset(known), frozenset(guessed))
+    secrets = mcp_configuration_secrets(launch.configurations)
+    collected = getattr(launch.capture, "native_text_secrets", None)
+    if callable(collected):
+        secrets = secrets.union(collected())
+    return secrets
 
 
 class ProcessOwner:
@@ -435,6 +393,8 @@ class ProcessOwner:
         self.root = root
         self.process: asyncio.subprocess.Process | None = None
         self.stderr_task: asyncio.Task[bytes] | None = None
+        # Bytes the stderr drain has kept so far, readable after cancellation.
+        self.stderr_retained = bytearray()
         self.pgid: int | None = None
         self._closed = False
 
@@ -466,7 +426,9 @@ class ProcessOwner:
                 f"harness process could not start: {_exception_kind(exc)}"
             ) from None
         assert self.process.stderr is not None
-        self.stderr_task = asyncio.create_task(drain_bounded(self.process.stderr))
+        self.stderr_task = asyncio.create_task(
+            drain_bounded(self.process.stderr, retained=self.stderr_retained)
+        )
         if os.name == "posix" and self.process.pid is not None:
             # ``start_new_session=True`` makes the child its own group leader.
             # Keep this identity even if a very short-lived child is already
@@ -701,7 +663,6 @@ __all__ = [
     "MAX_FRAME_BYTES",
     "MAX_QUEUE_ITEMS",
     "MAX_STDERR_BYTES",
-    "LaunchSecrets",
     "NativeSessionBase",
     "ProcessOwner",
     "_executable",
