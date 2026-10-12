@@ -1270,26 +1270,69 @@ async def test_codex_without_mapped_key_does_not_sign_in(
 
 
 @pytest.mark.asyncio
-async def test_codex_rejected_api_key_login_fails_startup_without_codex_text(
+async def test_codex_rejected_api_key_login_keeps_reason_without_credentials(
     tmp_path: Path,
 ) -> None:
+    # Codex can echo the key (via the adapter environment or the request) and
+    # any literal MCP credential in its login error.
     adapter = CodexHarnessAdapter(
         executable=str(CODEX_FIXTURE),
-        environment={"SOURCE_OPENAI_API_KEY": "CANARY"},
+        environment={"SOURCE_OPENAI_API_KEY": "KEY-CANARY"},
     )
-    launch = _api_key_launch("OPENAI_API_KEY")
+    launch = _launch(
+        Codex(
+            model="fixture",
+            credential_references={
+                "OPENAI_API_KEY": SecretReference(
+                    source="environment", name="SOURCE_OPENAI_API_KEY"
+                )
+            },
+        ),
+        configurations=(
+            _mcp_configuration(
+                "filesystem", headers={"Authorization": "MCP-HEADER-CANARY"}
+            ),
+        ),
+    )
     adapter.environment_for_launch(launch, tmp_path)
     process = _AccountProcess(
         {
             "account/login/start": {
-                "error": {"code": -32600, "message": "bad key CANARY"}
+                "error": {
+                    "code": -32600,
+                    "message": "invalid key KEY-CANARY\nrejected MCP-HEADER-CANARY: "
+                    "account is suspended",
+                }
             }
         }
     )
     with pytest.raises(HarnessStartupError) as exc_info:
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
-    assert str(exc_info.value) == "Codex API key login failed (JSON-RPC -32600)"
+    assert str(exc_info.value) == (
+        "Codex API key login failed (JSON-RPC -32600): "
+        "invalid key [REDACTED] rejected [REDACTED]: account is suspended"
+    )
     assert "thread/start" not in process.methods
+
+
+@pytest.mark.asyncio
+async def test_codex_login_reason_redacts_the_api_key_without_launch_secrets() -> None:
+    # The key is redacted even when environment_for_launch never registered it.
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _api_key_launch("OPENAI_API_KEY")
+    adapter._api_key_login = " DIRECT-KEY-CANARY\n"
+    process = _AccountProcess(
+        {
+            "account/login/start": {
+                "error": {"code": -32600, "message": "bad DIRECT-KEY-CANARY"}
+            }
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == (
+        "Codex API key login failed (JSON-RPC -32600): bad [REDACTED]"
+    )
 
 
 @pytest.mark.asyncio

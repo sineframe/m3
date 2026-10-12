@@ -54,8 +54,8 @@ from .observations import (
 _THREAD_START_TIMEOUT_SECONDS = 30.0
 # Codex wording for a required MCP server that failed during thread/start.
 _MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
-# Bound for Codex's redacted reason after the failing MCP server names.
-_MCP_STARTUP_REASON_LIMIT = 1024
+# Bound for Codex's redacted error text kept in a startup error.
+_REASON_LIMIT = 1024
 
 # Credential targets that hold an OpenAI API key, in the order Codex itself
 # prefers them. The App Server reads neither from its environment, so M3 signs
@@ -761,7 +761,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         await self._write_frame(
             process, {"jsonrpc": "2.0", "method": "initialized", "params": {}}
         )
-        await self._authenticate(process, api_key)
+        await self._authenticate(process, launch, api_key)
         self._request_id += 1
         workspace = launch.workspace_root or str(process.root or Path.cwd())
         sandbox = (
@@ -844,7 +844,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 return frame
             self._deferred_frames.append(frame)
 
-    async def _authenticate(self, process: JsonRpcProcess, api_key: str | None) -> None:
+    async def _authenticate(
+        self, process: JsonRpcProcess, launch: HarnessLaunch, api_key: str | None
+    ) -> None:
         """Sign Codex in with a mapped API key and require a usable account.
 
         ``codex app-server`` reads neither ``OPENAI_API_KEY`` nor
@@ -859,12 +861,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             )
             error = response.get("error")
             if error is not None or not isinstance(response.get("result"), Mapping):
-                # Codex's free text is never passed on: it can echo the key.
+                # Codex can echo the key, so its text follows only once every
+                # credential M3 knows of (the key included) is redacted.
                 code = error.get("code") if isinstance(error, Mapping) else None
                 summary = "Codex API key login failed"
                 if isinstance(code, int) and not isinstance(code, bool):
                     summary += f" (JSON-RPC {code})"
-                raise HarnessStartupError(summary)
+                message = error.get("message") if isinstance(error, Mapping) else None
+                reason = (
+                    self._redacted_reason(message, launch, (api_key,))
+                    if isinstance(message, str)
+                    else None
+                )
+                raise HarnessStartupError(f"{summary}: {reason}" if reason else summary)
         response = await self._startup_request(
             process, "account/read", {"refreshToken": False}
         )
@@ -911,15 +920,17 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         )
         if not failed:
             return HarnessStartupError(summary)
-        reason = self._mcp_startup_reason(rest, launch) or ", ".join(failed)
+        reason = self._redacted_reason(rest, launch) or ", ".join(failed)
         return HarnessStartupError(
             f"{summary}: required MCP server failed to initialize: {reason}"
         )
 
-    def _mcp_startup_reason(self, text: str, launch: HarnessLaunch) -> str | None:
-        """Return Codex's MCP startup reason with known credentials redacted."""
+    def _redacted_reason(
+        self, text: str, launch: HarnessLaunch, extra_secrets: Sequence[str] = ()
+    ) -> str | None:
+        """Return Codex's error text with known credentials redacted."""
 
-        secrets = set(self._runtime_secrets)
+        secrets = {*self._runtime_secrets, *(s.strip() for s in extra_secrets)}
         for config in launch.configurations:
             for values in (config.environment, config.headers):
                 for key, value in values.items():
@@ -935,8 +946,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         if not isinstance(reason, str) or not reason:
             return None
         # Truncate only after redaction so a cut cannot split a secret.
-        if len(reason) > _MCP_STARTUP_REASON_LIMIT:
-            reason = reason[: _MCP_STARTUP_REASON_LIMIT - 1] + "…"
+        if len(reason) > _REASON_LIMIT:
+            reason = reason[: _REASON_LIMIT - 1] + "…"
         return reason
 
     def initial_observations(
