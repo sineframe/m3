@@ -130,6 +130,36 @@ async def test_owned_capture_rejects_custom_artifact_hooks_before_workspace_crea
 
 
 @pytest.mark.asyncio
+async def test_owned_capture_retains_launch_secret_after_ambient_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.storage import InMemoryArtifactStore
+    from m3.trace.redaction import RedactionConfig
+
+    store = InMemoryArtifactStore(config=RedactionConfig(include_environment=False))
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=store,
+    )
+    manager.add_artifact_secrets(("pinned-launch-secret",))
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    monkeypatch.setenv("API_TOKEN", "rotated-ambient-value")
+    (root / "output.txt").write_text("pinned-launch-secret and rotated-ambient-value")
+    try:
+        capture = await manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+        )
+        content = store.get(capture.artifacts[0])
+        assert b"pinned-launch-secret" not in content
+        assert b"rotated-ambient-value" in content
+    finally:
+        await manager.cleanup_async(deadline=time.monotonic() + 5)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_blocked_capture_returns_on_deadline_without_publishing_artifacts(
     tmp_path: Path, blocked_helper: Any, cancel: bool
