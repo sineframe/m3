@@ -6,6 +6,7 @@ isolated Python import settings. The slot descriptor never enters vendor code.
 
 from __future__ import annotations
 
+import array
 import fcntl
 import json
 import math
@@ -249,9 +250,18 @@ def _receive(
     return value
 
 
-def _send(channel: socket.socket, **value: object) -> None:
+def _send(
+    channel: socket.socket, *, descriptor: int | None = None, **value: object
+) -> None:
     data = json.dumps(value).encode("utf-8")
-    channel.sendall(struct.pack("!I", len(data)) + data)
+    header = struct.pack("!I", len(data))
+    if descriptor is not None:
+        count = channel.sendmsg(
+            [header],
+            [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [descriptor]))],
+        )
+        header = header[count:]
+    channel.sendall(header + data)
 
 
 # The isolated helper loads only this fixed, stdlib-only framework source.
@@ -360,7 +370,9 @@ def main(channel_fd: int, slot_fd: int, death_fd: int) -> int:
         except TimeoutError:
             _send(channel, event="queue_timeout")
             raise
-        _send(channel, event="admitted")
+        _send(channel, event="admitted", descriptor=slot_fd)
+        if _receive(channel, float(queue_deadline)) != {"action": "admission_received"}:
+            raise ValueError("native admission handle acknowledgement is invalid")
         # Credential preparation follows admission. No native child exists
         # here; controller EOF fences a queued or admitted helper immediately.
         selector = selectors.DefaultSelector()

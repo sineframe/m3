@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import array
 import asyncio
 import json
 import math
@@ -18,6 +19,7 @@ from .admission import StartupLease
 from .contracts import HarnessStartupError
 
 _MAX_FRAME = 1024 * 1024
+_SocketMessage = tuple[bytes, list[tuple[int, int, bytes]], int, object]
 _OWNED_GUARDIANS: set[NativeGuardian] = set()
 
 
@@ -36,6 +38,7 @@ class NativeGuardian:
         self._ready = False
         self._death_descriptor: int | None = None
         self._death_confirmed = False
+        self._admission_descriptor: int | None = None
 
     @property
     def process(self) -> asyncio.subprocess.Process:
@@ -154,11 +157,14 @@ class NativeGuardian:
                     "deadline": deadline,
                 }
             )
-            receipt = await guardian._receive()
+            receipt = await guardian._receive(admission=True)
             if receipt == {"event": "queue_timeout"}:
                 raise asyncio.TimeoutError
             if receipt != {"event": "admitted"}:
                 raise HarnessStartupError("native admission acknowledgement is invalid")
+            if guardian._admission_descriptor is None:
+                raise HarnessStartupError("native admission handle is unavailable")
+            await guardian._send({"action": "admission_received"})
             guardian._deadline = None
             return guardian
         except BaseException:
@@ -237,14 +243,65 @@ class NativeGuardian:
             timeout=self._remaining(),
         )
 
-    async def _receive(self) -> dict[str, object]:
+    async def _read_block(self, size: int) -> _SocketMessage:
+        loop = asyncio.get_running_loop()
+        available: asyncio.Future[_SocketMessage] = loop.create_future()
+        descriptor = self._channel.fileno()
+
+        def receive_block() -> None:
+            if available.done():
+                loop.remove_reader(descriptor)
+                return
+            try:
+                value = self._channel.recvmsg(
+                    size, socket.CMSG_SPACE(array.array("i").itemsize)
+                )
+            except BlockingIOError:
+                return
+            except OSError as exc:
+                available.set_exception(exc)
+            else:
+                available.set_result(value)
+            loop.remove_reader(descriptor)
+
+        loop.add_reader(descriptor, receive_block)
+        try:
+            return await available
+        finally:
+            loop.remove_reader(descriptor)
+
+    async def _receive(self, *, admission: bool = False) -> dict[str, object]:
         async def receive() -> dict[str, object]:
             async def exact(size: int) -> bytes:
                 result = bytearray()
                 while len(result) < size:
-                    block = await asyncio.get_running_loop().sock_recv(
-                        self._channel, size - len(result)
+                    block, ancillary, flags, _ = await self._read_block(
+                        size - len(result)
                     )
+                    handles: list[int] = []
+                    for level, kind, raw in ancillary:
+                        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                            values = array.array("i")
+                            values.frombytes(
+                                raw[: len(raw) - len(raw) % values.itemsize]
+                            )
+                            handles.extend(values)
+                    if flags or (
+                        handles
+                        and (
+                            not admission
+                            or self._admission_descriptor is not None
+                            or len(handles) != 1
+                        )
+                    ):
+                        for handle in handles:
+                            os.close(handle)
+                        raise HarnessStartupError(
+                            "native admission handle receipt is invalid"
+                        )
+                    if handles:
+                        self._admission_descriptor = handles[0]
+                        os.set_inheritable(handles[0], False)
                     if not block:
                         raise HarnessStartupError("native ownership channel closed")
                     result.extend(block)
@@ -277,6 +334,12 @@ class NativeGuardian:
                 raise HarnessStartupError("native readiness acknowledgement is invalid")
             self._ready = True
             self._deadline = None
+            self._close_admission()
+
+    def _close_admission(self) -> None:
+        if self._admission_descriptor is not None:
+            os.close(self._admission_descriptor)
+            self._admission_descriptor = None
 
     async def _reap(self) -> None:
         try:
@@ -293,6 +356,7 @@ class NativeGuardian:
                 os.close(self._death_descriptor)
                 self._death_descriptor = None
             if self.native_pid is None or self._death_confirmed:
+                self._close_admission()
                 _OWNED_GUARDIANS.discard(self)
 
     def disconnect(self) -> None:
