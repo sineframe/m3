@@ -40,7 +40,8 @@ jobs:
           --group test --group typecheck
       - name: Run real native IPC and private capsule tests
         run: >-
-          uv run --locked --no-sync --project sdk pytest -q
+          uv run --locked --no-sync --project sdk pytest -vv
+          -o faulthandler_timeout=30
           sdk/tests/unit/test_literal_windows.py
           sdk/tests/unit/test_literal_capsule.py
       - name: Type check SDK on Windows
