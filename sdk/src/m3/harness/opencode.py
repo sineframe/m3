@@ -26,12 +26,17 @@ import httpx
 
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
+from ..trace.redaction import (
+    RedactionConfig,
+    RedactionError,
+    is_sensitive_key,
+    redact_artifact_bytes,
+    redact_for_api,
+)
 from ..types import (
     Capability,
     CapabilityStatus,
     ErrorCode,
-    ErrorInfo,
     FullToolPolicy,
     NativeToolPolicy,
     OpenCode,
@@ -42,6 +47,12 @@ from ..types import (
     TurnOutcome,
     TurnResponse,
     UserMessage,
+)
+from ._native_errors import (
+    NativeHarnessStartupError,
+    launch_error_redaction,
+    native_error_info,
+    project_native_turn,
 )
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -346,6 +357,7 @@ class OpenCodeHarnessAdapter:
         # are used to protect adapter results before they reach the public
         # session boundary; they are never included in a launch descriptor.
         self._runtime_secrets: set[str] = set()
+        self._native_error_redaction: RedactionConfig | None = None
         self.last_policy_evidence: Any = None
 
     @property
@@ -555,6 +567,9 @@ class OpenCodeHarnessAdapter:
                     resolver_environment=self._resolver_environment,
                 )
             self._runtime_secrets = runtime_secrets
+            self._native_error_redaction = launch_error_redaction(
+                launch, self.environment, runtime_secrets
+            )
             capture = launch.capture
             add_secrets = getattr(capture, "add_secrets", None)
             if callable(add_secrets) and runtime_secrets:
@@ -598,7 +613,18 @@ class OpenCodeHarnessAdapter:
             )
             async with client.stream("POST", "/session", json={}) as response:
                 if response.status_code >= 400:
-                    raise HarnessStartupError("OpenCode session could not be created")
+                    raise NativeHarnessStartupError(
+                        native_error_info(
+                            _native_response_error(
+                                await self._read_bounded_response(response)
+                            ),
+                            summary="OpenCode session could not be created",
+                            harness="opencode",
+                            phase="session/create",
+                            redaction=self._native_error_redaction,
+                            details={"http_status": response.status_code},
+                        )
+                    )
                 try:
                     body = json.loads(await self._read_bounded_response(response))
                 except json.JSONDecodeError:
@@ -620,6 +646,7 @@ class OpenCodeHarnessAdapter:
             return self._session
         except BaseException:
             self._runtime_secrets.clear()
+            self._native_error_redaction = None
             if client is not None:
                 await client.aclose()
             try:
@@ -655,6 +682,7 @@ class OpenCodeHarnessAdapter:
                 "interrupted": TurnOutcome.INTERRUPTED,
             }.get(result.status, TurnOutcome.FAILED),
             tool_calls=result.tool_calls,
+            _private_tool_calls=result._private_tool_calls,
             evidence=result.evidence,
             trace_limitations=result.trace_limitations,
             turn_evidence=result.turn_evidence,
@@ -675,6 +703,7 @@ class OpenCodeHarnessAdapter:
         self._launch = None
         self._root = None
         self._runtime_secrets.clear()
+        self._native_error_redaction = None
 
     async def cancel(self) -> None:
         if self._session is not None:
@@ -715,6 +744,18 @@ class OpenCodeHarnessAdapter:
         return bytes(body)
 
     async def _send(
+        self, request: HarnessTurnRequest, sequence: int, session_id: str
+    ) -> HarnessTurnResult:
+        result = await self._send_private(request, sequence, session_id)
+        return project_native_turn(
+            result,
+            self._native_error_redaction
+            or RedactionConfig(
+                secrets=frozenset(self._runtime_secrets), include_environment=False
+            ),
+        )
+
+    async def _send_private(
         self, request: HarnessTurnRequest, sequence: int, session_id: str
     ) -> HarnessTurnResult:
         client = self._client
@@ -1297,8 +1338,12 @@ class OpenCodeHarnessAdapter:
             else TurnResponse(content=(TextContent(text=text),)),
             error=None
             if not failed
-            else ErrorInfo(
-                code=ErrorCode.TRANSPORT_ERROR, message="OpenCode turn failed"
+            else native_error_info(
+                info.get("error"),
+                summary="OpenCode turn failed",
+                harness="opencode",
+                phase="turn/message",
+                redaction=self._native_error_redaction,
             ),
             tool_calls=tool_calls,
             evidence=evidence,
@@ -1466,12 +1511,21 @@ class OpenCodeHarnessAdapter:
             and all(ord(char) >= 0x20 for char in content_type)
             else "application/json"
         )
+        redaction = self._native_error_redaction or RedactionConfig(
+            secrets=frozenset(self._runtime_secrets), include_environment=False
+        )
         try:
             text = body.decode("utf-8")
-            safe = redact_for_api(
-                text,
-                config=RedactionConfig.from_environment(secrets=self._runtime_secrets),
-            )
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                safe = redact_for_api(text, config=redaction)
+            else:
+                safe = json.dumps(
+                    redact_for_api(decoded, config=redaction),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
             if not isinstance(safe, str):
                 raise ValueError
             return RawFrameObservation(
@@ -1485,8 +1539,20 @@ class OpenCodeHarnessAdapter:
                 text=safe,
                 raw_evidence=RawEvidenceInput(content=safe, media_type=media_type),
             )
+        except RedactionError:
+            return RawFrameObservation(
+                observation_id=observation_id or f"opencode-http-{sequence}",
+                harness_kind="opencode",
+                turn_sequence=sequence,
+                wall_time=wall_time,
+                monotonic_offset_ms=self._offset_ms(started),
+                direction="inbound",
+                media_type=media_type,
+                payload={"capture": "unavailable", "reason": "redaction_failed"},
+            )
         except (UnicodeDecodeError, TypeError, ValueError):
-            encoded = base64.b64encode(body).decode("ascii")
+            safe_bytes = redact_artifact_bytes(body, config=redaction).data
+            encoded = base64.b64encode(safe_bytes).decode("ascii")
             return RawFrameObservation(
                 observation_id=observation_id or f"opencode-http-{sequence}",
                 harness_kind="opencode",
@@ -1826,7 +1892,21 @@ class OpenCodeHarnessAdapter:
         return HarnessTurnResult(
             sequence=sequence,
             status=status,
-            error=ErrorInfo(code=code, message=message),
+            error=native_error_info(
+                _native_response_error(raw_body)
+                if raw_body is not None
+                and status_code is not None
+                and status_code >= 400
+                else None,
+                summary=message,
+                harness="opencode",
+                phase="turn/message",
+                redaction=self._native_error_redaction,
+                code=code,
+                details={"http_status": status_code}
+                if status_code is not None
+                else None,
+            ),
             evidence={
                 "process_observed": False,
                 "transport_observed": "http",
@@ -1924,3 +2004,17 @@ class OpenCodeSession(NativeSessionBase):
 
 
 __all__ = ["OpenCodeHarnessAdapter", "OpenCodeSession"]
+
+
+def _native_response_error(raw: bytes) -> object:
+    """Read a bounded HTTP error body; arbitrary nested bodies stay private."""
+
+    if len(raw) > 65536:
+        return None
+    try:
+        body = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return raw.decode("utf-8", errors="replace")
+    if isinstance(body, Mapping):
+        return body.get("error", body)
+    return body if isinstance(body, str) else None
