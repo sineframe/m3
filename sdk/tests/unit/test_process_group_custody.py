@@ -45,6 +45,7 @@ def test_fork_job_reserves_exited_leader_until_term_ignoring_descendant_dies(
                 assert time.monotonic() < end
                 select.select([], [], [], .01)
             assert job.poll() == (None if fallback else 0)
+            assert job.exited
             assert not job._reaped
             assert job.alive()
             if not fallback:
