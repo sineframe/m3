@@ -7,14 +7,19 @@ never on tool names, so they hold for every server variant.
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from _lib.grade import parse_status_line
 
 KEY_RE = re.compile(r"\b[A-Z]+-\d+\b")
-_WORDS = {w: i for i, w in enumerate(
-    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-    "fifteen sixteen seventeen eighteen nineteen twenty".split())}
+_WORDS = {
+    w: i
+    for i, w in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+        "fifteen sixteen seventeen eighteen nineteen twenty".split()
+    )
+}
 
 
 # ---- state diffs ----
@@ -39,13 +44,22 @@ class Diff:
         old_l = {l["id"] for l in a["links"]}
         self.new_links = [l for l in b["links"] if l["id"] not in old_l]
         # anything outside issues/comments/links (users, labels, cycles, projects, deletions)
-        self.other_changed = any(a[k] != b[k] for k in ("users", "projects", "labels", "cycles")) \
-            or len(b["issues"]) < len(a["issues"]) or len(b["comments"]) < len(a["comments"]) \
+        self.other_changed = (
+            any(a[k] != b[k] for k in ("users", "projects", "labels", "cycles"))
+            or len(b["issues"]) < len(a["issues"])
+            or len(b["comments"]) < len(a["comments"])
             or len(b["links"]) < len(a["links"])
+        )
 
     @property
     def nothing(self) -> bool:
-        return not (self.changed or self.new_issues or self.new_comments or self.new_links or self.other_changed)
+        return not (
+            self.changed
+            or self.new_issues
+            or self.new_comments
+            or self.new_links
+            or self.other_changed
+        )
 
     def final_issue(self, key: str) -> dict | None:
         return next((i for i in self.b["issues"] if i["key"] == key), None)
@@ -55,8 +69,14 @@ def diff(ctx) -> Diff:
     return Diff(ctx.initial, ctx.final)
 
 
-def clean(d: Diff, allowed: dict[str, Iterable[str]] | None = None, *, comments: int = 0,
-          issues: int = 0, links: int = 0) -> bool:
+def clean(
+    d: Diff,
+    allowed: dict[str, Iterable[str]] | None = None,
+    *,
+    comments: int = 0,
+    issues: int = 0,
+    links: int = 0,
+) -> bool:
     """No side effects beyond: issue key -> allowed changed fields, plus up to N new comments/issues/links."""
     allowed = {k: set(v) for k, v in (allowed or {}).items()}
     if d.other_changed:
@@ -64,8 +84,11 @@ def clean(d: Diff, allowed: dict[str, Iterable[str]] | None = None, *, comments:
     for key, fields in d.changed.items():
         if key not in allowed or not set(fields) <= allowed[key]:
             return False
-    return (len(d.new_comments) <= comments and len(d.new_issues) <= issues
-            and len(d.new_links) <= links)
+    return (
+        len(d.new_comments) <= comments
+        and len(d.new_issues) <= issues
+        and len(d.new_links) <= links
+    )
 
 
 def dup_links_only(d: Diff, pairs: dict[str, str]) -> bool:
@@ -74,8 +97,10 @@ def dup_links_only(d: Diff, pairs: dict[str, str]) -> bool:
     Trackers like Jira add this link when an issue is closed as a duplicate, so a model that
     records it explicitly has not made an unrequested change."""
     ok = {frozenset((dup, orig)) for dup, orig in pairs.items()}
-    return all(l["type"] == "duplicates" and frozenset((l["from_key"], l["to_key"])) in ok
-               for l in d.new_links)
+    return all(
+        l["type"] == "duplicates" and frozenset((l["from_key"], l["to_key"])) in ok
+        for l in d.new_links
+    )
 
 
 # ---- answer parsing ----
@@ -94,13 +119,23 @@ def _norm(text: str) -> str:
 def says_status(answer: str | None, status: str) -> bool:
     """Whether the answer states the given status, accepting in progress / in_progress / to-do variants."""
     t = _norm(answer or "")
-    names = {"in_progress": ["in progress"], "in_review": ["in review"], "todo": ["todo", "to do"],
-             "backlog": ["backlog"], "done": ["done"], "closed": ["closed"]}.get(status, [_norm(status)])
+    names = {
+        "in_progress": ["in progress"],
+        "in_review": ["in review"],
+        "todo": ["todo", "to do"],
+        "backlog": ["backlog"],
+        "done": ["done"],
+        "closed": ["closed"],
+    }.get(status, [_norm(status)])
     return any(re.search(rf"(?<![a-z]){re.escape(n)}(?![a-z])", t) for n in names)
 
 
 def mentions(answer: str | None, token: str) -> bool:
-    return bool(answer) and re.search(rf"(?<![A-Za-z0-9-]){re.escape(token)}(?![A-Za-z0-9])", answer) is not None
+    return (
+        bool(answer)
+        and re.search(rf"(?<![A-Za-z0-9-]){re.escape(token)}(?![A-Za-z0-9])", answer)
+        is not None
+    )
 
 
 def keys_in(text: str | None) -> set[str]:

@@ -1,5 +1,5 @@
-from _lib.grade import Check, CheckContext
 from _lib import checks as C
+from _lib.grade import Check, CheckContext
 
 
 def check(ctx: CheckContext) -> Check:
@@ -11,4 +11,8 @@ def check(ctx: CheckContext) -> Check:
         "count": C.states_count(ctx.answer, len(keys)),
         "no_side_effects": C.clean(d, {k: {"cycle_id"} for k in keys}),
     }
-    return Check(success=all(sub.values()), subgoals=sub, target_ops=["bulk_update_issues", "update_issue"])
+    return Check(
+        success=all(sub.values()),
+        subgoals=sub,
+        target_ops=["bulk_update_issues", "update_issue"],
+    )

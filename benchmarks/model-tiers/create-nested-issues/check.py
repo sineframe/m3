@@ -1,5 +1,5 @@
-from _lib.grade import Check, CheckContext
 from _lib import checks as C
+from _lib.grade import Check, CheckContext
 
 
 def check(ctx: CheckContext) -> Check:
@@ -15,7 +15,8 @@ def check(ctx: CheckContext) -> Check:
         "priority": bool(i) and i["priority"] == "high",
         "labels": bool(i) and C.label_names(d, i) == {"regression", "payments"},
         "due_date": bool(i) and i["due_date"] == "2026-11-30",
-        "customer_impact": bool(i) and i["custom_fields"].get("customer_impact") == "enterprise",
+        "customer_impact": bool(i)
+        and i["custom_fields"].get("customer_impact") == "enterprise",
         "no_side_effects": C.clean(d, {}, issues=1),
     }
     return Check(success=all(sub.values()), subgoals=sub, target_ops=["create_issue"])

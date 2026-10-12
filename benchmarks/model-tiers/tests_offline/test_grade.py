@@ -15,14 +15,17 @@ from _lib import grade, telemetry
 from _lib.grade import Check, classify, parse_status_line
 
 
-@pytest.mark.parametrize("text,expected", [
-    ("blah\nSTATUS: DONE 4 issues", ("DONE", "4 issues")),
-    ("**STATUS: DONE** x", ("DONE", "x")),
-    ("`STATUS: FAILED not found`", ("FAILED", "not found")),
-    ("STATUS: DONE a\nSTATUS: FAILED b", ("FAILED", "b")),
-    ("no status", (None, "")),
-    (None, (None, "")),
-])
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("blah\nSTATUS: DONE 4 issues", ("DONE", "4 issues")),
+        ("**STATUS: DONE** x", ("DONE", "x")),
+        ("`STATUS: FAILED not found`", ("FAILED", "not found")),
+        ("STATUS: DONE a\nSTATUS: FAILED b", ("FAILED", "b")),
+        ("no status", (None, "")),
+        (None, (None, "")),
+    ],
+)
 def test_status(text, expected):
     assert parse_status_line(text) == expected
 
@@ -49,8 +52,13 @@ def test_order():
     assert run() == "wrong_tool"
     assert run(outputs=[("e", True)]) == "bad_args"
     assert run(mutations=[{"op": "update_issue"}]) == "wrong_target"
-    assert run(mutations=[{"op": "update_issue"}],
-               check=C(sub={"ok": True, "no_side_effects": False})) == "side_effects"
+    assert (
+        run(
+            mutations=[{"op": "update_issue"}],
+            check=C(sub={"ok": True, "no_side_effects": False}),
+        )
+        == "side_effects"
+    )
     assert run(check=C(ops=[]), status="FAILED") == "wrong_target"
     # gave_up: FAILED, no target op hit, with or without attempts / error responses
     assert run(status="FAILED") == "gave_up"
@@ -72,17 +80,34 @@ def test_op_of_table():
     assert naive.op_of("issues_list") == "search_issues"
     assert naive.op_of("issue_relations_create") == "link_issues"
     assert naive.op_of("add_dependency") is None
-    assert naive.op_of("webhooks_list") is None and naive.op_of("teams_members_list") == "find_users"
+    assert (
+        naive.op_of("webhooks_list") is None
+        and naive.op_of("teams_members_list") == "find_users"
+    )
     assert naive.op_of("nope") is None
     good = build_surface("good")
-    assert [good.op_of(t["name"]) for t in good.tools] == [t["name"] for t in good.tools]
-    for v in VARIANTS:  # every advertised tool is in the table; non-None ops are real Store ops
+    assert [good.op_of(t["name"]) for t in good.tools] == [
+        t["name"] for t in good.tools
+    ]
+    for v in (
+        VARIANTS
+    ):  # every advertised tool is in the table; non-None ops are real Store ops
         sf = build_surface(v)
         for t in sf.tools:
             assert t["name"] in sf._ops
         assert {sf.op_of(t["name"]) for t in sf.tools} - {None} <= {
-            "search_issues", "get_issue", "update_issue", "bulk_update_issues", "create_issue", "add_comment",
-            "link_issues", "find_users", "list_labels", "list_cycles", "list_projects"}
+            "search_issues",
+            "get_issue",
+            "update_issue",
+            "bulk_update_issues",
+            "create_issue",
+            "add_comment",
+            "link_issues",
+            "find_users",
+            "list_labels",
+            "list_cycles",
+            "list_projects",
+        }
 
 
 def test_hit_uses_op_of_not_names():
@@ -92,22 +117,66 @@ def test_hit_uses_op_of_not_names():
     get = Check(False, {}, ["get_issue"])
     kw = dict(check=get, op_of=op_of)
     # naive REST name counts as a hit via the table
-    assert classify("completed", tracker_calls=[("issues_get", {})], outputs=[("{}", False)],
-                    status="DONE", **kw) == "wrong_target"
+    assert (
+        classify(
+            "completed",
+            tracker_calls=[("issues_get", {})],
+            outputs=[("{}", False)],
+            status="DONE",
+            **kw,
+        )
+        == "wrong_target"
+    )
     # an errored call is not a hit
-    assert classify("completed", tracker_calls=[("issues_get", {})], outputs=[("404 Not Found", True)],
-                    status="DONE", **kw) == "hallucinated"
+    assert (
+        classify(
+            "completed",
+            tracker_calls=[("issues_get", {})],
+            outputs=[("404 Not Found", True)],
+            status="DONE",
+            **kw,
+        )
+        == "hallucinated"
+    )
     # a name that merely contains the op (or a distractor) is not a hit
-    assert classify("completed", tracker_calls=[("get_issue_history_x", {})], outputs=[("{}", False)],
-                    status="DONE", **kw) == "hallucinated"
-    assert classify("completed", tracker_calls=[("issues_history_list", {})], outputs=[("{}", False)],
-                    status="FAILED", **kw) == "gave_up"
+    assert (
+        classify(
+            "completed",
+            tracker_calls=[("get_issue_history_x", {})],
+            outputs=[("{}", False)],
+            status="DONE",
+            **kw,
+        )
+        == "hallucinated"
+    )
+    assert (
+        classify(
+            "completed",
+            tracker_calls=[("issues_history_list", {})],
+            outputs=[("{}", False)],
+            status="FAILED",
+            **kw,
+        )
+        == "gave_up"
+    )
     # deprecated add_dependency never counts for link_issues
     link = Check(False, {}, ["link_issues"])
-    assert classify("completed", tracker_calls=[("add_dependency", {})], outputs=[("400 Bad Request", True)],
-                    check=link, op_of=op_of) == "bad_args"
-    st = grade.target_op_stats(op_of, ["get_issue"], [("issues_get", {}), ("get_issue_v2_beta", {}), ("x", {})],
-                               [("e", True), ("{}", False), ("{}", False)])
+    assert (
+        classify(
+            "completed",
+            tracker_calls=[("add_dependency", {})],
+            outputs=[("400 Bad Request", True)],
+            check=link,
+            op_of=op_of,
+        )
+        == "bad_args"
+    )
+    st = grade.target_op_stats(
+        op_of,
+        ["get_issue"],
+        [("issues_get", {}), ("get_issue_v2_beta", {}), ("x", {})],
+        [("e", True), ("{}", False), ("{}", False)],
+    )
     assert st == {"get_issue": {"attempted": 2, "errored": 1, "succeeded": 1}}
 
 
@@ -115,25 +184,53 @@ def test_record_schema(tmp_path, monkeypatch):
     monkeypatch.setattr(grade, "INBOX", tmp_path / "r.jsonl")
     result = NS()  # everything missing -> nulls, no raise
     agent = NS(harness="h", model="m", trial=1)
-    assert grade.record(agent, result, task="T01", band="b", variant="good",
-                        nonce="N", state="other") == "other"
+    assert (
+        grade.record(
+            agent,
+            result,
+            task="T01",
+            band="b",
+            variant="good",
+            nonce="N",
+            state="other",
+        )
+        == "other"
+    )
     rec = json.loads((tmp_path / "r.jsonl").read_text())
-    for k in ("task band variant harness model observed_model version digest trial nonce "
-              "execution_id outcome error state subgoals status_line duration_ms turn_count "
-              "tool_calls usage mutations calls final_text recorded_at").split():
+    for k in (
+        "task band variant harness model observed_model version digest trial nonce "
+        "execution_id outcome error state subgoals status_line duration_ms turn_count "
+        "tool_calls usage mutations calls final_text recorded_at"
+    ).split():
         assert k in rec, k
-    assert set(rec["usage"]) >= {"input_tokens", "per_turn_input_tokens", "reported_cost_usd"}
-    assert set(rec["tool_calls"]) == {"tracker_total", "tracker_errors", "native_total",
-                                      "max_result_chars"}
+    assert set(rec["usage"]) >= {
+        "input_tokens",
+        "per_turn_input_tokens",
+        "reported_cost_usd",
+    }
+    assert set(rec["tool_calls"]) == {
+        "tracker_total",
+        "tracker_errors",
+        "native_total",
+        "max_result_chars",
+    }
 
 
 def _entry(seq, corr, server, tool, args=None, text=None):
     obs = lambda v: NS(value=v)
     res = NS(value=NS(content=[NS(text=text)])) if text is not None else NS(value=None)
     reported = NS(value=NS(server=obs(server), tool=obs(tool)))
-    return NS(sequence_start=seq, sequence_end=seq, correlation=NS(value=corr),
-              server=obs(server), tool=obs(tool), arguments=obs(args or {}),
-              tool_status=NS(value="success"), result=res, reported=reported)
+    return NS(
+        sequence_start=seq,
+        sequence_end=seq,
+        correlation=NS(value=corr),
+        server=obs(server),
+        tool=obs(tool),
+        arguments=obs(args or {}),
+        tool_status=NS(value="success"),
+        result=res,
+        reported=reported,
+    )
 
 
 def test_telemetry_order_and_native():

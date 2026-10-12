@@ -129,7 +129,7 @@ def tool_call_stats(result: Any) -> dict[str, Any]:
     return {
         "tracker_total": len(tracker),
         "tracker_errors": sum(
-            1 for e in tracker if _enum(_safe(lambda: e.tool_status)) != "success"
+            1 for e in tracker if _enum(_safe(lambda e=e: e.tool_status)) != "success"
         ),
         "native_total": sum(1 for e in entries if is_native(e)),
         "max_result_chars": max(sizes) if sizes else None,

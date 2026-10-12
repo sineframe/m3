@@ -1,5 +1,5 @@
-from _lib.grade import Check, CheckContext
 from _lib import checks as C
+from _lib.grade import Check, CheckContext
 
 
 def check(ctx: CheckContext) -> Check:
@@ -9,9 +9,14 @@ def check(ctx: CheckContext) -> Check:
     cyc = {c["id"]: c["name"] for c in d.a["cycles"]}
 
     def rest(i, names, _users):
-        return (i["status"] in C.OPEN_STATUSES and i["assignee_id"] is None and "regression" in names
-                and i["project"] in ("PAY", "WEB") and cyc.get(i["cycle_id"]) in ("Oct-W2", "Oct-W3")
-                and "wontfix-candidate" not in names)
+        return (
+            i["status"] in C.OPEN_STATUSES
+            and i["assignee_id"] is None
+            and "regression" in names
+            and i["project"] in ("PAY", "WEB")
+            and cyc.get(i["cycle_id"]) in ("Oct-W2", "Oct-W3")
+            and "wontfix-candidate" not in names
+        )
 
     sets = C.bug_sets(ctx.initial, rest)
     got = C.listed_keys(ctx.answer)

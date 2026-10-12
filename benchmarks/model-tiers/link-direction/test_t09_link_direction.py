@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from _lib.tasks import run_task
 
 pytestmark = pytest.mark.m3(suite_name="model-tiers")

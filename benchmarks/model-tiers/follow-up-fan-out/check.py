@@ -1,8 +1,7 @@
-from _lib.grade import Check, CheckContext
-from _lib import checks as C
-
-
 from collections import Counter
+
+from _lib import checks as C
+from _lib.grade import Check, CheckContext
 
 
 def _grade(d, srcs):
@@ -17,15 +16,29 @@ def _grade(d, srcs):
     used: set[str] = set()
     for k in srcs:
         cands = by_title.get(f"Follow-up: {title[k]}", [])
-        hit = next((i for i in cands for l in d.new_links if l["id"] not in used and l["type"] == "relates"
-                    and {l["from_key"], l["to_key"]} == {i["key"], k}), None)
+        hit = next(
+            (
+                i
+                for i in cands
+                for l in d.new_links
+                if l["id"] not in used
+                and l["type"] == "relates"
+                and {l["from_key"], l["to_key"]} == {i["key"], k}
+            ),
+            None,
+        )
         if hit is None:
             links_ok = False
             continue
-        used.update(l["id"] for l in d.new_links if {l["from_key"], l["to_key"]} == {hit["key"], k})
+        used.update(
+            l["id"]
+            for l in d.new_links
+            if {l["from_key"], l["to_key"]} == {hit["key"], k}
+        )
         cands.remove(hit)
     sub = {
-        "created": len(new) == len(srcs) and all(i["project"] == "INF" and i["type"] == "task" for i in new),
+        "created": len(new) == len(srcs)
+        and all(i["project"] == "INF" and i["type"] == "task" for i in new),
         "titles": got == want,
         "links": links_ok and len(used) == len(srcs),
         "no_side_effects": C.clean(d, {}, issues=len(srcs), links=len(srcs)),
@@ -42,9 +55,17 @@ def check(ctx: CheckContext) -> Check:
 
     def rest(i, names, users):
         u = users.get(i["assignee_id"])
-        return (i["project"] == "PAY" and i["status"] in C.OPEN_STATUSES and "regression" in names
-                and u is not None and u["team"] == "Platform")
+        return (
+            i["project"] == "PAY"
+            and i["status"] in C.OPEN_STATUSES
+            and "regression" in names
+            and u is not None
+            and u["team"] == "Platform"
+        )
 
-    res = {name: _grade(d, sorted(srcs)) for name, srcs in C.bug_sets(ctx.initial, rest).items()}
+    res = {
+        name: _grade(d, sorted(srcs))
+        for name, srcs in C.bug_sets(ctx.initial, rest).items()
+    }
     ok, sub = C.pick_interpretation(res)
     return Check(success=ok, subgoals=sub, target_ops=["create_issue", "link_issues"])

@@ -33,7 +33,9 @@ def _task_suite(directory: Path) -> str | None:
 def pytest_ignore_collect(collection_path, config):
     """Collect only the task folders of the MT_SUITE suite (default `hard`); `_baseline` and
     `tests_offline` are never filtered here."""
-    suite = _task_suite(Path(collection_path)) if Path(collection_path).is_dir() else None
+    suite = (
+        _task_suite(Path(collection_path)) if Path(collection_path).is_dir() else None
+    )
     if suite is not None and selected_suite() != "all" and suite != selected_suite():
         return True
     return None
@@ -57,6 +59,7 @@ def parse_variants(raw: str | None) -> list[str]:
 def pytest_generate_tests(metafunc):
     if "variant" in metafunc.fixturenames:
         metafunc.parametrize(
-            "variant", parse_variants(os.environ.get("MT_VARIANTS")),
+            "variant",
+            parse_variants(os.environ.get("MT_VARIANTS")),
             ids=lambda v: f"variant-{v}",
         )

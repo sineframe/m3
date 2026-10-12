@@ -1,5 +1,5 @@
-from _lib.grade import Check, CheckContext
 from _lib import checks as C
+from _lib.grade import Check, CheckContext
 
 
 def check(ctx: CheckContext) -> Check:
@@ -14,4 +14,8 @@ def check(ctx: CheckContext) -> Check:
         "done": C.is_done(ctx.answer),
         "no_side_effects": d.nothing,
     }
-    return Check(success=all(sub.values()), subgoals=sub, target_ops=["search_issues", "find_users"])
+    return Check(
+        success=all(sub.values()),
+        subgoals=sub,
+        target_ops=["search_issues", "find_users"],
+    )

@@ -19,16 +19,17 @@ import json
 import random
 import sys
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from _lib import telemetry  # noqa: E402
-from _lib.servers import load_task  # noqa: E402
-from _lib.tasks import grade_trial  # noqa: E402
+from _lib import telemetry
+from _lib.servers import load_task
+from _lib.tasks import grade_trial
 
 DEFAULT_RECORDS = ROOT / "results" / "_inbox" / "records.jsonl"
 DEFAULT_DB = ROOT / ".m3" / "executions.sqlite"
@@ -40,7 +41,10 @@ ARGS_MAX, RESULT_MAX, FINAL_MAX = 400, 300, 1200
 
 # ---------------------------------------------------------------- loading
 
-def load_records(path: Path | str = DEFAULT_RECORDS, *, include_base: bool = False) -> list[dict]:
+
+def load_records(
+    path: Path | str = DEFAULT_RECORDS, *, include_base: bool = False
+) -> list[dict]:
     out = []
     p = Path(path)
     if not p.exists():
@@ -101,27 +105,32 @@ def task_dirs() -> dict[str, Path]:
 
 # ---------------------------------------------------------------- trace extraction
 
+
 def _result_text(entry: Any) -> str:
     value = telemetry._safe(lambda: entry.result.value)
     if value is None:
         return ""
-    return "".join(getattr(b, "text", "") or "" for b in (getattr(value, "content", None) or ()))
+    return "".join(
+        getattr(b, "text", "") or "" for b in (getattr(value, "content", None) or ())
+    )
 
 
 def trace_calls(result: Any) -> list[dict]:
     """All tool calls in order: tool, args, is_error, result text, tracker/native flags."""
     rows = []
     for e in telemetry.tool_call_entries(result):
-        args = telemetry._obs(telemetry._safe(lambda: e.arguments))
-        status = telemetry._enum(telemetry._safe(lambda: e.tool_status))
-        rows.append({
-            "tool": telemetry._obs(telemetry._safe(lambda: e.tool)) or "?",
-            "args": args if args is not None else {},
-            "is_error": status != "success",
-            "result": _result_text(e),
-            "tracker": telemetry.is_tracker_wire(e),
-            "native": telemetry.is_native(e),
-        })
+        args = telemetry._obs(telemetry._safe(lambda e=e: e.arguments))
+        status = telemetry._enum(telemetry._safe(lambda e=e: e.tool_status))
+        rows.append(
+            {
+                "tool": telemetry._obs(telemetry._safe(lambda e=e: e.tool)) or "?",
+                "args": args if args is not None else {},
+                "is_error": status != "success",
+                "result": _result_text(e),
+                "tracker": telemetry.is_tracker_wire(e),
+                "native": telemetry.is_native(e),
+            }
+        )
     return rows
 
 
@@ -135,6 +144,7 @@ def _compact(v: Any) -> str:
 
 
 # ---------------------------------------------------------------- grading
+
 
 def regrade_record(rec: dict, src: TraceSource) -> dict:
     """Re-grade one record. Returns {state, details, source, calls, rows, answer}.
@@ -152,22 +162,49 @@ def regrade_record(rec: dict, src: TraceSource) -> dict:
     else:
         rcalls = rec.get("calls") or []
         if rcalls and not all("args" in c or "arguments" in c for c in rcalls):
-            return {"state": None, "details": {}, "source": "none", "calls": [], "rows": [],
-                    "answer": rec.get("final_text")}
+            return {
+                "state": None,
+                "details": {},
+                "source": "none",
+                "calls": [],
+                "rows": [],
+                "answer": rec.get("final_text"),
+            }
         calls = [(c["tool"], c.get("args") or c.get("arguments") or {}) for c in rcalls]
         answer = rec.get("final_text")
         native = int((rec.get("tool_calls") or {}).get("native_total") or 0)
         source = "record"
     if tdir is None:
-        return {"state": None, "details": {}, "source": source, "calls": calls, "rows": rows, "answer": answer}
+        return {
+            "state": None,
+            "details": {},
+            "source": source,
+            "calls": calls,
+            "rows": rows,
+            "answer": answer,
+        }
     state, details = grade_trial(
-        tdir, rec["variant"], rec["nonce"], calls, answer,
-        outcome=rec.get("outcome", "completed"), error=rec.get("error"), native_total=native,
+        tdir,
+        rec["variant"],
+        rec["nonce"],
+        calls,
+        answer,
+        outcome=rec.get("outcome", "completed"),
+        error=rec.get("error"),
+        native_total=native,
     )
-    return {"state": state, "details": details, "source": source, "calls": calls, "rows": rows, "answer": answer}
+    return {
+        "state": state,
+        "details": details,
+        "source": source,
+        "calls": calls,
+        "rows": rows,
+        "answer": answer,
+    }
 
 
 # ---------------------------------------------------------------- markdown
+
 
 def _op_of(variant: str) -> Callable[[str], str | None]:
     try:
@@ -183,10 +220,14 @@ def render_section(rec: dict, src: TraceSource, idx: int | None = None) -> str:
     tdir = task_dirs().get(str(rec.get("task")))
     task = load_task(tdir) if tdir else {}
     band = rec.get("band") or task.get("band")
-    prompt = (task.get("prompt") or "(task.yaml not found)").replace("{nonce}", str(rec.get("nonce")))
+    prompt = (task.get("prompt") or "(task.yaml not found)").replace(
+        "{nonce}", str(rec.get("nonce"))
+    )
     op_of = _op_of(rec.get("variant", "good"))
     prefix = f"{idx}. " if idx is not None else ""
-    sg = ", ".join(f"{k}={'T' if v else 'F'}" for k, v in (rec.get("subgoals") or {}).items())
+    sg = ", ".join(
+        f"{k}={'T' if v else 'F'}" for k, v in (rec.get("subgoals") or {}).items()
+    )
     L = [
         f"## {prefix}{rec.get('task')} [{band}] variant={rec.get('variant')} "
         f"{rec.get('harness')}/{rec.get('model')} trial={rec.get('trial')} state={rec.get('state')}",
@@ -212,13 +253,27 @@ def render_section(rec: dict, src: TraceSource, idx: int | None = None) -> str:
                 f"   - result: `{_clip(r['result'].replace(chr(10), ' '), RESULT_MAX)}`",
             ]
     else:
-        L.append(f"(trace unavailable; record has {len(rec.get('calls') or [])} calls: "
-                 + ", ".join(f"{c.get('tool')}{'!' if c.get('is_error') else ''}" for c in rec.get("calls") or []) + ")")
+        L.append(
+            f"(trace unavailable; record has {len(rec.get('calls') or [])} calls: "
+            + ", ".join(
+                f"{c.get('tool')}{'!' if c.get('is_error') else ''}"
+                for c in rec.get("calls") or []
+            )
+            + ")"
+        )
     if native:
         L += ["", f"**Native (non-tracker) calls** ({len(native)})", ""]
         for r in native:
             L.append(f"- `{r['tool']}` args: `{_clip(_compact(r['args']), ARGS_MAX)}`")
-    L += ["", "**Final text**", "", "```", _clip(g["answer"] or "(none)", FINAL_MAX), "```", ""]
+    L += [
+        "",
+        "**Final text**",
+        "",
+        "```",
+        _clip(g["answer"] or "(none)", FINAL_MAX),
+        "```",
+        "",
+    ]
     if g["state"] is None:
         L.append("**Re-grade**: unavailable (no trace and record lacks call args)")
     else:
@@ -226,7 +281,9 @@ def render_section(rec: dict, src: TraceSource, idx: int | None = None) -> str:
         extra = ""
         tb = g["details"].get("grader_traceback")
         if tb:
-            extra = " (grader_traceback: " + _clip(tb.strip().splitlines()[-1], 160) + ")"
+            extra = (
+                " (grader_traceback: " + _clip(tb.strip().splitlines()[-1], 160) + ")"
+            )
         L.append(
             f"**Re-grade** ({g['source']}): recorded={rec.get('state')} regraded={g['state']} "
             f"{'MATCH' if match else 'MISMATCH'}; subgoals={_compact(g['details'].get('subgoals'))}{extra}"
@@ -237,11 +294,16 @@ def render_section(rec: dict, src: TraceSource, idx: int | None = None) -> str:
 
 # ---------------------------------------------------------------- sampling
 
-def pick_sample(records: list[dict], n: int, seed: int, fail_weight: float) -> list[dict]:
+
+def pick_sample(
+    records: list[dict], n: int, seed: int, fail_weight: float
+) -> list[dict]:
     """Deterministic: strata = (model, variant); greedy coverage of every model and variant first,
     then weighted (failures x fail_weight) sampling without replacement."""
     rng = random.Random(seed)
-    recs = sorted(records, key=lambda r: (str(r.get("execution_id")), str(r.get("nonce"))))
+    recs = sorted(
+        records, key=lambda r: (str(r.get("execution_id")), str(r.get("nonce")))
+    )
     n = min(n, len(recs))
 
     def weight(r: dict) -> float:
@@ -261,7 +323,10 @@ def pick_sample(records: list[dict], n: int, seed: int, fail_weight: float) -> l
     # phase 1: one per stratum, preferring strata that add a new model/variant
     remaining = list(keys)
     while remaining and len(chosen) < n:
-        scored = [(((k[0] not in seen_m) + (k[1] not in seen_v)), rng.random(), k) for k in remaining]
+        scored = [
+            (((k[0] not in seen_m) + (k[1] not in seen_v)), rng.random(), k)
+            for k in remaining
+        ]
         k = max(scored)[2]
         remaining.remove(k)
         r = draw(strata[k])
@@ -275,11 +340,19 @@ def pick_sample(records: list[dict], n: int, seed: int, fail_weight: float) -> l
         r = draw(pool)
         pool.remove(r)
         chosen.append(r)
-    return sorted(chosen, key=lambda r: (str(r.get("task")), str(r.get("variant")),
-                                         str(r.get("model")), r.get("trial") or 0))
+    return sorted(
+        chosen,
+        key=lambda r: (
+            str(r.get("task")),
+            str(r.get("variant")),
+            str(r.get("model")),
+            r.get("trial") or 0,
+        ),
+    )
 
 
 # ---------------------------------------------------------------- commands
+
 
 def cmd_sample(a: argparse.Namespace, src: TraceSource | None = None) -> str:
     src = src or TraceSource(db=a.db)
@@ -296,7 +369,9 @@ def cmd_sample(a: argparse.Namespace, src: TraceSource | None = None) -> str:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(head) + "\n" + "\n---\n\n".join(body), encoding="utf-8")
     loaded = sum(1 for r in picked if src.load(r.get("execution_id")) is not None)
-    print(f"wrote {out}: {len(picked)} trials, traces loaded for {loaded}/{len(picked)}")
+    print(
+        f"wrote {out}: {len(picked)} trials, traces loaded for {loaded}/{len(picked)}"
+    )
     return str(out)
 
 
@@ -315,12 +390,20 @@ def cmd_regrade(a: argparse.Namespace, src: TraceSource | None = None) -> list[d
     for rec in load_records(a.records):
         g = regrade_record(rec, src)
         regraded = g["state"] or "unavailable"
-        rows.append({
-            "execution_id": rec.get("execution_id"), "task": rec.get("task"), "variant": rec.get("variant"),
-            "harness": rec.get("harness"), "model": rec.get("model"), "trial": rec.get("trial"),
-            "recorded": rec.get("state"), "regraded": regraded, "source": g["source"],
-            "agree": g["state"] is None or g["state"] == rec.get("state"),
-        })
+        rows.append(
+            {
+                "execution_id": rec.get("execution_id"),
+                "task": rec.get("task"),
+                "variant": rec.get("variant"),
+                "harness": rec.get("harness"),
+                "model": rec.get("model"),
+                "trial": rec.get("trial"),
+                "recorded": rec.get("state"),
+                "regraded": regraded,
+                "source": g["source"],
+                "agree": g["state"] is None or g["state"] == rec.get("state"),
+            }
+        )
     REGRADE_CSV.parent.mkdir(parents=True, exist_ok=True)
     with REGRADE_CSV.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]) if rows else ["execution_id"])
@@ -328,22 +411,33 @@ def cmd_regrade(a: argparse.Namespace, src: TraceSource | None = None) -> list[d
         w.writerows(rows)
     bad = [r for r in rows if not r["agree"]]
     na = sum(1 for r in rows if r["regraded"] == "unavailable")
-    print(f"{len(rows)} records, {len(bad)} disagreements, {na} ungradable (no trace); csv: {REGRADE_CSV}")
+    print(
+        f"{len(rows)} records, {len(bad)} disagreements, {na} ungradable (no trace); csv: {REGRADE_CSV}"
+    )
     if bad:
-        print(f"{'task':5} {'variant':8} {'model':20} {'trial':>5}  recorded -> regraded   execution_id")
+        print(
+            f"{'task':5} {'variant':8} {'model':20} {'trial':>5}  recorded -> regraded   execution_id"
+        )
         for r in bad:
-            print(f"{r['task']:5} {r['variant']:8} {str(r['model']):20} {str(r['trial']):>5}  "
-                  f"{r['recorded']} -> {r['regraded']}   {r['execution_id']}")
+            print(
+                f"{r['task']:5} {r['variant']:8} {r['model']!s:20} {r['trial']!s:>5}  "
+                f"{r['recorded']} -> {r['regraded']}   {r['execution_id']}"
+            )
     return rows
 
 
 def cmd_progress(a: argparse.Namespace) -> Counter:
     recs = load_records(a.records)
-    c = Counter((r.get("harness"), r.get("model"), r.get("variant"), r.get("state")) for r in recs)
+    c = Counter(
+        (r.get("harness"), r.get("model"), r.get("variant"), r.get("state"))
+        for r in recs
+    )
     print(f"{len(recs)} task records in {a.records}")
     print(f"{'harness':12} {'model':20} {'variant':8} {'state':14} count")
-    for (h, m, v, s), n in sorted(c.items(), key=lambda kv: tuple(str(x) for x in kv[0])):
-        print(f"{str(h):12} {str(m):20} {str(v):8} {str(s):14} {n}")
+    for (h, m, v, s), n in sorted(
+        c.items(), key=lambda kv: tuple(str(x) for x in kv[0])
+    ):
+        print(f"{h!s:12} {m!s:20} {v!s:8} {s!s:14} {n}")
     return c
 
 
@@ -371,7 +465,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     a = build_parser().parse_args(argv)
-    {"sample": cmd_sample, "show": cmd_show, "regrade": cmd_regrade, "progress": cmd_progress}[a.cmd](a)
+    {
+        "sample": cmd_sample,
+        "show": cmd_show,
+        "regrade": cmd_regrade,
+        "progress": cmd_progress,
+    }[a.cmd](a)
 
 
 if __name__ == "__main__":
