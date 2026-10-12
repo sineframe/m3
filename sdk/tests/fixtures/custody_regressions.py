@@ -224,6 +224,46 @@ def standalone_exports() -> None:
         assert not symbols["members_alive"](owned.pid)
 
 
+def collector_eof() -> None:
+    original = subprocess.Popen
+
+    def launch(argv, *args, **kwargs):
+        return original(
+            [sys.executable, "-c", "import os,time; os.close(1); time.sleep(5)"],
+            *args,
+            **kwargs,
+        )
+
+    collector = custody.InventoryCollector()
+    deadline = time.monotonic() + 5
+    try:
+        with patch.object(subprocess, "Popen", launch):
+            while True:
+                try:
+                    collector.read()
+                except custody.ProcessStatusPending:
+                    pass
+                assert time.monotonic() < deadline
+                if collector.output_descriptor is None:
+                    break
+                time.sleep(0.01)
+        process = collector._process
+        assert process is not None and process.poll() is None
+        while not collector.close():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        try:
+            os.waitpid(process.pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        else:
+            raise AssertionError("status query was not reaped")
+    finally:
+        while not collector.close():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+
 if __name__ == "__main__":
     scenario = sys.argv[1]
     if scenario == "unavailable":
@@ -240,5 +280,7 @@ if __name__ == "__main__":
         missed_writer(Path(sys.argv[2]))
     elif scenario == "exports":
         standalone_exports()
+    elif scenario == "collector-eof":
+        collector_eof()
     else:
         raise ValueError("unknown custody regression")

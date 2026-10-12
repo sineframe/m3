@@ -144,6 +144,7 @@ class InventoryCollector:
             for _ in range(chunks):
                 chunk = os.read(process.stdout.fileno(), 65536)
                 if not chunk:
+                    self._readable = False
                     break
                 self._output.extend(chunk)
                 if len(self._output) > 4 * 1024 * 1024:

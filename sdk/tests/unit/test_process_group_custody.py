@@ -280,3 +280,8 @@ def test_unavailable_inventory_preserves_guardian_ownership_and_caches_one_attem
         with pytest.raises(custody.ProcessStatusUnavailable):
             shared.snapshot(pid)
     assert attempts - before == 1
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin status query")
+def test_status_query_stdout_eof_stops_selector_readiness_and_keeps_its_owner() -> None:
+    _custody_regression("collector-eof")

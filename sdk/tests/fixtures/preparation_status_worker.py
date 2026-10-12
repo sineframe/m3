@@ -75,7 +75,7 @@ def preflight() -> None:
 
 worker.validate_process_status = preflight
 
-if mode in {"slow", "exit", "malformed", "missing-owner", "stale"}:
+if mode in {"slow", "early-eof", "exit", "malformed", "missing-owner", "stale"}:
     original_popen = subprocess.Popen
     intercepted = False
     queries = 0
@@ -90,6 +90,7 @@ if mode in {"slow", "exit", "malformed", "missing-owner", "stale"}:
                 intercepted = True
                 programs = {
                     "slow": "import time; time.sleep(5)",
+                    "early-eof": "import os,time; os.close(1); time.sleep(5)",
                     "exit": "raise SystemExit(1)",
                     "malformed": "print('bad row')",
                     "missing-owner": "print('999999 999999 Z')",

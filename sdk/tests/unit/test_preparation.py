@@ -1593,8 +1593,9 @@ def test_status_failure_retains_helper_and_recovers_for_workspace_creation(
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin asynchronous ps query")
+@pytest.mark.parametrize("mode", ["slow", "early-eof"])
 def test_slow_status_query_does_not_block_start_acknowledgements_or_cancellation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
 ) -> None:
     from m3._preparation_owner import shutdown_worker_preparation
 
@@ -1610,7 +1611,7 @@ def test_slow_status_query_does_not_block_start_acknowledgements_or_cancellation
             argv = [
                 argv[0],
                 str(helper),
-                "slow",
+                mode,
                 str(tmp_path / "recover"),
                 str(query),
                 *argv[index + 1 :],
