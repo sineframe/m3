@@ -26,12 +26,16 @@ from typing import IO, Any, Literal, cast
 from ._process_group_custody import (
     ExitNotification,
     GroupInventory,
+    InventoryCollector,
+    ProcessStatusPending,
     ProcessStatusUnavailable,
     exited_status,
     fallback_exited,
     has_unreaped_status,
     ownership_supported,
     seal_group,
+    validate_capabilities,
+    validate_collected_status,
     validate_process_status,
 )
 
@@ -226,7 +230,12 @@ class _ForkJob:
     """One waitable child of the single-thread helper, with a private group."""
 
     def __init__(
-        self, function: Callable[[], None], *, output: bool, gated: bool = False
+        self,
+        function: Callable[[], None],
+        *,
+        output: bool,
+        gated: bool = False,
+        status_verified: bool = False,
     ) -> None:
         import resource
 
@@ -234,7 +243,10 @@ class _ForkJob:
             raise RuntimeError("preparation requires unreaped child ownership")
         if threading.active_count() != 1:
             raise RuntimeError("preparation helper must remain single-threaded")
-        validate_process_status()
+        if status_verified:
+            validate_capabilities()
+        else:
+            validate_process_status()
         read_fd, write_fd = os.pipe()
         gate_read, gate_write = os.pipe()
         ready_read, ready_write = os.pipe()
@@ -276,7 +288,7 @@ class _ForkJob:
             except BaseException:
                 os._exit(1)
         try:
-            if not has_unreaped_status() and sys.platform == "darwin":
+            if not has_unreaped_status() and not sys.platform.startswith("linux"):
                 self._exit_notification = ExitNotification(self.pid)
         except BaseException:
             # Even ungated callers cannot start their function until exit
@@ -393,7 +405,7 @@ def _fork_job(
             sent = os.write(1, view)
             view = view[sent:]
 
-    return _ForkJob(execute, output=True, gated=True)
+    return _ForkJob(execute, output=True, gated=True, status_verified=True)
 
 
 @dataclass
@@ -431,6 +443,8 @@ def _supervise(
     from .workspace import WorkspaceManager
 
     del WorkspaceManager
+    collector = InventoryCollector()
+    status_failures = 0
     selector = selectors.DefaultSelector()
     os.set_blocking(sys.stdin.fileno(), False)
     os.set_blocking(sys.stdout.fileno(), False)
@@ -467,6 +481,7 @@ def _supervise(
             lambda: _remove(job.root, job.cleanup_source),
             output=False,
             gated=True,
+            status_verified=True,
         )
         job.process = process
         job.state = "removing"
@@ -636,8 +651,16 @@ def _supervise(
             job.stream_open = False
 
     def progress_jobs() -> None:
+        nonlocal status_available, status_failures
         now = time.monotonic()
-        inventory = GroupInventory()
+        inventory = GroupInventory(collector)
+        if not status_available:
+            try:
+                validate_collected_status(inventory.read())
+                status_available = True
+                status_failures = 0
+            except (ProcessStatusPending, ProcessStatusUnavailable):
+                pass
         for ident, job in tuple(jobs.items()):
             if job.state == "released":
                 if not controller_open:
@@ -647,7 +670,12 @@ def _supervise(
                 # Provisional acceptance is not publication. Only release
                 # transfers ownership; EOF fences unreleased material.
                 continue
-            job.process.poll(inventory)
+            try:
+                job.process.poll(inventory)
+            except (ProcessStatusPending, ProcessStatusUnavailable):
+                # Unknown status never permits publication or retirement. Keep
+                # processing controller requests and TERM/KILL deadlines.
+                pass
             exited = job.process.exited
             alive = job.process.alive()
             if job.state == "running" and exited and not job.stream_open:
@@ -705,6 +733,19 @@ def _supervise(
                     job.killed = True
             if len(outgoing) > MAX_FRAME * 2:
                 raise ValueError("preparation output exceeds limit")
+        if inventory.failed:
+            status_failures += 1
+            if status_failures >= 3:
+                status_available = False
+                for job in jobs.values():
+                    if job.state == "running":
+                        emit(job.ident, "failed", reason="process_status_unavailable")
+                        stop(job)
+                    elif job.state == "removing":
+                        emit(job.ident, "cleanup_failed")
+                        stop(job)
+        elif inventory.completed:
+            status_failures = 0
 
     def flush_events() -> None:
         nonlocal controller_open, ownership_open
@@ -724,7 +765,19 @@ def _supervise(
     try:
         while controller_open or jobs or outgoing:
             flush_events()
-            for key, _mask in selector.select(timeout=0.02):
+            status_descriptor = collector.output_descriptor
+            if status_descriptor is not None:
+                selector.register(status_descriptor, selectors.EVENT_READ, "status")
+            try:
+                events = selector.select(timeout=0.02)
+            finally:
+                # Unregister before handling frames: collecting a finished query
+                # closes this FD, and a newly forked job may reuse its number.
+                if status_descriptor is not None:
+                    selector.unregister(status_descriptor)
+            for key, _mask in events:
+                if key.data == "status":
+                    continue
                 if key.data == "ownership":
                     read_ownership_acknowledgements()
                 elif key.data == "controller":
@@ -739,6 +792,10 @@ def _supervise(
         # groups, retain roots (no deletion while writer death is uncertain).
         for job in jobs.values():
             job.process.signal(signal.SIGKILL)
+        # A read-only status child can still be stuck in kernel IO. Keep its
+        # waitable owner alive; controller teardown retains its bounded return.
+        while not collector.close():
+            time.sleep(0.02)
         selector.close()
         if ownership_fd is not None:
             os.close(ownership_fd)

@@ -1497,3 +1497,235 @@ def test_completed_linux_workspace_is_published_after_group_sealing(
             await supervisor.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "transient",
+        "startup",
+        "persistent",
+        pytest.param(
+            "invalid-owner",
+            marks=pytest.mark.skipif(
+                not sys.platform.startswith("linux"),
+                reason="Linux inventory validation",
+            ),
+        ),
+        pytest.param(
+            "missing-leader",
+            marks=pytest.mark.skipif(
+                not sys.platform.startswith("linux"),
+                reason="Linux inventory validation",
+            ),
+        ),
+        *[
+            pytest.param(
+                value,
+                marks=pytest.mark.skipif(
+                    sys.platform != "darwin", reason="Darwin ps collector"
+                ),
+            )
+            for value in ("exit", "malformed", "missing-owner")
+        ],
+    ],
+)
+def test_status_failure_retains_helper_and_recovers_for_workspace_creation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+) -> None:
+    from m3._preparation_owner import shutdown_worker_preparation
+    from m3.preparation import PreparationError
+
+    shutdown_worker_preparation()
+    recover = tmp_path / "recover"
+    queried = tmp_path / "queried"
+    helper = Path(__file__).parents[1] / "fixtures" / "preparation_status_worker.py"
+    original = subprocess.Popen
+
+    def launch(argv, *args, **kwargs):
+        if isinstance(argv, list) and "m3._preparation_worker" in argv:
+            index = argv.index("m3._preparation_worker")
+            argv = [
+                argv[0],
+                str(helper),
+                mode,
+                str(recover),
+                str(queried),
+                *argv[index + 1 :],
+            ]
+        return original(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+
+    async def run() -> None:
+        supervisor = PreparationSupervisor()
+        manager = WorkspaceManager(WorkspacePolicy(), "status")
+        try:
+            if mode in {"startup", "persistent", "invalid-owner", "missing-leader"}:
+                with pytest.raises(PreparationError, match="process status backend"):
+                    await manager.create_async(
+                        supervisor, deadline=time.monotonic() + 5
+                    )
+                helper_pid = supervisor.helper_pid
+                assert helper_pid is not None
+                assert supervisor._worker is not None and not supervisor._worker.failed
+                recover.touch()
+                if mode == "startup":
+                    await _until(queried.exists)
+                else:
+                    await _until(lambda: not supervisor._jobs)
+                manager = WorkspaceManager(WorkspacePolicy(), "recovered")
+            root = await manager.create_async(supervisor, deadline=time.monotonic() + 5)
+            assert root.is_dir()
+            assert not supervisor.quarantined_roots
+            if mode in {"exit", "malformed", "missing-owner"}:
+                times = [float(line) for line in queried.read_text().splitlines()]
+                assert len(times) >= 2
+                assert times[1] - times[0] >= 0.3
+            manager.cleanup()
+            assert not root.exists()
+        finally:
+            manager.cleanup()
+            await supervisor.close()
+            shutdown_worker_preparation()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin asynchronous ps query")
+def test_slow_status_query_does_not_block_start_acknowledgements_or_cancellation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from m3._preparation_owner import shutdown_worker_preparation
+
+    shutdown_worker_preparation()
+    query = tmp_path / "query"
+    ready = tmp_path / "writer"
+    helper = Path(__file__).parents[1] / "fixtures" / "preparation_status_worker.py"
+    original = subprocess.Popen
+
+    def launch(argv, *args, **kwargs):
+        if isinstance(argv, list) and "m3._preparation_worker" in argv:
+            index = argv.index("m3._preparation_worker")
+            argv = [
+                argv[0],
+                str(helper),
+                "slow",
+                str(tmp_path / "recover"),
+                str(query),
+                *argv[index + 1 :],
+            ]
+        return original(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+
+    async def run() -> None:
+        supervisor = PreparationSupervisor(stop_seconds=0)
+        manager = WorkspaceManager(WorkspacePolicy(), "slow-query")
+        first = asyncio.create_task(
+            manager.create_async(supervisor, deadline=time.monotonic() + 5)
+        )
+        await _until(query.exists)
+        program = (
+            "import os,signal,time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            f"Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(60)"
+        )
+        pending = asyncio.create_task(
+            supervisor.prepare("command", {"argv": [sys.executable, "-c", program]})
+        )
+        try:
+            before = time.monotonic()
+            await _until(ready.exists)
+            assert time.monotonic() - before < 0.5
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            pid = int(ready.read_text())
+            await _until(lambda: not _exists(pid))
+            root = await first
+            assert root.is_dir()
+            manager.cleanup()
+            await _until(lambda: not supervisor._jobs)
+        finally:
+            for task in (first, pending):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(first, pending, return_exceptions=True)
+            manager.cleanup()
+            await supervisor.close()
+            shutdown_worker_preparation()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin asynchronous inventory")
+def test_snapshot_started_before_new_child_does_not_count_as_backend_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from m3._preparation_owner import shutdown_worker_preparation
+
+    shutdown_worker_preparation()
+    release = tmp_path / "release"
+    query = tmp_path / "query"
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "sample").write_text("complete")
+    helper = Path(__file__).parents[1] / "fixtures" / "preparation_status_worker.py"
+    original = subprocess.Popen
+
+    def launch(argv, *args, **kwargs):
+        if isinstance(argv, list) and "m3._preparation_worker" in argv:
+            index = argv.index("m3._preparation_worker")
+            argv = [
+                argv[0],
+                str(helper),
+                "stale",
+                str(release),
+                str(query),
+                *argv[index + 1 :],
+            ]
+        return original(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+
+    async def run() -> None:
+        supervisor = PreparationSupervisor()
+        first = WorkspaceManager(WorkspacePolicy(), "before-snapshot")
+        second = WorkspaceManager(
+            WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)),
+            "after-snapshot",
+        )
+        before = asyncio.create_task(
+            first.create_async(supervisor, deadline=time.monotonic() + 5)
+        )
+        after = None
+        try:
+            await _until(query.with_suffix(".captured").exists)
+            after = asyncio.create_task(
+                second.create_async(supervisor, deadline=time.monotonic() + 5)
+            )
+            await _until(
+                lambda: any(
+                    (job.root / "payload" / "sample").exists()
+                    for job in supervisor._jobs.values()
+                )
+            )
+            release.touch()
+            roots = await asyncio.gather(before, after)
+            assert roots[0].is_dir()
+            assert (roots[1] / "sample").read_text() == "complete"
+            assert not supervisor.quarantined_roots
+        finally:
+            release.touch()
+            tasks = [before] + ([after] if after is not None else [])
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            first.cleanup()
+            second.cleanup()
+            await supervisor.close()
+            shutdown_worker_preparation()
+
+    asyncio.run(run())

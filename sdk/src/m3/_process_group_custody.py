@@ -7,6 +7,7 @@ import select
 import signal
 import subprocess
 import sys
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -67,30 +68,185 @@ def _inventory() -> dict[int, tuple[int, bytes]]:
         )
         if result_ps.returncode:
             raise ProcessStatusUnavailable("process inventory command failed")
-        result = {}
-        for line in result_ps.stdout.splitlines():
-            member, group, state = line.split()
-            result[int(member)] = (int(group), state)
-        return result
+        return _parse_inventory(result_ps.stdout)
     except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
         raise ProcessStatusUnavailable("process inventory is unavailable") from error
 
 
-class GroupInventory:
-    """One lazy inventory shared by all exited jobs in a supervisor tick."""
+class ProcessStatusPending(Exception):
+    """A waitable status query has not produced a fresh inventory yet."""
+
+
+class InventoryCollector:
+    """Read Darwin ps without blocking controller frames or job cancellation."""
 
     def __init__(self) -> None:
+        self._process: subprocess.Popen[bytes] | None = None
+        self._output = bytearray()
+        self._started = 0.0
+        self._retry_at = 0.0
+        self._failed = False
+        self._readable = False
+
+    def read(self) -> dict[int, tuple[int, bytes]]:
+        if sys.platform.startswith("linux"):
+            entries = _inventory()
+            validate_collected_status(entries)
+            return entries
+        now = time.monotonic()
+        if self._process is None:
+            self._start(now)
+        process = self._process
+        assert process is not None
+        self._consume(chunks=4)
+        if now - self._started >= 1 or self._failed:
+            self._failed = True
+            if process.poll() is None:
+                process.kill()
+        status = process.poll()
+        if status is None:
+            raise ProcessStatusPending
+        return self._finish(now, status)
+
+    def _start(self, now: float) -> None:
+        if now < self._retry_at:
+            raise ProcessStatusPending
+        self._started = now
+        self._failed = False
+        self._readable = False
+        self._output.clear()
+        try:
+            self._process = subprocess.Popen(
+                ["/bin/ps", "-axo", "pid=,pgid=,stat="],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                env=dict(os.environ, COMMAND_MODE="unix2003"),
+            )
+            assert self._process.stdout is not None
+            os.set_blocking(self._process.stdout.fileno(), False)
+            self._readable = True
+        except OSError as error:
+            if self._process is not None:
+                self._failed = True
+                self._process.kill()
+                return  # Report failure once, after this query is reaped.
+            self._retry_at = now + 0.3
+            raise ProcessStatusUnavailable(
+                "process inventory is unavailable"
+            ) from error
+
+    def _consume(self, *, chunks: int) -> None:
+        process = self._process
+        assert process is not None and process.stdout is not None
+        if not self._readable:
+            return
+        try:
+            for _ in range(chunks):
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                self._output.extend(chunk)
+                if len(self._output) > 4 * 1024 * 1024:
+                    self._failed = True
+                    break
+        except BlockingIOError:
+            pass
+        except OSError:
+            self._failed = True
+
+    def _finish(self, now: float, status: int) -> dict[int, tuple[int, bytes]]:
+        process = self._process
+        assert process is not None and process.stdout is not None
+        # Drain the bounded remaining output after the child was reaped.
+        self._consume(chunks=65)
+        process.stdout.close()
+        self._process = None
+        if status or self._failed:
+            self._retry_at = now + 0.3
+            raise ProcessStatusUnavailable("process inventory command failed")
+        try:
+            entries = _parse_inventory(bytes(self._output))
+            validate_collected_status(entries)
+            return entries
+        except (ValueError, IndexError, ProcessStatusUnavailable) as error:
+            self._retry_at = now + 0.3
+            raise ProcessStatusUnavailable(
+                "process inventory is unavailable"
+            ) from error
+
+    @property
+    def output_descriptor(self) -> int | None:
+        process = self._process
+        if process is None or process.stdout is None or not self._readable:
+            return None
+        return process.stdout.fileno()
+
+    def close(self) -> bool:
+        process = self._process
+        if process is None:
+            return True
+        if process.poll() is None:
+            process.kill()
+            return False
+        if process.stdout is not None:
+            process.stdout.close()
+        self._process = None
+        return True
+
+
+def _parse_inventory(output: bytes) -> dict[int, tuple[int, bytes]]:
+    entries = {}
+    for line in output.splitlines():
+        member, group, state = line.split()
+        entries[int(member)] = (int(group), state)
+    return entries
+
+
+class GroupInventory:
+    """One lazy inventory, including a failed query, shared by a helper tick."""
+
+    def __init__(self, collector: InventoryCollector | None = None) -> None:
+        self._collector = collector
         self._entries: dict[int, tuple[int, bytes]] | None = None
+        self.failed = False
+        self._pending = False
+
+    def read(self) -> dict[int, tuple[int, bytes]]:
+        if self.failed:
+            raise ProcessStatusUnavailable("process inventory is unavailable")
+        if self._pending:
+            raise ProcessStatusPending
+        if self._entries is None:
+            try:
+                self._entries = (
+                    self._collector.read() if self._collector else _inventory()
+                )
+            except ProcessStatusUnavailable:
+                self.failed = True
+                raise
+            except ProcessStatusPending:
+                self._pending = True
+                raise
+        return self._entries
+
+    @property
+    def completed(self) -> bool:
+        return self._entries is not None
 
     def snapshot(self, pid: int) -> tuple[bool, bool]:
-        if self._entries is None:
-            self._entries = _inventory()
-        leader = self._entries.get(pid)
+        entries = self.read()
+        leader = entries.get(pid)
         if leader is None:
+            if self._collector is not None and not sys.platform.startswith("linux"):
+                # This child may have been forked after an asynchronous query
+                # began. Wait for a new inventory instead of treating it as a
+                # failed backend or abandoning its waitable identity.
+                raise ProcessStatusPending
+            self.failed = True
             raise ProcessStatusUnavailable("reserved process leader is missing")
         return leader[1].startswith(b"Z"), any(
             member != pid and group == pid and not state.startswith(b"Z")
-            for member, (group, state) in self._entries.items()
+            for member, (group, state) in entries.items()
         )
 
 
@@ -109,7 +265,7 @@ def members_alive(pid: int) -> bool:
 
 
 @lru_cache(maxsize=1)
-def validate_process_status() -> None:
+def validate_capabilities() -> None:
     if sys.platform.startswith("linux"):
         try:
             mounts = Path("/proc/self/mountinfo").read_text()
@@ -135,12 +291,20 @@ def validate_process_status() -> None:
             raise ProcessStatusUnavailable(
                 "process inventory protection is unknown"
             ) from error
-    entries = _inventory()
-    if os.getpid() not in entries:
-        raise ProcessStatusUnavailable("process inventory cannot observe its owner")
     if not has_unreaped_status() and not sys.platform.startswith("linux"):
         if not hasattr(select, "kqueue"):
             raise ProcessStatusUnavailable("unreaped exit notification is unavailable")
+
+
+def validate_collected_status(entries: dict[int, tuple[int, bytes]]) -> None:
+    validate_capabilities()
+    if os.getpid() not in entries:
+        raise ProcessStatusUnavailable("process inventory cannot observe its owner")
+
+
+@lru_cache(maxsize=1)
+def validate_process_status() -> None:
+    validate_collected_status(_inventory())
 
 
 class ExitNotification:

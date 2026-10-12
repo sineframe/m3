@@ -7,8 +7,11 @@ on:
       - 'sdk/src/m3/_preparation_worker.py'
       - 'sdk/src/m3/_preparation_owner.py'
       - 'sdk/src/m3/preparation.py'
+      - 'sdk/src/m3/workspace.py'
       - 'sdk/tests/unit/test_process_group_custody.py'
       - 'sdk/tests/unit/test_preparation.py'
+      - 'sdk/tests/fixtures/custody_regressions.py'
+      - 'sdk/tests/fixtures/preparation_status_worker.py'
       - '.github/workflows/preparation-custody.yml'
   workflow_dispatch:
 
