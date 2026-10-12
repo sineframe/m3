@@ -1006,8 +1006,8 @@ async def test_custom_adapter_captured_private_identity_never_leaks_in_policy_re
         item for item in violations if item["reason"] == "tool_identity_invalid"
     )
     assert invalid["tool"] == "unavailable"
-    # Without a writer registry existing wire capture itself retains native
-    # tool text; B newly derived policy evidence must still fail closed.
+    # Unknown wire values remain unchanged without a writer registry.
+    # Derived policy violations must still withhold private identities.
     for event in store.events(recorder.execution_id):
         if event.kind is EventKind.TURN_STATE_CHANGED or event.payload.get(
             "policy_violation"
