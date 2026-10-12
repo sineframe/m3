@@ -1043,14 +1043,15 @@ async def test_codex_thread_start_error_keeps_mcp_reason_without_credentials(
 
 
 @pytest.mark.asyncio
-async def test_codex_thread_start_reason_redacts_endpoint_and_multiline_credentials(
+async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The capture proxy copies the upstream query into the URL Codex
-    # receives; Codex quotes that URL mid-sentence when the transport fails.
+    # The capture proxy copies the upstream path and query into the URL Codex
+    # receives (a Zapier-style key is a path segment); Codex quotes that URL
+    # mid-sentence when the transport fails.
     monkeypatch.setenv("TOKEN_LIMIT", "1")
     pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
-    endpoint = "http://127.0.0.1:5555/mcp?k=QUERY-CANARY&api_key=KEY-CANARY"
+    endpoint = "http://127.0.0.1:5555/api/mcp/s/ZapPathCanary/mcp?k=QUERY-CANARY"
     remote = HarnessServerConfig(
         key="remote",
         transport=TransportKind.STREAMABLE_HTTP,
@@ -1059,31 +1060,46 @@ async def test_codex_thread_start_reason_redacts_endpoint_and_multiline_credenti
         connection_id="remote-connection",
         endpoint=endpoint,
     )
+    environment = {
+        "PRIVATE_KEY": pem,
+        # Known credential, however short and numeric.
+        "API_TOKEN": "4821",
+        # A name the sensitive-key pattern misses.
+        "GITHUB_PAT": "ghp_literal_canary",
+        "MODE": "stream",
+    }
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
     launch = _launch(
         Codex(model="fixture", executable=str(CODEX_FIXTURE)),
-        configurations=(
-            remote,
-            _mcp_configuration("fs", environment={"PRIVATE_KEY": pem}),
-        ),
+        configurations=(remote, _mcp_configuration("fs", environment=environment)),
     )
     process = _ThreadStartErrorProcess(
         {
             "code": -32603,
             "message": (
                 "required MCP servers failed to initialize: remote: error sending "
-                f"request for url ({endpoint}), expected id 1; fs: bad key {pem}"
+                f"request for url ({endpoint}), expected id 1; fs: bad key {pem}, "
+                "pin 4821, pat ghp_literal_canary, stream closed"
             ),
         }
     )
     with pytest.raises(HarnessStartupError) as exc_info:
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
     message = str(exc_info.value)
-    for canary in ("QUERY-CANARY", "KEY-CANARY", "MIIE-CANARY"):
+    for canary in (
+        "ZapPathCanary",
+        "QUERY-CANARY",
+        "MIIE-CANARY",
+        "4821",
+        "ghp_literal_canary",
+    ):
         assert canary not in message
-    # TOKEN_LIMIT=1 is not a credential; the reason stays readable.
-    assert "error sending request for url (http://127.0.0.1:5555/mcp?" in message
-    assert "expected id 1; fs: bad key [REDACTED]" in message
+    # Non-credentials (TOKEN_LIMIT=1, MODE=stream) leave the reason readable.
+    assert message.endswith(
+        "remote: error sending request for url (http://127.0.0.1:5555/…), "
+        "expected id 1; fs: bad key [REDACTED], pin [REDACTED], "
+        "pat [REDACTED], stream closed"
+    )
 
 
 @pytest.mark.asyncio

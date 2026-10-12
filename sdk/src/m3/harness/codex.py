@@ -42,7 +42,7 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnRequest,
 )
-from .native import configuration_secrets, probe_help
+from .native import launch_secrets, probe_help
 from .observations import (
     HarnessObservation,
     InteractionObservedObservation,
@@ -931,20 +931,23 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         )
 
     def _redacted_reason(
-        self, text: str, launch: HarnessLaunch, explicit: Sequence[str] = ()
+        self, text: str, launch: HarnessLaunch, known: Sequence[str] = ()
     ) -> str | None:
-        """Return Codex's error text with known credentials redacted.
+        """Return Codex's error text with credentials redacted.
 
-        Redaction covers the adapter's runtime secrets, credentials written
-        into the MCP configurations (endpoint URLs included) and ``explicit``
-        values. It runs on the raw text, because normalizing whitespace first
-        would stop a secret containing whitespace from matching, and before
-        any cut, so a cut cannot split a secret.
+        Always redacted: the adapter's runtime secrets, values the capture
+        manager resolved, sensitive-named literal MCP values and ``known``.
+        Other literal MCP values are redacted when they could be credentials,
+        and embedded URLs are reduced to their origin. Redaction runs on the
+        raw text, because normalizing whitespace first would stop a secret
+        containing whitespace from matching, and before any cut, so a cut
+        cannot split a secret.
         """
 
+        secrets = launch_secrets(launch)
         config = native_text_redaction(
-            self._runtime_secrets | configuration_secrets(launch.configurations),
-            explicit=explicit,
+            (*self._runtime_secrets, *secrets.known, *known),
+            guessed=secrets.guessed,
         )
         redacted = redact_native_text(text, config)[:_REASON_SCAN_LIMIT]
         reason = _collapse_repeated_chain(" ".join(redacted.split()))
