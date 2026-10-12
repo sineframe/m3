@@ -26,6 +26,161 @@ from m3.workspace import WorkspaceError, WorkspaceManager
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "temporary", "sqlite"])
+async def test_owned_capture_preserves_artifacts_and_redaction(
+    tmp_path: Path, backend: str
+) -> None:
+    from m3.storage import InMemoryArtifactStore, TemporaryArtifactStore
+    from m3.storage.sqlite import SQLiteExecutionStore
+    from m3.trace.redaction import RedactionConfig
+    from m3.types import ExecutionState
+
+    config = RedactionConfig(
+        secrets=frozenset({"private-code-ALPHA"}), include_environment=False
+    )
+    execution_id = ExecutionId("capture-test")
+    persistent = None
+    if backend == "sqlite":
+        persistent = SQLiteExecutionStore(tmp_path / "results.sqlite", config=config)
+        persistent.create(ExecutionState(execution_id=execution_id))
+        store = persistent.artifacts
+    elif backend == "temporary":
+        store = TemporaryArtifactStore(tmp_path / "artifacts", config=config)
+    else:
+        store = InMemoryArtifactStore(config=config)
+    manager = WorkspaceManager(
+        WorkspacePolicy(),
+        execution_id,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=store,
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    (root / "output.txt").write_text("code: private-code-ALPHA")
+    try:
+        capture = await manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+        )
+        assert [entry.path for entry in capture.diff.added] == ["output.txt"]
+        assert len(capture.artifacts) == 1
+        assert capture.artifacts[0].execution_id == execution_id
+        content = store.get(capture.artifacts[0])
+        assert b"private-code-ALPHA" not in content
+        assert b"code:" in content
+        assert (
+            await manager.capture_async(
+                ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+            )
+            is capture
+        )
+    finally:
+        await manager.cleanup_async(deadline=time.monotonic() + 5)
+        if persistent is not None:
+            persistent.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_capture_streams_artifact_larger_than_private_frame_limit(
+    tmp_path: Path,
+) -> None:
+    from m3.storage import InMemoryArtifactStore
+    from m3.trace.redaction import RedactionConfig
+
+    store = InMemoryArtifactStore(config=RedactionConfig(include_environment=False))
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("large.bin",),
+        artifact_store=store,
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    content = os.urandom(13 * 1024 * 1024)
+    (root / "large.bin").write_bytes(content)
+    try:
+        capture = await manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+        )
+        assert store.get(capture.artifacts[0]) == content
+    finally:
+        await manager.cleanup_async(deadline=time.monotonic() + 5)
+
+
+@pytest.mark.asyncio
+async def test_owned_capture_rejects_custom_artifact_hooks_before_workspace_creation(
+    tmp_path: Path,
+) -> None:
+    from m3.errors import UnsupportedFeature
+    from m3.storage import InMemoryArtifactStore
+
+    class CustomStore(InMemoryArtifactStore):
+        def put(self, *args: object, **kwargs: object) -> Any:
+            pytest.fail("custom artifact hook was invoked")
+
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=CustomStore(),
+    )
+    with pytest.raises(UnsupportedFeature, match="built-in artifact store"):
+        await manager.create_async(deadline=time.monotonic() + 5)
+    assert manager._root is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_blocked_capture_returns_on_deadline_without_publishing_artifacts(
+    tmp_path: Path, blocked_helper: Any, cancel: bool
+) -> None:
+    from m3._bootstrap_operations import PrivateOperationError
+    from m3.storage import InMemoryArtifactStore
+
+    _, _, marker, _, _ = blocked_helper("workspace_capture")
+    store = InMemoryArtifactStore()
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=store,
+    )
+    root = manager.create()
+    (root / "output.txt").write_text("unaccepted")
+    started = time.monotonic()
+    pending = asyncio.create_task(
+        manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=started + (5 if cancel else 0.5)
+        )
+    )
+    if cancel:
+
+        async def wait_until_blocked() -> None:
+            while not marker.exists():
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(wait_until_blocked(), timeout=1)
+        pending.cancel()
+    with pytest.raises(
+        (asyncio.TimeoutError, PrivateOperationError, asyncio.CancelledError)
+    ):
+        await pending
+    assert time.monotonic() - started < 1.5
+    assert marker.exists()
+    assert manager.captured is None
+    assert tuple(store.iter_refs()) == ()
+    assert manager._capture_operations is not None
+    await asyncio.to_thread(
+        manager._capture_operations.close, deadline=time.monotonic() + 3
+    )
+    assert manager._capture_operations.cleanup_complete
+    assert tuple(store.iter_refs()) == ()
+    await manager.cleanup_async(deadline=time.monotonic() + 5)
+    assert not root.exists()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kind", [WorkspaceKind.COPY, WorkspaceKind.READ_ONLY, WorkspaceKind.IN_PLACE]
 )

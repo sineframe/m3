@@ -19,10 +19,13 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from ._preparation_owner import PreparationWorker, worker_preparation
+
+if TYPE_CHECKING:
+    from ._workspace_operations import CapturedWorkspace
 
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_FRAME = 12 * 1024 * 1024
@@ -141,6 +144,7 @@ class _PrivateResult:
     value: PrivateBytes | None = field(default=None, repr=False)
     channel: socket.socket | None = field(default=None, repr=False)
     absent: bool = False
+    workspace_capture: CapturedWorkspace | None = field(default=None, repr=False)
 
 
 def _decode_result(
@@ -413,6 +417,10 @@ def execute_private_operation(
                 from ._workspace_operations import cleanup_workspace
 
                 cleanup_workspace(request)
+            elif operation == "private_workspace_capture":
+                from ._workspace_operations import capture_workspace
+
+                capture_workspace(request, channel, deadline)
             else:
                 raise PrivateOperationError("unsupported private bootstrap operation")
             _send_private(
@@ -564,8 +572,14 @@ class OwnedBootstrapOperations:
             _send_private(
                 local, {"version": 1, "deadline": deadline, **payload}, deadline
             )
+            workspace_capture = None
+            if operation == "private_workspace_capture":
+                from ._workspace_operations import receive_workspace_capture
+
+                workspace_capture = receive_workspace_capture(local, deadline)
             frame, descriptor = _receive_private(local, deadline)
             result = _decode_result(operation, root, frame, descriptor)
+            result.workspace_capture = workspace_capture
             descriptor = None
             _acknowledge_handle(local, result, deadline)
             self._wait(job, "ready", deadline)
@@ -684,6 +698,13 @@ class OwnedBootstrapOperations:
     def remove_workspace(self, payload: dict[str, Any], *, deadline: float) -> None:
         self._run("private_workspace_cleanup", payload, deadline)
 
+    def capture_workspace(
+        self, payload: dict[str, Any], *, deadline: float
+    ) -> CapturedWorkspace:
+        result = self._run("private_workspace_capture", payload, deadline)
+        assert result.workspace_capture is not None
+        return result.workspace_capture
+
     def close(self, *, deadline: float) -> None:
         with _closed_owners_lock:
             _closed_owners[id(self)] = self
@@ -694,7 +715,13 @@ class OwnedBootstrapOperations:
                 with _closed_owners_lock:
                     _closed_owners.pop(id(self), None)
 
-    def _close_owned(self, deadline: float) -> None:
+    def cancel_pending(self) -> None:
+        """Fence pending jobs immediately, retaining their owner for teardown."""
+        with _closed_owners_lock:
+            _closed_owners[id(self)] = self
+        self._fence_jobs()
+
+    def _fence_jobs(self) -> None:
         with self._condition:
             self._closed = True
             jobs = tuple(self._jobs.items())
@@ -713,6 +740,10 @@ class OwnedBootstrapOperations:
                     except (RuntimeError, ValueError):
                         pass
             self._condition.notify_all()
+
+    def _close_owned(self, deadline: float) -> None:
+        self._fence_jobs()
+        with self._condition:
             resources = tuple(self._resources)
         for resource in resources:
             with self._condition:
