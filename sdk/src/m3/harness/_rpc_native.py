@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from pydantic import JsonValue
@@ -60,6 +60,7 @@ from .native import (
     _executable,
     _isolated_environment,
     read_bounded_line,
+    startup_spawn_options,
     workspace_for_launch,
 )
 from .observations import (
@@ -69,6 +70,11 @@ from .observations import (
     RawFrameObservation,
     TurnEvidence,
 )
+
+if TYPE_CHECKING:
+    from ._launch_credentials import LaunchCredentialBundle, NativeCredentialMaterial
+    from ._native_preparation import NativePreparation
+    from .admission import StartupLease
 
 
 def _json_safe(value: Any, *, limit: int = 8_388_608) -> JsonValue | None:
@@ -103,11 +109,24 @@ class JsonRpcProcess:
         environment: Mapping[str, str] | None = None,
         cwd: Path | None = None,
         root: Path | None = None,
+        startup_lease: StartupLease | None = None,
+        owned_startup: bool = False,
+        startup_deadline: float | None = None,
+        prepared: bool = False,
     ) -> None:
         self.root = root or Path(tempfile.mkdtemp(prefix="m3-native-"))
         self.owner = ProcessOwner(self.root)
-        env = _isolated_environment(self.root, environment)
-        await self.owner.spawn([self.executable, *self.argv], env, cwd=cwd)
+        env = _isolated_environment(self.root, environment, prepared=prepared)
+        await self.owner.spawn(
+            [self.executable, *self.argv],
+            env,
+            cwd=cwd,
+            **startup_spawn_options(
+                startup_lease,
+                owned_startup=owned_startup,
+                startup_deadline=startup_deadline,
+            ),
+        )
         self._reader = asyncio.create_task(self._read_stdout())
 
     async def _read_stdout(self) -> None:
@@ -164,14 +183,16 @@ class JsonRpcProcess:
     async def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         if self.owner is not None:
             await self.owner.close()
         if self._reader is not None:
             self._reader.cancel()
             await asyncio.gather(self._reader, return_exceptions=True)
-        if self.root is not None:
+        if self.root is not None and (
+            self.owner is None or self.owner._owned_preparation is None
+        ):
             shutil.rmtree(self.root, ignore_errors=True)
+        self._closed = True
 
 
 class NativeRPCSession(NativeSessionBase):
@@ -238,6 +259,9 @@ class NativeRPCAdapter:
     ) -> None:
         self.executable = _executable(executable, self.executable_name)
         self.environment = dict(environment or {})
+        self._resolver_environment = environment
+        self._credential_source: HarnessLaunch | None = None
+        self._prepared_credentials: LaunchCredentialBundle | None = None
         self._capabilities = HarnessAdapterCapabilities(
             name=self.harness_kind,
             supports_streaming=True,
@@ -247,6 +271,9 @@ class NativeRPCAdapter:
         self._launch: HarnessLaunch | None = None
         self._session: NativeRPCSession | None = None
         self._process: JsonRpcProcess | None = None
+        self._failed_preparation: NativePreparation | None = None
+        self._startup_cleanup_failed = False
+        self._startup_cleanup_task: asyncio.Task[None] | None = None
         self._cancel_requested = False
         self._terminal_status: Literal["failed", "cancelled", "interrupted"] | None = (
             None
@@ -274,7 +301,9 @@ class NativeRPCAdapter:
         return self._capabilities.supported_content_kinds
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        if (
+        from ._native_preparation import owned_native_preparation
+
+        if not owned_native_preparation(launch) and (
             shutil.which(self.executable) is None
             and not Path(self.executable).is_file()
         ):
@@ -319,7 +348,9 @@ class NativeRPCAdapter:
                 for config in launch.configurations
                 if config.available
             )
-            enforcement = getattr(launch.capture, "enforces_portable_policy", None)
+            enforcement = getattr(launch.capture, "can_enforce_portable_policy", None)
+            if not callable(enforcement):
+                enforcement = getattr(launch.capture, "enforces_portable_policy", None)
             if not callable(enforcement) or not enforcement(available_connections):
                 return self._capabilities.readiness(
                     ready=False, reason="tool_policy_unsupported"
@@ -344,23 +375,131 @@ class NativeRPCAdapter:
             self._capabilities = replace(self._capabilities, supports_tool_policy=True)
         return self._capabilities.readiness()
 
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._launch_credentials import activate_native_launch
+
+        source = launch
+        if launch._credentials is None:
+            launch = replace(
+                launch, _credentials=self._credentials_for_preparation(launch)
+            )
+        effective = await activate_native_launch(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+        )
+        self._credential_source = source
+        self._prepared_credentials = effective._credentials
+        return effective
+
+    def _credentials_for_preparation(
+        self, launch: HarnessLaunch, *, material: NativeCredentialMaterial | None = None
+    ) -> LaunchCredentialBundle:
+        """Retain compatibility with direct native environment preparation."""
+
+        from ._launch_credentials import collect_native_credentials
+
+        if launch._credentials is not None:
+            launch._credentials.validate_selection(launch)
+            launch._credentials.validate_inputs(
+                launch.configurations,
+                effective=launch._credentials.effective_inputs_bound,
+            )
+            return launch._credentials
+        if self._credential_source is launch and self._prepared_credentials is not None:
+            self._prepared_credentials.validate_selection(launch)
+            self._prepared_credentials.validate_inputs(
+                launch.configurations,
+                effective=self._prepared_credentials.effective_inputs_bound,
+            )
+            return self._prepared_credentials
+        if self._session is not None:
+            raise HarnessStartupError("native credential session is already open")
+        if self._prepared_credentials is not None:
+            from ..transport.capture_proxy import McpCaptureManager
+
+            previous_capture = getattr(self._credential_source, "capture", None)
+            if isinstance(
+                previous_capture, McpCaptureManager
+            ) and previous_capture.owns_credential_bundle(self._prepared_credentials):
+                raise HarnessStartupError("native credential owner is still active")
+            self._prepared_credentials.close()
+        credentials = collect_native_credentials(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+            material=material
+            if material is not None
+            else self._credential_material(launch),
+        )
+        self._credential_source = launch
+        self._prepared_credentials = credentials
+        return credentials
+
+    def _credential_material(self, launch: HarnessLaunch) -> NativeCredentialMaterial:
+        from ._launch_credentials import NativeCredentialMaterial
+
+        return NativeCredentialMaterial()
+
+    async def _close_credential_operations(self) -> None:
+        pass
+
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
+        from ._native_preparation import validate_owned_startup
+
+        validate_owned_startup(launch)
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
         if self._session is not None:
             raise HarnessStartupError(f"{self.name} session is already open")
-        root = Path(tempfile.mkdtemp(prefix=f"m3-{self.name}-"))
+        launch = await self.prepare_launch_credentials(launch)
+        from ._native_preparation import NativePreparation, owned_native_preparation
+
+        preparation = None
+        if owned_native_preparation(launch):
+            preparation = await NativePreparation.create(
+                launch, self.harness_kind, self.native_configuration_files(launch)
+            )
+            root = preparation.root
+        else:
+            root = Path(tempfile.mkdtemp(prefix=f"m3-{self.name}-"))
         process = JsonRpcProcess(self.executable, self.process_argv(launch))
+        self._process = process
+        self._launch = launch
+        self._failed_preparation = preparation
         try:
             # Keep provider state isolated while allowing only explicit adapter
             # overrides and credentials to reach the child.
+            from ._launch_credentials import check_credential_deadline
+
+            environment = self.environment_for_launch(launch, root)
+            workspace = workspace_for_launch(launch, root)
+            check_credential_deadline(launch)
+            if preparation is not None and launch._startup_clock is not None:
+                launch._startup_clock.clear_owned_preparation()
+                launch._startup_clock.begin_native()
             await process.open(
-                environment=self.environment_for_launch(launch, root),
-                cwd=workspace_for_launch(launch, root),
+                environment=environment,
+                cwd=workspace,
                 root=root,
+                **startup_spawn_options(
+                    launch._startup_lease,
+                    owned_startup=preparation is not None,
+                    startup_deadline=launch._startup_clock.deadline
+                    if launch._startup_clock is not None
+                    and (preparation is not None or launch._startup_lease is not None)
+                    else None,
+                ),
+                **({"prepared": True} if preparation is not None else {}),
             )
+            assert process.owner is not None
+            if preparation is not None:
+                preparation.adopt(process.owner)
             session_id = await self.initialize(process, launch)
+            await process.owner.startup_ready()
+            if launch._startup_clock is not None:
+                launch._startup_clock.finish()
             effective_launch = launch
             if (
                 launch.tool_policy_evidence is None
@@ -371,10 +510,32 @@ class NativeRPCAdapter:
                 )
             self._launch, self._process = effective_launch, process
             self._session = NativeRPCSession(self, process, session_id)
+            self._failed_preparation = None
             return self._session
-        except Exception:
-            await process.close()
+        except BaseException as failure:
+            from .._startup_deadlines import retain_cleanup, wait_cleanup
+
+            if process.owner is not None and preparation is not None:
+                preparation.adopt(process.owner)
+
+            async def cleanup_failed_process() -> None:
+                await process.close()
+                if process.owner is None and preparation is not None:
+                    await preparation.close()
+
+            self._startup_cleanup_task = retain_cleanup(cleanup_failed_process)
+            stopped = await wait_cleanup(
+                self._startup_cleanup_task,
+                launch._startup_clock,
+                cancelled=isinstance(failure, asyncio.CancelledError),
+            )
+            self._startup_cleanup_failed = not stopped
+            if stopped:
+                self._failed_preparation = None
             raise
+
+    def native_configuration_files(self, launch: HarnessLaunch) -> Mapping[str, bytes]:
+        raise HarnessStartupError("owned startup is unavailable for this harness")
 
     async def send(
         self,
@@ -436,7 +597,7 @@ class NativeRPCAdapter:
     def environment_for_launch(
         self, launch: HarnessLaunch, root: Path
     ) -> Mapping[str, str]:
-        return self.environment
+        return self._credentials_for_preparation(launch).child_environment()
 
     async def initialize(self, process: JsonRpcProcess, launch: HarnessLaunch) -> str:
         return str(uuid4())
@@ -709,8 +870,36 @@ class NativeRPCAdapter:
         raise NotImplementedError
 
     async def close(self) -> None:
+        pending = self._startup_cleanup_task
+        if pending is not None and not pending.done():
+            from .._startup_deadlines import wait_cleanup
+            from ..errors import CleanupError
+
+            clock = self._launch._startup_clock if self._launch is not None else None
+            if (
+                not await wait_cleanup(pending, clock, cancelled=False)
+                and not pending.done()
+            ):
+                raise CleanupError("native startup cleanup remains pending")
+        self._startup_cleanup_task = None
         if self._session is not None:
             await self._session.close()
+        elif self._process is not None:
+            await self._process.close()
+        if self._failed_preparation is not None:
+            await self._failed_preparation.close()
+            self._failed_preparation = None
+        await self._close_credential_operations()
+        from ..transport.capture_proxy import McpCaptureManager
+
+        if self._prepared_credentials is not None:
+            capture = getattr(self._credential_source, "capture", None)
+            if not isinstance(
+                capture, McpCaptureManager
+            ) or not capture.owns_credential_bundle(self._prepared_credentials):
+                self._prepared_credentials.close()
+        self._prepared_credentials = None
+        self._credential_source = None
         self._session = None
         self._process = None
         self._runtime_secrets.clear()

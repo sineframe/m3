@@ -17,7 +17,7 @@ import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .. import _timing
 from ..errors import CleanupError
@@ -31,6 +31,35 @@ from .contracts import (
 )
 
 MAX_FRAME_BYTES = 1024 * 1024
+
+if TYPE_CHECKING:
+    from ._native_preparation import NativePreparation
+    from .admission import StartupLease
+    from .guardian import NativeGuardian
+
+
+class StartupSpawnOptions(TypedDict, total=False):
+    startup_lease: StartupLease
+    owned_startup: bool
+    startup_deadline: float
+
+
+def startup_spawn_options(
+    lease: StartupLease | None,
+    *,
+    owned_startup: bool = False,
+    startup_deadline: float | None = None,
+) -> StartupSpawnOptions:
+    options: StartupSpawnOptions = {}
+    if lease is not None:
+        options["startup_lease"] = lease
+    if owned_startup:
+        options["owned_startup"] = True
+    if startup_deadline is not None:
+        options["startup_deadline"] = startup_deadline
+    return options
+
+
 MAX_STDERR_BYTES = 256 * 1024
 MAX_QUEUE_ITEMS = 128
 
@@ -49,7 +78,7 @@ def _executable(value: str | None, default: str) -> str:
 
 
 def _isolated_environment(
-    root: Path, explicit: Mapping[str, str] | None
+    root: Path, explicit: Mapping[str, str] | None, *, prepared: bool = False
 ) -> dict[str, str]:
     """Build an isolated deterministic environment with explicit overrides."""
 
@@ -70,8 +99,9 @@ def _isolated_environment(
             if not isinstance(key, str) or not key or "\x00" in key or "\x00" in value:
                 raise ValueError("harness environment is invalid")
             environment[key] = value
-    for directory in ("home", "config", "data", "state", "cache"):
-        (root / directory).mkdir(mode=0o700, exist_ok=True)
+    if not prepared:
+        for directory in ("home", "config", "data", "state", "cache"):
+            (root / directory).mkdir(mode=0o700, exist_ok=True)
     return environment
 
 
@@ -372,6 +402,8 @@ class ProcessOwner:
         self.process: asyncio.subprocess.Process | None = None
         self.stderr_task: asyncio.Task[bytes] | None = None
         self.pgid: int | None = None
+        self._guardian: NativeGuardian | None = None
+        self._owned_preparation: NativePreparation | None = None
         self._closed = False
 
     @_timing.timed("harness.spawn")
@@ -381,27 +413,51 @@ class ProcessOwner:
         environment: Mapping[str, str],
         *,
         cwd: Path | str | None = None,
+        startup_lease: StartupLease | None = None,
+        owned_startup: bool = False,
+        startup_deadline: float | None = None,
     ) -> None:
         try:
-            self.process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # ``root`` is the adapter-control directory.  Native harnesses
-                # must execute in the SDK workspace when one was selected;
-                # keeping this separate prevents provider config/cache files
-                # from becoming workspace artifacts.
-                cwd=str(cwd if cwd is not None else self.root),
-                env=dict(environment),
-                start_new_session=True,
-                limit=MAX_FRAME_BYTES + 1,
-            )
+            if (
+                startup_lease is not None
+                or owned_startup
+                or startup_deadline is not None
+            ):
+                from .guardian import NativeGuardian
+
+                self._guardian = await NativeGuardian.spawn(
+                    startup_lease,
+                    argv,
+                    environment,
+                    cwd if cwd is not None else self.root,
+                    limit=MAX_FRAME_BYTES + 1,
+                    on_spawn=self._attach_guardian,
+                    deadline=startup_deadline,
+                )
+            else:
+                self.process = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    # ``root`` is the adapter-control directory.  Native harnesses
+                    # must execute in the SDK workspace when one was selected;
+                    # keeping this separate prevents provider config/cache files
+                    # from becoming workspace artifacts.
+                    cwd=str(cwd if cwd is not None else self.root),
+                    env=dict(environment),
+                    start_new_session=True,
+                    limit=MAX_FRAME_BYTES + 1,
+                )
         except (OSError, ValueError):
             raise HarnessStartupError("harness process could not start") from None
-        assert self.process.stderr is not None
+        assert self.process is not None and self.process.stderr is not None
         self.stderr_task = asyncio.create_task(drain_bounded(self.process.stderr))
-        if os.name == "posix" and self.process.pid is not None:
+        if (
+            self._guardian is None
+            and os.name == "posix"
+            and self.process.pid is not None
+        ):
             # ``start_new_session=True`` makes the child its own group leader.
             # Keep this identity even if a very short-lived child is already
             # gone by the time ``getpgid`` runs; the termination helper still
@@ -414,8 +470,19 @@ class ProcessOwner:
             except (ProcessLookupError, PermissionError, OSError):
                 pass
 
+    def _attach_guardian(self, guardian: NativeGuardian) -> None:
+        self._guardian = guardian
+        self.process = guardian.process_if_started
+
+    async def startup_ready(self) -> None:
+        if self._guardian is not None:
+            await self._guardian.ready()
+
     @_timing.timed("harness.terminate")
     async def terminate(self) -> None:
+        if self._guardian is not None:
+            await self._guardian.stop()
+            return
         process = self.process
         if process is None:
             return
@@ -484,7 +551,10 @@ class ProcessOwner:
                     # after safe group cleanup refuses to signal it.
                     self.stderr_task.cancel()
                     await asyncio.gather(self.stderr_task, return_exceptions=True)
-            shutil.rmtree(self.root, ignore_errors=False)
+            if self._owned_preparation is not None:
+                await self._owned_preparation.close()
+            else:
+                shutil.rmtree(self.root, ignore_errors=False)
         except (OSError, asyncio.CancelledError):
             failure = True
         if failure:
@@ -599,6 +669,12 @@ def workspace_for_launch(launch: HarnessLaunch, control_root: Path) -> Path:
     candidate = (
         control_root if launch.workspace_root is None else Path(launch.workspace_root)
     )
+    from ._native_preparation import owned_native_preparation
+
+    if owned_native_preparation(launch):
+        # The owned preparation job validated the selected workspace; native
+        # cwd activation occurs in the gated child under the same deadline.
+        return candidate
     try:
         resolved = candidate.resolve(strict=True)
     except OSError:
@@ -646,3 +722,26 @@ __all__ = [
     "workspace_for_launch",
     "write_config",
 ]
+
+
+async def probe_help_for_launch(
+    launch: HarnessLaunch, executable: str, args: tuple[str, ...]
+) -> str | None:
+    from ._native_preparation import owned_native_preparation
+
+    if not owned_native_preparation(launch):
+        return await asyncio.to_thread(probe_help, executable, args)
+    from .._bootstrap_operations import PrivateOperationError
+    from .._startup_deadlines import earliest
+    from .native_capabilities import probe_native_owned
+
+    parent = (
+        launch._startup_clock.deadline if launch._startup_clock is not None else None
+    )
+    deadline = earliest(parent, time.monotonic() + 15.0)
+    assert deadline is not None
+    try:
+        result = await probe_native_owned(executable, args, deadline=deadline)
+        return result.output
+    except PrivateOperationError:
+        return None

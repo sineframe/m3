@@ -47,6 +47,9 @@ from anyio.from_thread import (
 from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 
 from . import _timing
+from ._admission_settings import admission_override as _admission_override
+from ._admission_settings import override_admission_config as _override_admission_config
+from ._cache_settings import cache_override as _cache_override
 from ._check_recording import (
     bind_subject as _bind_subject,
 )
@@ -65,7 +68,11 @@ from ._default_store import (
 )
 from ._native_settings import NativePermissions as _NativePermissions
 from ._native_settings import permission_override as _permission_override
+from ._native_settings import timeout_override as _timeout_override
 from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import CachePolicy as _CachePolicy
+from ._types.settings import HarnessTimeouts as _HarnessTimeouts
+from ._types.settings import StartupAdmission as _StartupAdmission
 from ._types.settings import Unset as _Unset
 from ._types.specs import AgentSpec as _AgentSpec
 from .agent_session import AgentAdapter as _AgentAdapter
@@ -356,6 +363,8 @@ class _PortalRuntime:
         max_judge_requests: int | None = None,
         harness_cache_dir: str | _Path | None = None,
         runtime_project_root: str | _Path | None = None,
+        harness_timeouts: _HarnessTimeouts | None = None,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
     ) -> None:
         from .async_api import AsyncMCPTestKit
 
@@ -372,7 +381,9 @@ class _PortalRuntime:
             record_checks=record_checks,
             max_judge_requests=max_judge_requests,
             harness_cache_dir=harness_cache_dir,
+            harness_timeouts=harness_timeouts,
             cwd=runtime_project_root,
+            admission=admission,
         )
         self.clients: dict[int, _AsyncDirectClient] = {}
         self.sessions: dict[int, _AsyncAgentSession] = {}
@@ -700,6 +711,8 @@ class _SyncPortal:
         max_judge_requests: int | None = None,
         harness_cache_dir: str | _Path | None = None,
         runtime_project_root: str | _Path | None = None,
+        harness_timeouts: _HarnessTimeouts | None = None,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
     ) -> None:
         self._lock = _RLock()
         self._context = _start_blocking_portal()
@@ -720,6 +733,8 @@ class _SyncPortal:
                 max_judge_requests,
                 harness_cache_dir,
                 runtime_project_root,
+                harness_timeouts,
+                admission,
             )
         except BaseException:
             self._context.__exit__(None, None, None)
@@ -1493,7 +1508,14 @@ class MCPTestKit:
         record_checks: bool = False,
         max_judge_requests: int | None = None,
         harness_cache_dir: str | _Path | None = None,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
+        harness_timeouts: _HarnessTimeouts | None = None,
     ) -> None:
+        if harness_timeouts is not None and not isinstance(
+            harness_timeouts, _HarnessTimeouts
+        ):
+            raise ValueError("kit harness timeouts must be typed")
+        self._harness_timeouts = harness_timeouts
         from ._test_runs import active_test
 
         active = active_test()
@@ -1554,7 +1576,8 @@ class MCPTestKit:
         self._probe_timeout_seconds = probe_timeout_seconds
         self._probe_output_limit = probe_output_limit
         configuration = _resolve_configuration(config, env=env, cwd=cwd)
-        self.config = configuration.config
+        self.config = _override_admission_config(configuration.config, admission)
+        self._admission_override = admission
         self._literal_registry = configuration.literal_registry
         self._owns_store = False
         if store is None:
@@ -1915,6 +1938,8 @@ class MCPTestKit:
                     self._max_judge_requests,
                     self._harness_cache_dir,
                     self._runtime_project_root,
+                    self._harness_timeouts,
+                    self._admission_override,
                 )
                 self._portal = portal
             try:
@@ -2043,6 +2068,8 @@ class MCPTestKit:
                     self._max_judge_requests,
                     self._harness_cache_dir,
                     self._runtime_project_root,
+                    self._harness_timeouts,
+                    self._admission_override,
                 )
                 self._portal = portal
             try:
@@ -2104,12 +2131,19 @@ class MCPTestKit:
         interaction_handlers: InteractionHandlers | None = None,
         harness_cache_dir: str | _Path | None = None,
         harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
+        admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
+        harness_timeouts: _HarnessTimeouts | _Unset = _NATIVE_UNSET,
+        cache: _CachePolicy | _Unset = _NATIVE_UNSET,
     ) -> AgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
             self._unsupported("agent_session")
         spec = _cast(_AgentSpec, self._with_run_id(spec))
-        spec = _permission_override(spec, harness_permissions)
+        spec = _timeout_override(
+            _permission_override(spec, harness_permissions), harness_timeouts
+        )
+        spec = _admission_override(spec, admission)
+        spec = _cache_override(spec, cache)
         with self._state_lock:
             if self._closed:
                 raise _KitClosed("MCPTestKit is closed")
@@ -2129,6 +2163,8 @@ class MCPTestKit:
                     self._max_judge_requests,
                     self._harness_cache_dir,
                     self._runtime_project_root,
+                    self._harness_timeouts,
+                    self._admission_override,
                 )
                 self._portal = portal
             try:

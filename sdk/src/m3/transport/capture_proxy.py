@@ -34,7 +34,12 @@ from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
 from .http_proxy import McpHttpProxy
 
 if TYPE_CHECKING:
+    from .._bootstrap_operations import OwnedBootstrapOperations, OwnedResource
+    from .._startup_deadlines import StartupBudget
+    from ..harness._launch_credentials import LaunchCredentialBundle
     from ..harness._private_policy import PrivateToolCalls
+    from ..server_group import HarnessServerConfig
+    from ._owned_capture import OwnedCaptureSink
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_SIZE = 4096
@@ -290,48 +295,89 @@ def _classify_runtime_value(
         secrets.add(value)
 
 
+def render_stdio_handoff(
+    environment: Mapping[str, Any],
+    *,
+    configured_keys: frozenset[str] = frozenset(),
+    observer: Mapping[str, str] | None = None,
+    command: tuple[str, ...] | None = None,
+    cwd: str | None = None,
+    resolved: bool = False,
+    launch_secrets: frozenset[str] = frozenset(),
+    complete_environment: bool = False,
+) -> tuple[bytes, set[str]]:
+    """Render private launch bytes without filesystem access."""
+
+    from ._stdio_handoff import StdioHandoff
+
+    resolved_secrets: set[str] = set(launch_secrets)
+    # Match the official stdio client baseline (PATH/HOME/etc.) while keeping
+    # ambient provider credentials out; explicit MCP values are layered on top.
+    resolved_environment: dict[str, str] = (
+        {} if complete_environment else get_default_environment()
+    )
+    for name, value in environment.items():
+        if not isinstance(name, str) or not name or "=" in name or "\x00" in name:
+            raise ValueError("MCP environment name is invalid")
+        text = (
+            value
+            if resolved
+            else _resolve_runtime_value(value, secrets=resolved_secrets)
+        )
+        if not isinstance(text, str) or "\x00" in text:
+            raise ValueError("MCP environment value is invalid")
+        resolved_environment[name] = text
+        _classify_runtime_value(
+            name,
+            text,
+            secrets=resolved_secrets,
+            configured=configured_keys,
+        )
+    if command is not None:
+        resolved_secrets.update(part for part in command if part)
+    payload = StdioHandoff.model_validate(
+        {
+            "environment": resolved_environment,
+            "canaries": tuple(sorted(resolved_secrets)),
+            "command": command,
+            "cwd": cwd,
+            "observer": observer,
+        }
+    )
+    return payload.model_dump_json(exclude_none=True).encode("utf-8"), resolved_secrets
+
+
 def write_stdio_handoff(
     path: str | os.PathLike[str],
     environment: Mapping[str, Any],
     *,
     configured_keys: frozenset[str] = frozenset(),
     observer: Mapping[str, str] | None = None,
+    command: tuple[str, ...] | None = None,
+    cwd: str | None = None,
+    resolved: bool = False,
+    launch_secrets: frozenset[str] = frozenset(),
+    complete_environment: bool = False,
 ) -> set[str]:
-    """Resolve selected stdio environment into a one-shot protected handoff."""
+    """Resolve launch data into a one-shot protected handoff."""
 
-    resolved_secrets: set[str] = set()
-    # Match the official stdio client baseline (PATH/HOME/etc.) while keeping
-    # ambient provider credentials out; explicit MCP values are layered on top.
-    resolved_environment: dict[str, str] = get_default_environment()
-    for name, value in environment.items():
-        if not isinstance(name, str) or not name or "=" in name or "\x00" in name:
-            raise ValueError("MCP environment name is invalid")
-        resolved = _resolve_runtime_value(value, secrets=resolved_secrets)
-        resolved_environment[name] = resolved
-        _classify_runtime_value(
-            name,
-            resolved,
-            secrets=resolved_secrets,
-            configured=configured_keys,
-        )
+    payload, resolved_secrets = render_stdio_handoff(
+        environment,
+        configured_keys=configured_keys,
+        observer=observer,
+        command=command,
+        cwd=cwd,
+        resolved=resolved,
+        launch_secrets=launch_secrets,
+        complete_environment=complete_environment,
+    )
     handoff = Path(path)
     created = False
     try:
         descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created = True
-        handoff_payload: dict[str, Any] = {
-            "environment": resolved_environment,
-            "canaries": sorted(resolved_secrets),
-        }
-        if observer is not None:
-            handoff_payload["observer"] = dict(observer)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
-            output_file.write(
-                json.dumps(
-                    handoff_payload,
-                    separators=(",", ":"),
-                )
-            )
+        with os.fdopen(descriptor, "wb") as output_file:
+            output_file.write(payload)
     except BaseException:
         if created:
             try:
@@ -416,8 +462,11 @@ def _event_kind(payload: Mapping[str, Any], direction: str) -> str:
     return "response"
 
 
-def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
-    records = read_capture(str(target.path))
+def _project_events(
+    target: _CaptureTarget, records: list[dict[str, Any]] | None = None
+) -> tuple[McpWireEvent, ...]:
+    if records is None:
+        records = read_capture(str(target.path))
     sequence = 0
     pending: dict[
         tuple[type[Any], Any, str], tuple[int, float, Mapping[str, Any], str | None]
@@ -520,6 +569,7 @@ class McpCaptureManager:
         tool_policy: ToolPolicy | None = None,
         server_aliases: Iterable[str] = (),
         tools_by_server: Mapping[str, Iterable[str]] | None = None,
+        _prepared_root: bool = False,
     ) -> None:
         self._owns_root = root is None
         self.root = (
@@ -527,7 +577,13 @@ class McpCaptureManager:
             if root is not None
             else Path(tempfile.mkdtemp(prefix="m3-capture-"))
         )
-        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not _prepared_root:
+            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._owned_operations: OwnedBootstrapOperations | None = None
+        self._owned_resource: OwnedResource | None = None
+        self._owned_sink: OwnedCaptureSink | None = None
+        self._startup_clock: StartupBudget | None = None
+        self._owned_records: dict[str, list[dict[str, Any]]] = {}
         self.baseline_ns = (
             baseline_ns if baseline_ns is not None else time.perf_counter_ns()
         )
@@ -548,6 +604,11 @@ class McpCaptureManager:
         }
         self._targets: dict[str, _CaptureTarget] = {}
         self._instrumented: dict[str, Any] = {}
+        self._prepared_configurations: tuple[HarnessServerConfig, ...] | None = None
+        self._launch_credentials: LaunchCredentialBundle | None = None
+        self._eager_capture_only = False
+        self._launch_activated = False
+        self._launch_redaction_literals: frozenset[str] = frozenset()
         self._policy_enforced: set[str] = set()
         self._policy_paths: set[Path] = set()
         self._closed = False
@@ -570,6 +631,108 @@ class McpCaptureManager:
         self._closing_observer = False
         self._observation_start_failures: dict[str, str] = {}
 
+    @classmethod
+    async def create_owned(
+        cls, clock: StartupBudget, **options: Any
+    ) -> McpCaptureManager:
+        from .._bootstrap_operations import OwnedBootstrapOperations
+        from ._owned_capture import OwnedCaptureSink
+
+        operations = OwnedBootstrapOperations()
+        deadline = clock.begin_owned_preparation()
+        assert deadline is not None
+        try:
+            resource = await asyncio.to_thread(
+                operations.create_capture_root, deadline=deadline
+            )
+            capture = cls(resource.root, _prepared_root=True, **options)
+            capture._owns_root = True
+            capture._owned_operations = operations
+            capture._owned_resource = resource
+            capture._startup_clock = clock
+            capture._owned_sink = OwnedCaptureSink(
+                operations, resource, clock, capture._owned_capture_incomplete
+            )
+            return capture
+        except BaseException as failure:
+            operations.cancel_pending()
+            try:
+                cleanup_deadline = clock.begin_cleanup()
+                remaining = max(0.0, cleanup_deadline - time.monotonic())
+                if isinstance(failure, asyncio.CancelledError):
+                    remaining = min(3.0, remaining)
+                await asyncio.wait_for(
+                    asyncio.to_thread(operations.close, deadline=cleanup_deadline),
+                    timeout=remaining,
+                )
+            except BaseException:
+                pass
+            raise
+
+    def _append_capture_record(self, filename: str, data: str) -> None:
+        assert self._owned_sink is not None
+        self._owned_sink.enqueue(filename, data)
+
+    def _owned_capture_incomplete(self, reason: str) -> None:
+        for connection in tuple(self._targets):
+            self._limitations[connection] = tuple(
+                dict.fromkeys((*self._limitations.get(connection, ()), reason))
+            )
+            self.fail_observation(connection, reason)
+
+    def _capture_deadline(self, deadline: float | None = None) -> float:
+        from .._startup_deadlines import earliest
+
+        parent = (
+            (self._startup_clock.cleanup_deadline or self._startup_clock.deadline)
+            if self._startup_clock is not None
+            else None
+        )
+        value = earliest(parent, deadline)
+        return time.monotonic() + 10.0 if value is None else value
+
+    async def flush(self, *, deadline: float | None = None) -> None:
+        if self._owned_sink is None:
+            return
+        await self._owned_sink.flush(deadline=deadline)
+        operations, resource = self._owned_operations, self._owned_resource
+        assert operations is not None and resource is not None
+        active_deadline = self._capture_deadline(deadline)
+        for connection, target in self._targets.items():
+            try:
+                value = await asyncio.to_thread(
+                    operations.read_capture,
+                    resource,
+                    target.path.name,
+                    deadline=active_deadline,
+                )
+                records: list[dict[str, Any]] = []
+                for line in (
+                    value.consume().decode("utf-8", errors="replace").splitlines()
+                ):
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(record, dict):
+                        records.append(record)
+                self._owned_records[connection] = sorted(
+                    records, key=lambda record: float(record.get("offset_ms", 0))
+                )
+            except asyncio.CancelledError:
+                operations.fence_pending()
+                raise
+            except Exception:
+                self.fail_observation(connection, "capture_read_failed")
+
+    def _events(self, target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
+        records = (
+            self._owned_records.get(target.connection_id, [])
+            if self._owned_operations is not None
+            else None
+        )
+        return _project_events(target, records)
+
     def _target(self, connection_id: str, transport: str) -> _CaptureTarget:
         target = self._targets.get(connection_id)
         if target is not None:
@@ -586,6 +749,12 @@ class McpCaptureManager:
             CaptureWriter(
                 str(path),
                 self.baseline_ns,
+                secrets=set(self._launch_redaction_literals)
+                if self._launch_redaction_literals
+                else None,
+                _append=(lambda data: self._append_capture_record(path.name, data))
+                if self._owned_sink is not None
+                else None,
                 on_event=lambda event_transport, direction, payload: self._writer_event(
                     connection_id, event_transport, direction, payload
                 ),
@@ -917,6 +1086,200 @@ class McpCaptureManager:
                 self._fail_subscribers(authenticated_connection, "observer_eof")
 
     @_timing.timed("servers.instrument")
+    def prepare(
+        self,
+        configurations: tuple[HarnessServerConfig, ...],
+        *,
+        stdio_environment_defaults: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> tuple[HarnessServerConfig, ...]:
+        """Retain original inputs without resolving credentials or starting proxies."""
+
+        defaults = dict(stdio_environment_defaults or {})
+        aliases = {configuration.key for configuration in configurations}
+        if set(defaults).difference(aliases):
+            raise ValueError("stdio environment defaults reference an unknown server")
+        prepared = []
+        for configuration in configurations:
+            environment = dict(defaults.get(configuration.key, {}))
+            environment.update(configuration.environment)
+            prepared.append(replace(configuration, environment=environment))
+        self._prepared_configurations = tuple(prepared)
+        return self._prepared_configurations
+
+    def credential_configurations(self) -> tuple[HarnessServerConfig, ...]:
+        if self._prepared_configurations is None:
+            raise RuntimeError("capture launch has not been prepared")
+        return self._prepared_configurations
+
+    def adoptable_credentials(self) -> LaunchCredentialBundle | None:
+        return self._launch_credentials if self._eager_capture_only else None
+
+    def owns_credential_bundle(self, credentials: LaunchCredentialBundle) -> bool:
+        return self._launch_credentials is credentials
+
+    def can_enforce_portable_policy(self, connection_ids: Iterable[str]) -> bool:
+        """Validate a prepared forwarding plan; activation still must succeed."""
+
+        if self._prepared_configurations is None:
+            return self.enforces_portable_policy(connection_ids)
+        prepared = {
+            configuration.connection_id
+            for configuration in self._prepared_configurations
+            if configuration.available
+            and configuration.transport
+            in {TransportKind.STDIO, TransportKind.STREAMABLE_HTTP}
+        }
+        selected = tuple(connection_ids)
+        return bool(self._tool_policy is not None and selected) and all(
+            connection in prepared for connection in selected
+        )
+
+    async def activate(self, credentials: LaunchCredentialBundle) -> tuple[Any, ...]:
+        """Materialize protected launch data from the one pinned session bundle."""
+
+        if self._launch_credentials is not None:
+            if credentials is not self._launch_credentials:
+                if not self._eager_capture_only or not credentials.adopts(
+                    self._launch_credentials
+                ):
+                    raise RuntimeError("capture launch credential identity changed")
+                if self._owned_operations is not None:
+                    raise RuntimeError(
+                        "owned capture launch credential identity changed"
+                    )
+                previous = self._launch_credentials
+                self._launch_credentials = credentials
+                self._eager_capture_only = False
+                self.add_secrets(set(credentials.redaction().secrets))
+                for configuration in self.credential_configurations():
+                    if configuration.transport is TransportKind.STDIO:
+                        (self.root / f"{configuration.connection_id}.env.json").unlink(
+                            missing_ok=True
+                        )
+                previous.close()
+            if not self._launch_activated:
+                raise RuntimeError("capture launch activation did not complete")
+            self._launch_credentials.validate_inputs(self.credential_configurations())
+            await self._refresh_stdio_handoffs()
+            return tuple(self._instrumented.values())
+        configurations = self.credential_configurations()
+        self._launch_credentials = credentials
+        self.add_secrets(set(credentials.redaction().secrets))
+        instrumented = await self.instrument(configurations)
+        self._launch_activated = True
+        return instrumented
+
+    async def _refresh_stdio_handoffs(self) -> None:
+        """A restarted native process gets pinned inputs through a fresh one-shot file."""
+
+        credentials = self._launch_credentials
+        assert credentials is not None
+        for configuration in self.credential_configurations():
+            if (
+                not configuration.available
+                or configuration.transport is not TransportKind.STDIO
+            ):
+                continue
+            key = configuration.connection_id
+            path = self.root / f"{key}.env.json"
+            if self._owned_operations is None and path.exists():
+                continue
+            target = self._targets[key]
+            observer = (
+                {
+                    "host": str(self._observer_host),
+                    "port": str(self._observer_port),
+                    "connection_id": key,
+                    "token": target.observation_token,
+                }
+                if target.observation_token is not None
+                else None
+            )
+            await self._write_stdio_handoff(
+                path,
+                credentials.stdio_environment(key),
+                command=credentials.server_command(key),
+                cwd=credentials.server_cwd(key),
+                observer=observer,
+                resolved=True,
+                complete_environment=True,
+                launch_secrets=self._launch_redaction_literals,
+            )
+            policy_path = self.root / f"{key}.policy.json"
+            if self._tool_policy is not None and (
+                self._owned_operations is not None or not policy_path.exists()
+            ):
+                await self._write_policy_handoff(
+                    policy_path, configuration.key, configuration.tools
+                )
+
+    async def _write_stdio_handoff(
+        self, path: Path, environment: Mapping[str, Any], **options: Any
+    ) -> set[str]:
+        if self._owned_operations is None:
+            return write_stdio_handoff(path, environment, **options)
+        from .._bootstrap_operations import PrivateBytes
+
+        assert self._owned_resource is not None
+        payload, launch_secrets = render_stdio_handoff(environment, **options)
+        try:
+            await asyncio.to_thread(
+                self._owned_operations.write_capture_files,
+                self._owned_resource,
+                {path.name: PrivateBytes(payload)},
+                deadline=self._capture_deadline(),
+            )
+        except BaseException:
+            self._owned_operations.fence_pending()
+            raise
+        return launch_secrets
+
+    async def _write_policy_handoff(
+        self, path: Path, server: str, tools: tuple[str, ...]
+    ) -> None:
+        assert self._tool_policy is not None
+        payload = json.dumps(
+            {
+                "policy": self._tool_policy.model_dump(mode="json"),
+                "server": server,
+                "known_servers": self._server_aliases,
+                "known_tools": tools,
+                "known_tools_by_server": self._tools_by_server,
+            },
+            separators=(",", ":"),
+        )
+        if self._owned_operations is not None:
+            from .._bootstrap_operations import PrivateBytes
+
+            assert self._owned_resource is not None
+            try:
+                await asyncio.to_thread(
+                    self._owned_operations.write_capture_files,
+                    self._owned_resource,
+                    {path.name: PrivateBytes(payload.encode("utf-8"))},
+                    deadline=self._capture_deadline(),
+                )
+            except BaseException:
+                self._owned_operations.fence_pending()
+                raise
+            return
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        self._policy_paths.add(path)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                descriptor = -1
+                output.write(payload)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+    def add_secrets(self, values: set[str]) -> None:
+        """Register pinned native inputs for present and deferred transports."""
+
+        self._launch_redaction_literals |= frozenset(values)
+        for target in self._targets.values():
+            target.writer.add_secrets(values)
+
     async def instrument(
         self,
         configurations: Iterable[Any],
@@ -943,6 +1306,23 @@ class McpCaptureManager:
             raise ValueError("stdio environment defaults reference an unknown server")
         if any(not isinstance(value, Mapping) for value in defaults.values()):
             raise ValueError("stdio environment defaults must be mappings")
+
+        if self._launch_credentials is None:
+            from ..harness._launch_credentials import LaunchCredentialBundle
+            from ..server_group import HarnessServerConfig
+
+            if all(
+                isinstance(configuration, HarnessServerConfig)
+                for configuration in configured
+            ):
+                prepared = self.prepare(configured, stdio_environment_defaults=defaults)
+                self._launch_credentials = LaunchCredentialBundle(
+                    prepared,
+                    credential_references={},
+                    stdio_baseline=get_default_environment(),
+                )
+                self._eager_capture_only = True
+                self.add_secrets(set(self._launch_credentials.redaction().secrets))
 
         output: list[Any] = []
         for configuration in configured:
@@ -983,7 +1363,11 @@ class McpCaptureManager:
                         "token": observation_token,
                     }
                 env_path = self.root / f"{key}.env.json"
-                environment = dict(getattr(configuration, "environment", {}))
+                environment = (
+                    self._launch_credentials.stdio_environment(key)
+                    if self._launch_credentials is not None
+                    else dict(getattr(configuration, "environment", {}))
+                )
                 alias = str(getattr(configuration, "key", key))
                 for name, value in defaults.get(alias, {}).items():
                     if (
@@ -998,11 +1382,24 @@ class McpCaptureManager:
                     getattr(configuration, "sensitive_keys", ())
                 )
                 resolved_secrets.update(
-                    write_stdio_handoff(
+                    await self._write_stdio_handoff(
                         env_path,
                         environment,
                         configured_keys=configured_keys,
                         observer=observer_handoff,
+                        command=(
+                            self._launch_credentials.server_command(key)
+                            if self._launch_credentials is not None
+                            else (command, *tuple(getattr(configuration, "args", ())))
+                        ),
+                        cwd=(
+                            self._launch_credentials.server_cwd(key)
+                            if self._launch_credentials is not None
+                            else getattr(configuration, "cwd", None) or None
+                        ),
+                        resolved=self._launch_credentials is not None,
+                        launch_secrets=self._launch_redaction_literals,
+                        complete_environment=self._launch_credentials is not None,
                     )
                 )
                 if resolved_secrets:
@@ -1019,39 +1416,16 @@ class McpCaptureManager:
                 )
                 if self._tool_policy is not None:
                     policy_path = self.root / f"{key}.policy.json"
-                    policy_payload = json.dumps(
-                        {
-                            "policy": self._tool_policy.model_dump(mode="json"),
-                            "server": alias,
-                            "known_servers": self._server_aliases,
-                            "known_tools": tuple(getattr(configuration, "tools", ())),
-                            "known_tools_by_server": self._tools_by_server,
-                        },
-                        separators=(",", ":"),
+                    await self._write_policy_handoff(
+                        policy_path, alias, tuple(getattr(configuration, "tools", ()))
                     )
-                    descriptor = os.open(
-                        policy_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-                    )
-                    self._policy_paths.add(policy_path)
-                    try:
-                        with os.fdopen(
-                            descriptor, "w", encoding="utf-8"
-                        ) as output_file:
-                            descriptor = -1
-                            output_file.write(policy_payload)
-                    finally:
-                        if descriptor >= 0:
-                            os.close(descriptor)
                     args += ("--policy-file", str(policy_path))
                     self._policy_enforced.add(key)
-                cwd = getattr(configuration, "cwd", None)
-                if isinstance(cwd, str) and cwd:
-                    args = (*args, "--cwd", cwd)
-                args += ("--", command, *tuple(getattr(configuration, "args", ())))
                 self._instrumented[key] = replace(
                     configuration,
                     command=sys.executable,
                     args=args,
+                    cwd=None,
                     # Codex must still see an explicit protocol choice when it
                     # validates the server. Other child env stays in handoff.
                     environment={
@@ -1075,8 +1449,10 @@ class McpCaptureManager:
                 safe_headers: dict[str, str] = {}
                 for name, value in dict(headers).items():
                     if isinstance(name, str):
-                        resolved = _resolve_runtime_value(
-                            value, secrets=resolved_secrets
+                        resolved = (
+                            self._launch_credentials.server_headers(key)[name]
+                            if self._launch_credentials is not None
+                            else _resolve_runtime_value(value, secrets=resolved_secrets)
                         )
                         safe_headers[name] = resolved
                         _classify_runtime_value(
@@ -1085,9 +1461,12 @@ class McpCaptureManager:
                             secrets=resolved_secrets,
                             configured=configured_keys,
                         )
-                resolved_endpoint = _resolve_runtime_value(
-                    endpoint, secrets=resolved_secrets
+                resolved_endpoint = (
+                    self._launch_credentials.server_endpoint(key)
+                    if self._launch_credentials is not None
+                    else _resolve_runtime_value(endpoint, secrets=resolved_secrets)
                 )
+                assert resolved_endpoint is not None
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
 
@@ -1115,6 +1494,7 @@ class McpCaptureManager:
                     known_tools_by_server=self._tools_by_server,
                     writer=target.writer,
                     on_incomplete=proxy_observation_failed,
+                    resolved_inputs=self._launch_credentials is not None,
                 )
                 target.proxy = proxy
                 if self._tool_policy is not None:
@@ -1133,6 +1513,8 @@ class McpCaptureManager:
             else:
                 self._instrumented[key] = configuration
             output.append(self._instrumented[key])
+        if self._eager_capture_only:
+            self._launch_activated = True
         return tuple(output)
 
     def writer_for(self, connection_id: str, transport: str = "stdio") -> CaptureWriter:
@@ -1175,7 +1557,7 @@ class McpCaptureManager:
         return McpCaptureSnapshot(
             connection_id,
             target.transport,
-            _project_events(target),
+            self._events(target),
             complete=self._closed,
             limitations=self._limitations.get(connection_id, ()),
         )
@@ -1217,12 +1599,20 @@ class McpCaptureManager:
         for subscription in tuple(self._subscriptions):
             subscription._finish()
         self._subscriptions.clear()
+        cleanup_deadline = (
+            self._startup_clock.begin_cleanup()
+            if self._startup_clock is not None
+            else time.monotonic() + 10.0
+        )
+        if self._owned_sink is not None:
+            await self._owned_sink.close(deadline=cleanup_deadline)
+            await self.flush(deadline=cleanup_deadline)
         self._closed = True
         self._closed_snapshots = {
             connection_id: McpCaptureSnapshot(
                 connection_id,
                 target.transport,
-                _project_events(target),
+                self._events(target),
                 complete=True,
                 limitations=self._limitations.get(connection_id, ())
                 + (("capture_root_removed",) if self._owns_root else ()),
@@ -1231,7 +1621,14 @@ class McpCaptureManager:
         }
         with self._publication_lock:
             self._private_policy_calls.clear()
-        if self._owns_root:
+        if self._owned_operations is not None:
+            await asyncio.to_thread(
+                self._owned_operations.close, deadline=cleanup_deadline
+            )
+            if not self._owned_operations.cleanup_complete:
+                self._closed = False
+                raise RuntimeError("owned capture cleanup incomplete")
+        elif self._owns_root:
             shutil.rmtree(self.root, ignore_errors=True)
         else:
             # Explicit capture roots are caller-owned, but one-shot launch
@@ -1249,6 +1646,12 @@ class McpCaptureManager:
                     pass
         if failures:
             raise RuntimeError("MCP capture proxy cleanup failed") from None
+        if self._launch_credentials is not None:
+            self._launch_credentials.close()
+            self._launch_credentials = None
+        self._launch_redaction_literals = frozenset()
+        self._prepared_configurations = None
+        self._eager_capture_only = False
 
 
 __all__ = [

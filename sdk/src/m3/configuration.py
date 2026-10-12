@@ -177,7 +177,10 @@ def merge_settings(*layers: _SettingsValue) -> _SettingsValue:
     for layer in layers:
         if type(layer) is not model:
             raise TypeError("settings layers must have the same concrete type")
-        values = _overlay(values, _explicit_values(layer))
+        explicit = _explicit_values(layer)
+        if model is _CachePolicy and explicit.get("mode") == "isolated":
+            values.pop("root", None)
+        values = _overlay(values, explicit)
     return model.model_validate(values, context={"m3_effective_settings": True})
 
 

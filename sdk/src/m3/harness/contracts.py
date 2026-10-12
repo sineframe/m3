@@ -13,7 +13,7 @@ import inspect
 import math
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
@@ -37,9 +37,16 @@ from ..types import (
 )
 
 if TYPE_CHECKING:
+    from .._literal_store import LiteralHandle, RunLiteralStore
+    from .._startup_deadlines import StartupBudget
+    from .._types.settings import CachePolicy
     from ..managed_runtime import ManagedInputRuntime
+    from ..preparation import PreparationSupervisor
     from ..server_group import HarnessServerConfig, ServerGroupSnapshot
+    from ._launch_credentials import LaunchCredentialBundle
+    from ._native_auth import NativeAuthOperations
     from ._private_policy import PrivateToolCalls
+    from .admission import StartupLease
     from .observations import HarnessSessionEvidence, TurnEvidence
 
 
@@ -260,20 +267,41 @@ class HarnessLaunch:
     # Runtime-owned, read-only capture context.  The adapter may query a
     # structured snapshot but never owns transport framing or proxy cleanup.
     capture: Any | None = None
+    _credentials: LaunchCredentialBundle | None = field(
+        default=None, repr=False, compare=False
+    )
+    _literal_registry: RunLiteralStore | None = field(
+        default=None, repr=False, compare=False
+    )
+    _credential_deadline: float | None = field(default=None, repr=False, compare=False)
+    _native_auth_operations: NativeAuthOperations | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    _native_secret_inputs: tuple[str | LiteralHandle, ...] = field(
+        default=(), repr=False, compare=False
+    )
+    _startup_lease: StartupLease | None = field(default=None, repr=False, compare=False)
+    _startup_clock: StartupBudget | None = field(
+        default=None, repr=False, compare=False
+    )
+    _preparation: PreparationSupervisor | None = field(
+        default=None, repr=False, compare=False
+    )
+    _cache_policy: CachePolicy | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        from .._cache_settings import launch_cache, validate_cache
+
+        if self._cache_policy is not None:
+            validate_cache(self.spec, self._cache_policy)
+        else:
+            launch_cache(self.spec)
 
     def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""
 
-        return HarnessLaunch(
-            self.spec,
-            self.servers,
-            self.configurations,
-            self.tool_policy,
-            self.interactions,
-            self.workspace_root,
-            evidence,
-            self.capture,
-        )
+        return replace(self, tool_policy_evidence=evidence)
 
 
 class HarnessSession(Protocol):

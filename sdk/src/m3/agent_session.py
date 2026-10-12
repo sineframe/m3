@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import math
 import os
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 from . import _timing
+from ._cache_settings import launch_cache
 from ._types.agent_identity import project_agent_identity
 from ._types.specs import AgentSpec
 from .elicitation import ElicitationPlan
@@ -76,6 +78,8 @@ from .types import (
 from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 
 if TYPE_CHECKING:
+    from ._literal_store import RunLiteralStore
+    from .harness._native_auth import NativeAuthOperations
     from .harness._private_policy import PrivateToolCalls
     from .harness.contracts import HarnessLaunch, HarnessSession
     from .harness.observations import TurnEvidence
@@ -206,6 +210,30 @@ def _startup_failure_cause(error: BaseException) -> str:
     return "unexpected error"
 
 
+def _startup_error_info(error: BaseException) -> ErrorInfo:
+    """Use the same native projection at entry and lazy first-send failure."""
+    from .harness._native_errors import NativeHarnessStartupError
+
+    if isinstance(error, asyncio.CancelledError):
+        return ErrorInfo(code=ErrorCode.CANCELLED, message="session startup cancelled")
+    cause = _startup_failure_cause(error)
+    details: dict[str, Any] = {"cause": cause}
+    if isinstance(error, NativeHarnessStartupError):
+        details = {**error.error.details, "cause": cause}
+        if len(error.error.message) > len(cause):
+            details["cause_truncated"] = True
+    unsupported = isinstance(error, UnsupportedFeature)
+    return ErrorInfo(
+        code=ErrorCode.UNSUPPORTED if unsupported else ErrorCode.TRANSPORT_ERROR,
+        message=(
+            f"session startup unsupported: {cause}"
+            if unsupported
+            else f"session startup failed: {cause}"
+        ),
+        details=details,
+    )
+
+
 # How a terminal turn that was not a plain failure ends the execution, and the
 # error reported when the adapter gives no reason of its own.
 _TERMINAL_TURN_ENDINGS: dict[
@@ -299,11 +327,20 @@ def _validate_managed_input_round_limit(
     )
 
 
-async def _prepare_capabilities(adapter: object) -> None:
+async def _prepare_capabilities(
+    adapter: object, *, deadline: float | None = None
+) -> None:
     """Let an adapter finish blocking capability probes off the event loop."""
     prepare = getattr(adapter, "prepare_capabilities", None)
     if callable(prepare):
-        await prepare()
+        if deadline is not None:
+            if "deadline" not in inspect.signature(prepare).parameters:
+                raise UnsupportedFeature(
+                    "adapter capability preparation cannot be bounded"
+                )
+            await prepare(deadline=deadline)
+        else:
+            await prepare()
 
 
 def _require_elicitation_capability(adapter: object) -> None:
@@ -416,10 +453,26 @@ class AsyncAgentSession:
         runtime_project_root: str | Path | None = None,
         managed_input_runtime: ManagedInputRuntime | None = None,
         preparation_supervisor: PreparationSupervisor | None = None,
+        _literal_registry: RunLiteralStore | None = None,
+        _credential_deadline: float | None = None,
+        _native_auth_operations: NativeAuthOperations | None = None,
     ) -> None:
+        from ._admission_settings import resolve_admission
+        from ._native_settings import resolve_native_settings
+        from .configuration import Config
+
+        # Directly constructed sessions apply the same explicit setting layers
+        # as kits, without reading project configuration a second time.
+        defaults = Config()
+        spec = resolve_admission(resolve_native_settings(spec, defaults), defaults)
         self.spec = spec
+        self._cache_policy = launch_cache(spec)
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
+        self._literal_registry = _literal_registry
+        self._credential_deadline = _credential_deadline
+        self._native_auth_operations = _native_auth_operations
+        self._owns_native_auth_operations = False
         needs_elicitation = (
             managed_input_runtime is not None or spec.elicitation is not None
         )
@@ -437,14 +490,25 @@ class AsyncAgentSession:
         self._harness_cache_dir = harness_cache_dir
         self._runtime_manager = runtime_manager
         self._preparation_supervisor = preparation_supervisor
+        from ._startup_deadlines import StartupBudget
+        from .types import HarnessTimeouts
+
+        self._startup_clock = StartupBudget(
+            spec.harness.timeouts if spec.harness is not None else HarnessTimeouts()
+        )
         self._runtime_invocation_dir = runtime_invocation_dir
         self._runtime_models_dir = runtime_models_dir
-        self._runtime_project_root = (
-            Path(runtime_project_root).expanduser().resolve()
+        project_root = (
+            Path(runtime_project_root).expanduser()
             if runtime_project_root is not None
-            else Path.cwd().resolve()
+            else Path.cwd()
+        )
+        self._runtime_project_root = (
+            project_root if self._owned_startup_enabled() else project_root.resolve()
         )
         self._runtime_lease: Any = None
+        self._runtime_prepared = False
+        self._startup_lease: Any = None
         # The manager owns the server descriptors and any SDK-created
         # loopback resources for this conversation.  ``Any`` keeps this core
         # state machine independent from the richer harness contract module.
@@ -500,6 +564,7 @@ class AsyncAgentSession:
         self._server_manager_close_task: asyncio.Task[None] | None = None
         self._runtime_lease_close_task: asyncio.Task[None] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
+        self._cleanup_deadline: float | None = None
         self._startup_task: asyncio.Task[Any] | None = None
         self._tool_policy_evidence: ToolPolicyEvidence | None = None
         self._workspace = WorkspaceManager(
@@ -648,9 +713,50 @@ class AsyncAgentSession:
             return self
         startup_error: MCPError | None = None
         try:
-            await self._workspace.create_async(self._preparation_supervisor)
-            with _timing.span("session.start", key=self._policy_harness_name):
-                await self._start_adapter()
+            if self._startup_clock.bounded_preparation:
+                from .server_group import ServerGroupManager
+                from .types import InProcessServer
+
+                if any(
+                    isinstance(binding.server, InProcessServer)
+                    for binding in self.spec.servers
+                ):
+                    raise UnsupportedFeature(
+                        "bounded startup cannot own an in-process server factory; "
+                        "bind a stdio server or an already-running HTTP server"
+                    )
+                if isinstance(self._server_manager, ServerGroupManager):
+                    self._server_manager.validate_bounded_startup()
+            if self._owned_startup_enabled():
+                self._workspace.validate_owned_capture()
+            if self._startup_clock.requires_ownership:
+                if os.name != "posix":
+                    raise UnsupportedFeature(
+                        "owned native startup requires POSIX child status"
+                    )
+            if self.spec.admission.enabled:
+                from .harness.admission import validate_host_admission
+
+                validate_host_admission(self.spec.admission)
+            if getattr(self.spec.harness, "kind", None) in {
+                "codex",
+                "claude_code",
+                "opencode",
+            }:
+                await self._prepare_runtime_and_capabilities()
+            self._startup_clock.resume()
+            await self._workspace.create_async(
+                self._preparation_supervisor, deadline=self._startup_clock.deadline
+            )
+            if getattr(self.spec.harness, "kind", None) in {
+                "codex",
+                "claude_code",
+                "opencode",
+            }:
+                self._startup_clock.pause()
+            else:
+                with _timing.span("session.start", key=self._policy_harness_name):
+                    await self._start_adapter()
             async with self._state_lock:
                 if self._closing or self._closed:
                     raise KitClosed("agent session is closing")
@@ -666,15 +772,21 @@ class AsyncAgentSession:
             # A close may race startup.  Startup still owns the workspace and
             # server resources until this cleanup attempt finishes; do not
             # short-circuit here or the later close cannot retry them.
-            cleanup_failure = await self._collect_workspace(
-                self._close_requested_outcome
-                or (
-                    ExecutionOutcome.CANCELLED
-                    if isinstance(exc, asyncio.CancelledError)
-                    else ExecutionOutcome.FAILED
-                ),
-                cleanup=False,
-            )
+            self._begin_cleanup_budget()
+            native_stopped = True
+            if self._owned_startup_enabled():
+                native_stopped = await self._stop_native_for_capture()
+            cleanup_failure = not native_stopped
+            if native_stopped:
+                cleanup_failure = await self._collect_workspace(
+                    self._close_requested_outcome
+                    or (
+                        ExecutionOutcome.CANCELLED
+                        if isinstance(exc, asyncio.CancelledError)
+                        else ExecutionOutcome.FAILED
+                    ),
+                    cleanup=False,
+                )
             # Cleanup errors are caught inside _cleanup_succeeded: on Python
             # 3.10 an exception caught in this coroutine would otherwise still
             # become the sanitized startup error's __context__.
@@ -685,33 +797,25 @@ class AsyncAgentSession:
                 if isinstance(exc, asyncio.CancelledError)
                 else ExecutionOutcome.FAILED
             )
-            if not await _cleanup_succeeded(
-                asyncio.to_thread(self._workspace.cleanup), Exception
+            if native_stopped and not await _cleanup_succeeded(
+                self._workspace.cleanup_async(
+                    deadline=self._cleanup_deadline
+                    if self._owned_startup_enabled()
+                    else None
+                ),
+                Exception,
             ):
                 cleanup_failure = True
             unsupported = isinstance(exc, UnsupportedFeature)
-            cause = (
-                None
-                if isinstance(exc, asyncio.CancelledError)
-                else _startup_failure_cause(exc)
+            startup_info = _startup_error_info(exc)
+            code, message, startup_details = (
+                startup_info.code,
+                startup_info.message,
+                startup_info.details,
             )
-            from .harness._native_errors import NativeHarnessStartupError
-
-            startup_details: dict[str, Any] | None = (
-                None if cause is None else {"cause": cause}
-            )
-            if isinstance(exc, NativeHarnessStartupError) and cause is not None:
-                startup_details = {**exc.error.details, "cause": cause}
-                if len(exc.error.message) > len(cause):
-                    startup_details["cause_truncated"] = True
+            cause = startup_details.get("cause")
             if outcome is ExecutionOutcome.CANCELLED:
                 code, message = ErrorCode.CANCELLED, "session startup cancelled"
-            elif unsupported:
-                code = ErrorCode.UNSUPPORTED
-                message = f"session startup unsupported: {cause}"
-            else:
-                code = ErrorCode.TRANSPORT_ERROR
-                message = f"session startup failed: {cause}"
             if cause is not None:
                 self._emit_event(
                     EventKind.DIAGNOSTIC,
@@ -825,59 +929,53 @@ class AsyncAgentSession:
     async def _start_adapter(self) -> None:
         if self._adapter_started:
             return
-        # Managed runtime resolution is deliberately the first startup step:
-        # it must complete (or be cancelled) before server startup, probes, or
-        # provider open can produce side effects.
-        await self._prepare_managed_runtime()
-        from ._native_settings import requested_native_settings
+        from ._native_settings import native_literal_inputs
 
-        configuration_reader = getattr(self._server_manager, "configurations", None)
-        native_configurations = (
-            tuple(configuration_reader()) if callable(configuration_reader) else ()
+        if not self._runtime_prepared:
+            await self._prepare_runtime_and_capabilities()
+        await self._acquire_startup_admission()
+        owned_startup = (
+            self._startup_clock.requires_ownership
+            or self.spec.admission.enabled
+            or self.spec.cache.mode == "immutable-seed"
         )
-        if requested_native_settings(self.spec) or any(
-            config.timeouts.model_dump() for config in native_configurations
-        ):
-            validate_settings = getattr(self.adapter, "validate_native_settings", None)
-            if not callable(validate_settings):
-                raise UnsupportedFeature(
-                    "adapter cannot validate requested native settings"
-                )
-            from .harness.native_capabilities import NativeRuntimeIdentity
+        if owned_startup:
+            self._credential_deadline = self._startup_clock.begin_owned_preparation()
+            if (
+                self._native_auth_operations is None
+                and getattr(self.spec.harness, "kind", None) == "codex"
+            ):
+                from ._bootstrap_operations import OwnedBootstrapOperations
 
-            runtime_identity = None
-            if self._runtime_lease is not None:
-                provenance = getattr(self._runtime_lease, "provenance", None)
-                if not isinstance(provenance, Mapping):
-                    raise UnsupportedFeature(
-                        "managed native capability identity is unavailable"
-                    )
-                runtime_identity = NativeRuntimeIdentity.from_provenance(provenance)
-            await validate_settings(
-                self.spec, native_configurations, runtime_identity=runtime_identity
-            )
-        if self._deferred_elicitation_capability_check:
-            await _prepare_capabilities(self.adapter)
-            _require_elicitation_capability(self.adapter)
-            self._deferred_elicitation_capability_check = False
+                self._native_auth_operations = OwnedBootstrapOperations()
+                self._owns_native_auth_operations = True
         if self._server_manager is not None:
             # Import lazily: the contract module aliases this core adapter
             # protocol, so importing it at module load would create a cycle.
             start = self._server_manager.start
+            credential_activation = getattr(
+                self.adapter, "prepare_launch_credentials", None
+            )
             defaults_provider = getattr(
                 self.adapter, "stdio_environment_defaults", None
             )
             stdio_environment_defaults = (
                 defaults_provider(self.spec) if callable(defaults_provider) else {}
             )
-            if stdio_environment_defaults and self._supports_stdio_environment_defaults(
-                self._server_manager, start
+            options: dict[str, Any] = {}
+            if owned_startup and self._supports_start_option(
+                self._server_manager, start, "startup_clock"
             ):
-                started_snapshot = await start(
-                    stdio_environment_defaults=stdio_environment_defaults
-                )
-            else:
-                started_snapshot = await start()
+                options["startup_clock"] = self._startup_clock
+            if stdio_environment_defaults and self._supports_start_option(
+                self._server_manager, start, "stdio_environment_defaults"
+            ):
+                options["stdio_environment_defaults"] = stdio_environment_defaults
+            if callable(credential_activation) and self._supports_start_option(
+                self._server_manager, start, "defer_capture"
+            ):
+                options["defer_capture"] = True
+            started_snapshot = await start(**options)
             # Transport evidence is emitted only after the server group has
             # successfully started and before the harness is opened. The
             # snapshot is the configured source; manager configurations are
@@ -956,8 +1054,22 @@ class AsyncAgentSession:
                     self._interactions,
                     str(self._workspace.root),
                     capture=self._server_manager.capture,
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
+                    _cache_policy=self._cache_policy,
+                    _startup_lease=self._startup_lease,
+                    _startup_clock=self._startup_clock,
+                    _preparation=self._preparation_supervisor,
                 )
                 launch = await self._preflight_launch(launch)
+                if callable(credential_activation):
+                    launch = await credential_activation(launch)
+                if launch._credentials is not None:
+                    self._workspace.add_artifact_secrets(
+                        launch._credentials.redaction().secrets
+                    )
                 result = opener(launch)
             else:
                 preflight = getattr(self.adapter, "preflight", None)
@@ -972,6 +1084,14 @@ class AsyncAgentSession:
                         self._interactions,
                         str(self._workspace.root),
                         capture=self._server_manager.capture,
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
+                        _cache_policy=self._cache_policy,
+                        _startup_lease=self._startup_lease,
+                        _startup_clock=self._startup_clock,
+                        _preparation=self._preparation_supervisor,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -995,8 +1115,25 @@ class AsyncAgentSession:
                     self.spec.tool_policy,
                     self._interactions,
                     str(self._workspace.root),
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
+                    _cache_policy=self._cache_policy,
+                    _startup_lease=self._startup_lease,
+                    _startup_clock=self._startup_clock,
+                    _preparation=self._preparation_supervisor,
                 )
                 launch = await self._preflight_launch(launch)
+                credential_activation = getattr(
+                    self.adapter, "prepare_launch_credentials", None
+                )
+                if callable(credential_activation):
+                    launch = await credential_activation(launch)
+                if launch._credentials is not None:
+                    self._workspace.add_artifact_secrets(
+                        launch._credentials.redaction().secrets
+                    )
                 result = opener(launch)
             else:
                 preflight = getattr(self.adapter, "preflight", None)
@@ -1011,6 +1148,14 @@ class AsyncAgentSession:
                         self.spec.tool_policy,
                         self._interactions,
                         str(self._workspace.root),
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
+                        _cache_policy=self._cache_policy,
+                        _startup_lease=self._startup_lease,
+                        _startup_clock=self._startup_clock,
+                        _preparation=self._preparation_supervisor,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -1036,6 +1181,15 @@ class AsyncAgentSession:
                 raise UnsupportedFeature(
                     "harness adapter does not implement managed interaction contract"
                 )
+            active_session = self._adapter_session
+            if active_session is None:
+                raise UnsupportedFeature(
+                    "managed interaction requires an active harness session"
+                )
+            _require_elicitation_capability(active_session)
+            bind_session = getattr(self._managed_input_runtime, "bind_session", None)
+            if callable(bind_session):
+                bind_session(active_session.session_id)
             setter(self._managed_input_runtime)
         self._emit_captured_wire_events(None)
         async with self._state_lock:
@@ -1043,9 +1197,80 @@ class AsyncAgentSession:
                 raise asyncio.CancelledError()
         self._adapter_started = True
 
+    async def _prepare_runtime_and_capabilities(self) -> None:
+        # Managed runtime resolution is deliberately the first startup step:
+        # it must complete (or be cancelled) before server startup, probes, or
+        # provider open can produce side effects.
+        await self._prepare_managed_runtime()
+        from ._native_settings import requested_native_settings
+
+        configuration_reader = getattr(self._server_manager, "configurations", None)
+        native_configurations = (
+            tuple(configuration_reader()) if callable(configuration_reader) else ()
+        )
+        if requested_native_settings(self.spec) or any(
+            config.timeouts.model_dump() for config in native_configurations
+        ):
+            validate_settings = getattr(self.adapter, "validate_native_settings", None)
+            if not callable(validate_settings):
+                raise UnsupportedFeature(
+                    "adapter cannot validate requested native settings"
+                )
+            from .harness.native_capabilities import NativeRuntimeIdentity
+
+            runtime_identity = None
+            if self._runtime_lease is not None:
+                provenance = getattr(self._runtime_lease, "provenance", None)
+                if not isinstance(provenance, Mapping):
+                    raise UnsupportedFeature(
+                        "managed native capability identity is unavailable"
+                    )
+                runtime_identity = NativeRuntimeIdentity.from_provenance(provenance)
+            options: dict[str, Any] = {"runtime_identity": runtime_identity}
+            if self._startup_clock.requires_ownership:
+                self._startup_clock.resume()
+                from ._startup_deadlines import earliest
+
+                options["deadline"] = earliest(
+                    self._startup_clock.deadline, time.monotonic() + 15.0
+                )
+            await validate_settings(self.spec, native_configurations, **options)
+        if self._deferred_elicitation_capability_check:
+            capability_deadline = None
+            if self._owned_startup_enabled():
+                from ._startup_deadlines import earliest
+
+                self._startup_clock.resume()
+                capability_deadline = earliest(
+                    self._startup_clock.deadline, time.monotonic() + 15.0
+                )
+            await _prepare_capabilities(self.adapter, deadline=capability_deadline)
+            _require_elicitation_capability(self.adapter)
+            self._deferred_elicitation_capability_check = False
+        self._runtime_prepared = True
+
+    async def _acquire_startup_admission(self) -> None:
+        if not self.spec.admission.enabled or self._startup_lease is not None:
+            return
+        from .harness.admission import HostAdmission
+
+        self._startup_clock.pause()
+        try:
+            self._startup_lease = await HostAdmission().acquire(self.spec.admission)
+        finally:
+            self._startup_clock.resume()
+
     @staticmethod
     def _supports_stdio_environment_defaults(manager: object, start: Any) -> bool:
         """Whether a manager explicitly supports pre-instrumentation env defaults."""
+
+        return AsyncAgentSession._supports_start_option(
+            manager, start, "stdio_environment_defaults"
+        )
+
+    @staticmethod
+    def _supports_start_option(manager: object, start: Any, option: str) -> bool:
+        """Whether a manager explicitly supports a native launch preparation hook."""
 
         from .server_group import ServerGroupManager
 
@@ -1055,7 +1280,7 @@ class AsyncAgentSession:
             parameters = inspect.signature(start).parameters
         except (TypeError, ValueError):
             return False
-        return "stdio_environment_defaults" in parameters
+        return option in parameters
 
     @property
     def _managed_harness_session(self) -> HarnessSession | None:
@@ -1276,11 +1501,13 @@ class AsyncAgentSession:
         if not task.cancelled():
             task.exception()
 
-    @staticmethod
-    async def _wait_for_cleanup_component(task: asyncio.Task[None]) -> bool:
-        done, _ = await asyncio.wait(
-            (task,), timeout=_CLEANUP_COMPONENT_TIMEOUT_SECONDS
-        )
+    async def _wait_for_cleanup_component(self, task: asyncio.Task[None]) -> bool:
+        remaining = _CLEANUP_COMPONENT_TIMEOUT_SECONDS
+        if self._cleanup_deadline is not None:
+            remaining = min(
+                remaining, max(0.0, self._cleanup_deadline - time.monotonic())
+            )
+        done, _ = await asyncio.wait((task,), timeout=remaining)
         if not done:
             return False
         try:
@@ -1290,6 +1517,8 @@ class AsyncAgentSession:
         return True
 
     async def _close_harness(self) -> None:
+        if getattr(self.adapter, "_startup_cleanup_failed", False):
+            self._cleanup_failed = True
         close = getattr(self.adapter, "close", None) or getattr(
             self.adapter, "aclose", None
         )
@@ -1304,6 +1533,19 @@ class AsyncAgentSession:
                     result = exit_method(None, None, None)
                     if inspect.isawaitable(result):
                         await result
+        if self._startup_lease is not None:
+            await self._startup_lease.abort()
+            self._startup_lease = None
+        if (
+            self._owns_native_auth_operations
+            and self._native_auth_operations is not None
+        ):
+            deadline = self._cleanup_deadline or time.monotonic() + 10.0
+            await asyncio.to_thread(
+                self._native_auth_operations.close, deadline=deadline
+            )
+            if not self._native_auth_operations.cleanup_complete:
+                raise CleanupError("native credential cleanup incomplete")
         self._adapter_closed = True
 
     async def _close_server_manager(self) -> None:
@@ -1336,6 +1578,11 @@ class AsyncAgentSession:
                 if task.done():
                     self._adapter_close_task = None
 
+        if cleanup_failed and self._owned_startup_enabled():
+            # Native death is a prerequisite for disposing its private roots,
+            # captured handoffs and runtime leases.
+            raise CleanupError("native process cleanup incomplete")
+
         if self._server_manager is not None and not self._server_manager_closed:
             task = self._server_manager_close_task
             if task is None or task.done():
@@ -1346,6 +1593,15 @@ class AsyncAgentSession:
                 cleanup_failed = True
                 if task.done():
                     self._server_manager_close_task = None
+
+        if (
+            cleanup_failed
+            and self._owned_startup_enabled()
+            and not self._server_manager_closed
+            and self._server_manager is not None
+        ):
+            # A server-manager descendant may still execute the pinned runtime.
+            raise CleanupError("server process cleanup incomplete")
 
         if self._runtime_lease is not None:
             task = self._runtime_lease_close_task
@@ -1499,7 +1755,12 @@ class AsyncAgentSession:
             return False
         capture_failure = False
         try:
-            capture = await asyncio.to_thread(self._workspace.capture, outcome)
+            capture = await self._workspace.capture_async(
+                outcome,
+                deadline=self._cleanup_deadline
+                if self._owned_startup_enabled()
+                else None,
+            )
             self._workspace_capture = capture
             self._workspace_artifacts = capture.artifacts
             if emit_event and not self._cleanup_terminalized:
@@ -1518,7 +1779,11 @@ class AsyncAgentSession:
             capture_failure = True
         if cleanup:
             try:
-                await asyncio.to_thread(self._workspace.cleanup)
+                await self._workspace.cleanup_async(
+                    deadline=self._cleanup_deadline
+                    if self._owned_startup_enabled()
+                    else None
+                )
             except Exception:
                 return True
         return capture_failure
@@ -1710,6 +1975,7 @@ class AsyncAgentSession:
     ) -> TurnResult:
         self._validate_timeout(timeout)
         _validate_elicitation_arguments(elicitation, elicitation_round_limit)
+        caller_deadline = None if timeout is None else time.monotonic() + timeout
         turn_id = turn_id or TurnId(str(uuid4()))
         async with self._state_lock:
             if self._snapshot.lifecycle is ExecutionStatus.IDLE:
@@ -1732,6 +1998,21 @@ class AsyncAgentSession:
             phase=LifecyclePhase.TURN,
         )
         try:
+            if not self._adapter_started:
+                self._startup_clock.resume(caller_deadline=caller_deadline)
+                startup = self._start_adapter()
+                # Admission pauses only the active total clock. The caller's
+                # send deadline remains a wall-clock ceiling while queued.
+                await asyncio.wait_for(
+                    startup,
+                    None
+                    if caller_deadline is None
+                    else caller_deadline - time.monotonic(),
+                )
+            if caller_deadline is not None:
+                timeout = caller_deadline - time.monotonic()
+                if timeout <= 0:
+                    raise asyncio.TimeoutError
             if elicitation is not None or self._managed_input_runtime is not None:
                 await _prepare_capabilities(self.adapter)
             if elicitation is not None:
@@ -1821,6 +2102,24 @@ class AsyncAgentSession:
                 turn_id=turn_id,
                 phase=LifecyclePhase.TURN,
             )
+            capture = getattr(self._server_manager, "capture", None)
+            flush = getattr(capture, "flush", None)
+            if callable(flush):
+                try:
+                    await flush(deadline=caller_deadline)
+                except Exception:
+                    self._trace_limitations = tuple(
+                        dict.fromkeys((*self._trace_limitations, "capture_incomplete"))
+                    )
+                    self._emit_event(
+                        EventKind.DIAGNOSTIC,
+                        {
+                            "code": "capture_incomplete",
+                            "message": "MCP capture flush did not complete",
+                        },
+                        turn_id=turn_id,
+                        phase=LifecyclePhase.TURN,
+                    )
             captured_tool_calls = self._pending_captured_tool_calls()
             self._emit_captured_wire_events(turn_id)
             self._record_tool_outcomes(raw)
@@ -1939,22 +2238,50 @@ class AsyncAgentSession:
             )
             raise
         except Exception as exc:
-            terminal = bool(getattr(exc, "terminal", False)) or isinstance(
-                exc, (TransportError, OperationTimeout, OperationCancelled)
+            startup_failed = not self._adapter_started or (
+                self._owned_startup_enabled() and not self._startup_clock.finished
             )
+            error = (
+                _startup_error_info(exc)
+                if startup_failed
+                else ErrorInfo(
+                    code=self._code_for(exc), message=self._safe_failure_message(exc)
+                )
+            )
+            terminal = (
+                startup_failed
+                or bool(getattr(exc, "terminal", False))
+                or isinstance(
+                    exc, (TransportError, OperationTimeout, OperationCancelled)
+                )
+            )
+            if startup_failed:
+                self._emit_event(
+                    EventKind.DIAGNOSTIC,
+                    {
+                        "code": "startup_failed",
+                        "error_code": error.code.value,
+                        "message": error.message,
+                        "details": error.details,
+                    },
+                    turn_id=turn_id,
+                    phase=LifecyclePhase.STARTUP,
+                )
             result = self._failure_turn(
                 turn_id,
                 self._outcome_for(exc),
-                self._code_for(exc),
-                self._safe_failure_message(exc),
+                error.code,
+                error.message,
+                details=error.details,
             )
             self._emit_turn_finished(turn_id, result)
             self._turns.append(result)
             if terminal:
                 await self._finish(
                     self._execution_outcome_for(exc),
-                    self._code_for(exc),
-                    self._safe_failure_message(exc),
+                    error.code,
+                    error.message,
+                    details=error.details,
                 )
             elif self._snapshot.lifecycle is ExecutionStatus.RUNNING_TURN:
                 self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
@@ -2779,11 +3106,17 @@ class AsyncAgentSession:
         )
 
     def _failure_turn(
-        self, turn_id: TurnId, outcome: TurnOutcome, code: ErrorCode, message: str
+        self,
+        turn_id: TurnId,
+        outcome: TurnOutcome,
+        code: ErrorCode,
+        message: str,
+        *,
+        details: Mapping[str, Any] | None = None,
     ) -> TurnResult:
         return TurnResult(
             snapshot=self._turn_snapshot(turn_id, outcome),
-            error=ErrorInfo(code=code, message=message),
+            error=ErrorInfo(code=code, message=message, details=details or {}),
         )
 
     def _cancelled_turn(self, turn_id: TurnId) -> TurnResult:
@@ -2957,6 +3290,26 @@ class AsyncAgentSession:
         self._terminal_error = error
         self._terminal_result = result.model_copy(update={"error": error})
 
+    def _begin_cleanup_budget(self) -> None:
+        self._cleanup_deadline = self._startup_clock.begin_cleanup()
+
+    async def _stop_native_for_capture(self) -> bool:
+        if self._adapter_closed:
+            return True
+        task = self._adapter_close_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._close_harness())
+            task.add_done_callback(self._consume_task_failure)
+            self._adapter_close_task = task
+        return await self._wait_for_cleanup_component(task)
+
+    def _owned_startup_enabled(self) -> bool:
+        return (
+            self._startup_clock.requires_ownership
+            or self.spec.admission.enabled
+            or self.spec.cache.mode == "immutable-seed"
+        )
+
     @_timing.timed("session.close")
     async def _complete_close(self, outcome: ExecutionOutcome) -> None:
         await self._wait_for_startup()
@@ -2982,15 +3335,20 @@ class AsyncAgentSession:
                 await self._queue_task
             except asyncio.CancelledError:
                 pass
-        # Capture while the native harness still has its SDK workspace.  The
-        # adapter's close path may terminate a provider that removes files;
-        # cleanup of our workspace itself happens only after that close.
+        owned_cleanup = self._owned_startup_enabled()
+        native_stopped = True
+        if owned_cleanup:
+            native_stopped = await self._stop_native_for_capture()
+        # Owned capture is accepted only after every native writer has stopped.
+        # Unbounded compatibility retains the historical capture order.
         emit_cleanup_events = not self._cleanup_terminalized
-        cleanup_failure = await self._collect_workspace(
-            outcome,
-            cleanup=False,
-            emit_event=emit_cleanup_events,
-        )
+        cleanup_failure = not native_stopped
+        if native_stopped:
+            cleanup_failure = await self._collect_workspace(
+                outcome,
+                cleanup=False,
+                emit_event=emit_cleanup_events,
+            )
         # Project completed MCP exchanges before releasing the server group's
         # capture object.  The manager intentionally drops that object after
         # close, while activity health still needs its wire-level outcomes.
@@ -3004,10 +3362,13 @@ class AsyncAgentSession:
             cleanup_failure = True
         if emit_cleanup_events and not self._cleanup_terminalized:
             self._emit_captured_wire_events(None)
-        try:
-            await asyncio.to_thread(self._workspace.cleanup)
-        except Exception:
-            cleanup_failure = True
+        if native_stopped:
+            try:
+                await self._workspace.cleanup_async(
+                    deadline=self._cleanup_deadline if owned_cleanup else None
+                )
+            except Exception:
+                cleanup_failure = True
         if self._terminal_result is not None and self._workspace_artifacts:
             self._terminal_result = self._terminal_result.model_copy(
                 update={"artifacts": self._workspace_artifacts}
@@ -3060,16 +3421,28 @@ class AsyncAgentSession:
         if task is None or task.done():
             if self._closed:
                 return
+            if (
+                self._cleanup_failed
+                and self._startup_clock.cleanup_deadline is not None
+            ):
+                self._startup_clock.cleanup_deadline = None
+            self._begin_cleanup_budget()
             task = asyncio.create_task(self._complete_close(outcome))
             task.add_done_callback(self._consume_task_failure)
             self._cleanup_task = task
+        cleanup_deadline = self._cleanup_deadline
+        assert cleanup_deadline is not None
         try:
             done, _ = await asyncio.wait(
-                (task,), timeout=_CLEANUP_ATTEMPT_TIMEOUT_SECONDS
+                (task,), timeout=max(0.0, cleanup_deadline - time.monotonic())
             )
         except asyncio.CancelledError:
             done, _ = await asyncio.wait(
-                (task,), timeout=_CANCELLED_CLEANUP_GRACE_SECONDS
+                (task,),
+                timeout=min(
+                    _CANCELLED_CLEANUP_GRACE_SECONDS,
+                    max(0.0, cleanup_deadline - time.monotonic()),
+                ),
             )
             if not done:
                 await self._terminalize_cleanup_timeout()

@@ -12,6 +12,7 @@ from .types import (
     Codex,
     CodexPermissionProfile,
     CodexPermissions,
+    HarnessTimeouts,
     McpTimeouts,
     OpenCode,
     OpenCodePermissions,
@@ -20,6 +21,16 @@ from .types import (
 )
 
 NativePermissions = CodexPermissions | ClaudeCodePermissions | OpenCodePermissions
+
+
+def timeout_override(spec: AgentSpec, timeouts: HarnessTimeouts | Unset) -> AgentSpec:
+    if timeouts is UNSET:
+        return spec
+    if not isinstance(timeouts, HarnessTimeouts):
+        raise ModelValidationError("harness timeout override must be typed")
+    return spec.model_copy(
+        update={"harness_timeouts": merge_settings(spec.harness_timeouts, timeouts)}
+    )
 
 
 def permission_override(
@@ -95,7 +106,12 @@ def _validate_timeouts(spec: AgentSpec) -> None:
         )
 
 
-def resolve_native_settings(spec: AgentSpec, config: Config) -> AgentSpec:
+def resolve_native_settings(
+    spec: AgentSpec,
+    config: Config,
+    *,
+    kit_timeouts: HarnessTimeouts | None = None,
+) -> AgentSpec:
     """Merge file, harness, server, binding, and session explicit leaves.
 
     This validates structure only. The resolved executable's capabilities are
@@ -107,10 +123,13 @@ def resolve_native_settings(spec: AgentSpec, config: Config) -> AgentSpec:
         lower: NativePermissions
         if isinstance(harness, Codex):
             lower = config.harnesses.codex.permissions
+            lower_timeouts = config.harnesses.codex.timeouts
         elif isinstance(harness, ClaudeCode):
             lower = config.harnesses.claude_code.permissions
+            lower_timeouts = config.harnesses.claude_code.timeouts
         elif isinstance(harness, OpenCode):
             lower = config.harnesses.opencode.permissions
+            lower_timeouts = config.harnesses.opencode.timeouts
         else:
             if spec.harness_permissions is not None:
                 raise UnsupportedFeature(
@@ -129,7 +148,15 @@ def resolve_native_settings(spec: AgentSpec, config: Config) -> AgentSpec:
         permissions = merge_settings(*layers)
         if isinstance(permissions, CodexPermissions):
             _validate_codex(permissions)
-        harness = harness.model_copy(update={"permissions": permissions})
+        timeouts = merge_settings(
+            lower_timeouts,
+            kit_timeouts or HarnessTimeouts(),
+            harness.timeouts,
+            spec.harness_timeouts,
+        )
+        harness = harness.model_copy(
+            update={"permissions": permissions, "timeouts": timeouts}
+        )
         result = spec.model_copy(update={"harness": harness, "servers": servers})
         _validate_timeouts(result)
         return result
@@ -177,6 +204,8 @@ def native_literal_inputs(spec: AgentSpec) -> tuple[str, ...]:
     are never treated as credentials.
     """
     values: set[str] = set()
+    if spec.cache.mode == "immutable-seed" and isinstance(spec.cache.root, str):
+        values.add(spec.cache.root)
     harness = spec.harness
     if isinstance(harness, Codex):
         permissions = harness.permissions

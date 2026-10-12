@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,6 +23,316 @@ from m3.types import (
     WorkspacePolicy,
 )
 from m3.workspace import WorkspaceError, WorkspaceManager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "temporary", "sqlite"])
+async def test_owned_capture_preserves_artifacts_and_redaction(
+    tmp_path: Path, backend: str
+) -> None:
+    from m3.storage import InMemoryArtifactStore, TemporaryArtifactStore
+    from m3.storage.sqlite import SQLiteExecutionStore
+    from m3.trace.redaction import RedactionConfig
+    from m3.types import ExecutionState
+
+    config = RedactionConfig(
+        secrets=frozenset({"private-code-ALPHA"}), include_environment=False
+    )
+    execution_id = ExecutionId("capture-test")
+    persistent = None
+    if backend == "sqlite":
+        persistent = SQLiteExecutionStore(tmp_path / "results.sqlite", config=config)
+        persistent.create(ExecutionState(execution_id=execution_id))
+        store = persistent.artifacts
+    elif backend == "temporary":
+        store = TemporaryArtifactStore(tmp_path / "artifacts", config=config)
+    else:
+        store = InMemoryArtifactStore(config=config)
+    manager = WorkspaceManager(
+        WorkspacePolicy(),
+        execution_id,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=store,
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    (root / "output.txt").write_text("code: private-code-ALPHA")
+    try:
+        capture = await manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+        )
+        assert [entry.path for entry in capture.diff.added] == ["output.txt"]
+        assert len(capture.artifacts) == 1
+        assert capture.artifacts[0].execution_id == execution_id
+        content = store.get(capture.artifacts[0])
+        assert b"private-code-ALPHA" not in content
+        assert b"code:" in content
+        assert (
+            await manager.capture_async(
+                ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+            )
+            is capture
+        )
+    finally:
+        await manager.cleanup_async(deadline=time.monotonic() + 5)
+        if persistent is not None:
+            persistent.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_capture_streams_artifact_larger_than_private_frame_limit(
+    tmp_path: Path,
+) -> None:
+    from m3.storage import InMemoryArtifactStore
+    from m3.trace.redaction import RedactionConfig
+
+    store = InMemoryArtifactStore(config=RedactionConfig(include_environment=False))
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("large.bin",),
+        artifact_store=store,
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    content = os.urandom(13 * 1024 * 1024)
+    (root / "large.bin").write_bytes(content)
+    try:
+        capture = await manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+        )
+        assert store.get(capture.artifacts[0]) == content
+    finally:
+        await manager.cleanup_async(deadline=time.monotonic() + 5)
+
+
+@pytest.mark.asyncio
+async def test_owned_capture_rejects_custom_artifact_hooks_before_workspace_creation(
+    tmp_path: Path,
+) -> None:
+    from m3.errors import UnsupportedFeature
+    from m3.storage import InMemoryArtifactStore
+
+    class CustomStore(InMemoryArtifactStore):
+        def put(self, *args: object, **kwargs: object) -> Any:
+            pytest.fail("custom artifact hook was invoked")
+
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=CustomStore(),
+    )
+    with pytest.raises(UnsupportedFeature, match="built-in artifact store"):
+        await manager.create_async(deadline=time.monotonic() + 5)
+    assert manager._root is None
+
+
+@pytest.mark.asyncio
+async def test_owned_capture_retains_launch_secret_after_ambient_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from m3.storage import InMemoryArtifactStore
+    from m3.trace.redaction import RedactionConfig
+
+    store = InMemoryArtifactStore(config=RedactionConfig(include_environment=False))
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=store,
+    )
+    manager.add_artifact_secrets(("pinned-launch-secret",))
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    monkeypatch.setenv("API_TOKEN", "rotated-ambient-value")
+    (root / "output.txt").write_text("pinned-launch-secret and rotated-ambient-value")
+    try:
+        capture = await manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=time.monotonic() + 5
+        )
+        content = store.get(capture.artifacts[0])
+        assert b"pinned-launch-secret" not in content
+        assert b"rotated-ambient-value" in content
+    finally:
+        await manager.cleanup_async(deadline=time.monotonic() + 5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_blocked_capture_returns_on_deadline_without_publishing_artifacts(
+    tmp_path: Path, blocked_helper: Any, cancel: bool
+) -> None:
+    from m3._bootstrap_operations import PrivateOperationError
+    from m3.storage import InMemoryArtifactStore
+
+    _, _, marker, _, _ = blocked_helper("workspace_capture")
+    store = InMemoryArtifactStore()
+    manager = _manager(
+        WorkspacePolicy(),
+        tmp_path,
+        artifact_policy=ArtifactPolicy.ALWAYS,
+        declared_artifacts=("output.txt",),
+        artifact_store=store,
+    )
+    root = manager.create()
+    (root / "output.txt").write_text("unaccepted")
+    started = time.monotonic()
+    pending = asyncio.create_task(
+        manager.capture_async(
+            ExecutionOutcome.COMPLETED, deadline=started + (5 if cancel else 0.5)
+        )
+    )
+    if cancel:
+
+        async def wait_until_blocked() -> None:
+            while not marker.exists():
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(wait_until_blocked(), timeout=1)
+        pending.cancel()
+    with pytest.raises(
+        (asyncio.TimeoutError, PrivateOperationError, asyncio.CancelledError)
+    ):
+        await pending
+    assert time.monotonic() - started < 1.5
+    assert marker.exists()
+    assert manager.captured is None
+    assert tuple(store.iter_refs()) == ()
+    assert manager._capture_operations is not None
+    await asyncio.to_thread(
+        manager._capture_operations.close, deadline=time.monotonic() + 3
+    )
+    assert manager._capture_operations.cleanup_complete
+    assert tuple(store.iter_refs()) == ()
+    await manager.cleanup_async(deadline=time.monotonic() + 5)
+    assert not root.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind", [WorkspaceKind.COPY, WorkspaceKind.READ_ONLY, WorkspaceKind.IN_PLACE]
+)
+async def test_bounded_cleanup_preserves_source_and_removes_only_owned_roots(
+    tmp_path: Path, kind: WorkspaceKind
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "input.txt").write_text("source")
+    manager = _manager(
+        WorkspacePolicy(kind=kind, source=str(source), acknowledge_risk=True), tmp_path
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    await manager.cleanup_async(deadline=time.monotonic() + 5)
+    assert (source / "input.txt").read_text() == "source"
+    assert root.exists() == (kind is WorkspaceKind.IN_PLACE)
+    assert manager._preparation_root is not None
+    assert not manager._preparation_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_bounded_cleanup_rejects_replaced_root(tmp_path: Path) -> None:
+    from m3._bootstrap_operations import PrivateOperationError
+
+    manager = _manager(WorkspacePolicy(), tmp_path)
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    original = root.with_name("original")
+    root.rename(original)
+    root.mkdir()
+    (root / "must-survive.txt").write_text("replacement")
+    try:
+        with pytest.raises(PrivateOperationError):
+            await manager.cleanup_async(deadline=time.monotonic() + 5)
+        assert (root / "must-survive.txt").read_text() == "replacement"
+        with pytest.raises(WorkspaceError, match="quarantined"):
+            manager.cleanup()
+    finally:
+        root.joinpath("must-survive.txt").unlink()
+        root.rmdir()
+        original.rmdir()
+        assert manager._preparation_root is not None
+        manager._preparation_root.rmdir()
+
+
+@pytest.mark.asyncio
+async def test_expired_cleanup_never_removes_workspace(tmp_path: Path) -> None:
+    manager = _manager(WorkspacePolicy(), tmp_path)
+    root = manager.create()
+    with pytest.raises(asyncio.TimeoutError):
+        await manager.cleanup_async(deadline=time.monotonic() - 1)
+    assert root.exists()
+    # The expired call cannot start its helper; fixture disposal is safe.
+    root.rmdir()
+
+
+@pytest.mark.asyncio
+async def test_bounded_worktree_cleanup_removes_only_its_registration(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "repository"
+    source.mkdir()
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    (source / "input.txt").write_text("source")
+    subprocess.run(["git", "add", "input.txt"], cwd=source, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "initial",
+        ],
+        cwd=source,
+        check=True,
+        capture_output=True,
+    )
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.GIT_WORKTREE, source=str(source)), tmp_path
+    )
+    root = await manager.create_async(deadline=time.monotonic() + 5)
+    await manager.cleanup_async(deadline=time.monotonic() + 5)
+    registered = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert str(root) not in registered
+    assert (source / "input.txt").read_text() == "source"
+    assert not root.exists()
+
+
+@pytest.mark.asyncio
+async def test_blocked_cleanup_is_fenced_without_late_workspace_deletion(
+    tmp_path: Path, blocked_helper: Any
+) -> None:
+    from m3._bootstrap_operations import PrivateOperationError
+
+    _, _, marker, _, _ = blocked_helper("workspace_remove")
+    manager = _manager(WorkspacePolicy(), tmp_path)
+    root = manager.create()
+    (root / "evidence.txt").write_text("keep")
+    started = time.monotonic()
+    with pytest.raises((asyncio.TimeoutError, PrivateOperationError)):
+        await manager.cleanup_async(deadline=started + 0.5)
+    assert time.monotonic() - started < 1.5
+    assert marker.exists()
+    assert (root / "evidence.txt").read_text() == "keep"
+    with pytest.raises(WorkspaceError, match="quarantined"):
+        manager.cleanup()
+    # The retained owner must acknowledge writer death before fixture disposal.
+    assert manager._cleanup_operations is not None
+    await asyncio.to_thread(
+        manager._cleanup_operations.close, deadline=time.monotonic() + 3
+    )
+    assert manager._cleanup_operations.cleanup_complete
+    (root / "evidence.txt").unlink()
+    root.rmdir()
 
 
 def _manager(

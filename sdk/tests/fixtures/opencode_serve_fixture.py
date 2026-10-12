@@ -155,7 +155,24 @@ class Handler(BaseHTTPRequestHandler):
                 directory=self.headers.get("x-opencode-directory"),
                 session_id=session_id,
             )
-            self._json(200, {"id": session_id})
+            delay = float(os.environ.get("M3_OPENCODE_SESSION_CHUNK_DELAY", "0"))
+            if delay:
+                encoded = json.dumps({"id": session_id}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                try:
+                    for index in range(4):
+                        start = index * len(encoded) // 4
+                        stop = (index + 1) * len(encoded) // 4
+                        self.wfile.write(encoded[start:stop])
+                        self.wfile.flush()
+                        time.sleep(delay)
+                except OSError:
+                    pass
+            else:
+                self._json(200, {"id": session_id})
             return
         if self.path == f"/session/{session_id}/message":
             record(

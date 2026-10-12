@@ -339,6 +339,8 @@ m3.async_api.AsyncMCPTestKit(
     record_checks: bool = False,
     max_judge_requests: int | None = None,
     harness_cache_dir: str | _Path | None = None,
+    admission: _StartupAdmission | _Unset = Unset.UNSET,
+    harness_timeouts: _HarnessTimeouts | None = None,
 ) -> None
 ```
 
@@ -502,15 +504,12 @@ agent_session(
     *,
     adapter: _AgentAdapter | None = None,
     runtime_servers: _Iterable[_Any] = (),
-    _event_sink: _Any = None,
     interaction_handlers: InteractionHandlers | None = None,
-    _trace_recorder: _ExecutionTraceRecorder | None = None,
-    _trace_owner: bool = True,
-    _execution_id: _Any = None,
-    _artifact_store: _ArtifactStore | None = None,
-    _managed_input_runtime: _Any = None,
     harness_cache_dir: str | _Path | None = None,
     harness_permissions: _NativePermissions | _Unset = Unset.UNSET,
+    admission: _StartupAdmission | _Unset = Unset.UNSET,
+    harness_timeouts: _HarnessTimeouts | _Unset = Unset.UNSET,
+    cache: _CachePolicy | _Unset = Unset.UNSET,
 ) -> AsyncAgentSession
 ```
 

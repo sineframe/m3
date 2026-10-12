@@ -23,7 +23,18 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, Literal, cast
+from typing import IO, TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from ._artifact_custody import ArtifactLease
+
+from ._process_group_custody import (
+    exited_status,
+    group_snapshot,
+    has_unreaped_status,
+    members_alive,
+    ownership_supported,
+)
 
 MAX_FRAME = 16 * 1024 * 1024
 TERM_GRACE = 0.3
@@ -144,8 +155,12 @@ def _job(operation: str, root: Path, payload: dict[str, Any]) -> dict[str, Any]:
                     manager._copy_tree(source, target)
                     if policy.kind is WorkspaceKind.READ_ONLY:
                         manager._make_read_only(target)
+        identity = target.stat(follow_symlinks=False)
+        staging_identity = root.stat(follow_symlinks=False)
         return {
             "root": str(target),
+            "root_identity": [identity.st_dev, identity.st_ino],
+            "staging_identity": [staging_identity.st_dev, staging_identity.st_ino],
             "owned": owned,
             "baseline": manager._snapshot(target),
         }
@@ -225,6 +240,8 @@ class _ForkJob:
     ) -> None:
         import resource
 
+        if not ownership_supported():
+            raise RuntimeError("preparation requires unreaped child ownership")
         if threading.active_count() != 1:
             raise RuntimeError("preparation helper must remain single-threaded")
         read_fd, write_fd = os.pipe()
@@ -233,6 +250,8 @@ class _ForkJob:
         self.group_established = False
         self._gate_fd: int | None = gate_write if gated else None
         self.returncode: int | None = None
+        self._reaped = False
+        self.exited = False
         self.pid = os.fork()
         if self.pid == 0:
             try:
@@ -274,6 +293,8 @@ class _ForkJob:
             self.stdout = None
 
     def signal(self, sig: int) -> None:
+        if self._reaped:
+            return
         if self.group_established:
             _signal_group(self.pid, sig)
         elif self.poll() is None:
@@ -285,7 +306,11 @@ class _ForkJob:
                 pass
 
     def alive(self) -> bool:
-        return _group_alive(self.pid) if self.group_established else self.poll() is None
+        if self._reaped:
+            return False
+        if self.returncode is None:
+            return True
+        return self.group_established and members_alive(self.pid)
 
     def begin(self) -> None:
         if self._gate_fd is not None and self.group_established:
@@ -297,9 +322,29 @@ class _ForkJob:
             self._gate_fd = None
 
     def poll(self) -> int | None:
+        if not self._reaped and not has_unreaped_status():
+            # Python builds without waitid still retain their waitable child.
+            # Both proofs are needed: a running leader could fork after a
+            # member query. A zombie leader cannot create a new writer.
+            zombie, descendants = group_snapshot(self.pid)
+            self.exited = self.exited or zombie
+            if zombie and not descendants:
+                pid, status = os.waitpid(self.pid, 0)
+                assert pid == self.pid
+                self._reaped = True
+                self.returncode = os.waitstatus_to_exitcode(status)
+                if self._gate_fd is not None:
+                    os.close(self._gate_fd)
+                    self._gate_fd = None
+            return self.returncode
         if self.returncode is None:
-            pid, status = os.waitpid(self.pid, os.WNOHANG)
-            if pid:
+            self.returncode = exited_status(self.pid)
+            self.exited = self.returncode is not None
+        if self.returncode is not None and not self._reaped:
+            if not self.group_established or not members_alive(self.pid):
+                pid, status = os.waitpid(self.pid, 0)
+                assert pid == self.pid
+                self._reaped = True
                 if self._gate_fd is not None:
                     os.close(self._gate_fd)
                     self._gate_fd = None
@@ -314,6 +359,7 @@ def _fork_job(
     *,
     create_root: bool = False,
     private_channel: socket.socket | None = None,
+    artifact_custody: socket.socket | None = None,
 ) -> _ForkJob:
     def execute() -> None:
         try:
@@ -322,9 +368,18 @@ def _fork_job(
             if private_channel is not None:
                 from ._bootstrap_operations import execute_private_operation
 
-                execute_private_operation(
-                    private_channel, root, operation, payload["deadline"]
-                )
+                if operation == "private_immutable_cache":
+                    from ._cache_guard import execute_cache_guard
+
+                    with private_channel:
+                        assert artifact_custody is not None
+                        execute_cache_guard(
+                            private_channel, root, payload["deadline"], artifact_custody
+                        )
+                else:
+                    execute_private_operation(
+                        private_channel, root, operation, payload["deadline"]
+                    )
                 result = {}
             else:
                 result = _job(operation, root, payload)
@@ -333,6 +388,14 @@ def _fork_job(
                 "private_capsule",
                 "private_endpoint",
                 "private_native_auth",
+                "private_immutable_cache",
+                "private_native_launch",
+                "private_capture_root",
+                "private_capture_append",
+                "private_capture_files",
+                "private_capture_read",
+                "private_native_support",
+                "private_native_probe",
             }:
                 identity = root.stat(follow_symlinks=False)
                 # Helper-only ownership evidence; never forwarded as a result.
@@ -342,8 +405,14 @@ def _fork_job(
                 raise ValueError("preparation result exceeds limit")
         except _UnsupportedGitExtensions:
             frame = b'{"ok":false,"reason":"unsupported_git_extensions"}\n'
-        except Exception:
-            frame = b'{"ok":false}\n'
+        except Exception as error:
+            from ._artifact_identity import UnsupportedArtifactBuild
+
+            frame = (
+                b'{"ok":false,"reason":"unsupported_immutable_cache_build"}\n'
+                if isinstance(error, UnsupportedArtifactBuild)
+                else b'{"ok":false}\n'
+            )
         view = memoryview(frame)
         while view:
             sent = os.write(1, view)
@@ -353,7 +422,11 @@ def _fork_job(
         execute,
         output=True,
         gated=True,
-        keep_fds=(private_channel.fileno(),) if private_channel is not None else (),
+        keep_fds=tuple(
+            channel.fileno()
+            for channel in (private_channel, artifact_custody)
+            if channel is not None
+        ),
     )
 
 
@@ -363,15 +436,21 @@ class Job:
     root: Path
     process: _ForkJob
     output: bytearray = field(default_factory=bytearray)
-    state: Literal["running", "ready", "accepted", "released", "fenced", "removing"] = (
-        "running"
-    )
+    state: Literal[
+        "running", "ready", "accepted", "released", "fenced", "removing", "quarantined"
+    ] = "running"
     stop_at: float | None = None
     killed: bool = False
     quarantine_sent: bool = False
     cleanup_source: str | None = None
     stream_open: bool = True
     private_kind: str | None = None
+    cache_guard: bool = False
+    cache_writers_dead: bool = False
+    artifact_custody: socket.socket | None = field(default=None, repr=False)
+    artifact_lease: ArtifactLease | None = field(default=None, repr=False)
+    artifact_deadline: float | None = None
+    artifact_guard_closed: bool = False
     cleanup_identity: tuple[int, int] | None = None
 
 
@@ -419,14 +498,26 @@ def _supervise(
             )
 
     def stop(job: Job) -> None:
-        if job.state == "released" and not controller_open:
+        if job.state == "quarantined":
+            return
+        if (
+            job.state == "released"
+            and not controller_open
+            and job.artifact_lease is None
+        ):
             return
         job.state = "fenced"
         if job.stop_at is None:
             job.stop_at = time.monotonic()
-            job.process.signal(signal.SIGTERM)
+            if not job.cache_guard:
+                job.process.signal(signal.SIGTERM)
 
     def spawn_cleanup(job: Job) -> None:
+        if job.artifact_custody is not None:
+            selector.unregister(job.artifact_custody)
+            job.artifact_custody.close()
+            job.artifact_custody = None
+
         # Writer death precedes unregistering the exact owned worktree. Never
         # prune unrelated worktrees or delete the source repository.
         def remove_owned_root() -> None:
@@ -437,20 +528,45 @@ def _supervise(
                     return
                 if (identity.st_dev, identity.st_ino) != job.cleanup_identity:
                     raise ValueError("private cleanup resource changed")
+            if job.artifact_lease is not None:
+                from ._artifact_custody import quarantine_artifact
+
+                quarantine_artifact(job.artifact_lease, job.ident)
             _remove(job.root, job.cleanup_source)
 
         process = _ForkJob(
             remove_owned_root,
             output=False,
             gated=True,
+            keep_fds=(job.artifact_lease.descriptor,)
+            if job.artifact_lease is not None
+            else (),
         )
         job.process = process
+        job.cache_guard = False
         job.state = "removing"
         job.stop_at = None
         job.killed = False
         job.stream_open = False
         os.set_blocking(process.ready.fileno(), False)
         selector.register(process.ready, selectors.EVENT_READ, ("group", job))
+
+    def receive_artifact_custody(job: Job) -> None:
+        from ._artifact_custody import receive_artifact_lease
+
+        assert job.artifact_custody is not None
+        if job.artifact_lease is not None:
+            stop(job)
+            return
+        job.artifact_lease = receive_artifact_lease(job.artifact_custody)
+        # Establish helper ownership before the receipt can unblock mutation.
+        try:
+            job.artifact_custody.send(b"a")
+        except OSError:
+            stop(job)
+        selector.unregister(job.artifact_custody)
+        job.artifact_custody.close()
+        job.artifact_custody = None
 
     def handle_request(request: dict[str, Any]) -> None:
         nonlocal controller_open, ownership_open
@@ -467,7 +583,17 @@ def _supervise(
                 "private_connect",
                 "private_remove",
                 "private_native_auth",
+                "private_native_launch",
+                "private_capture_root",
+                "private_capture_append",
+                "private_capture_files",
+                "private_capture_read",
+                "private_native_support",
+                "private_native_probe",
                 "private_read_auth",
+                "private_immutable_cache",
+                "private_workspace_cleanup",
+                "private_workspace_capture",
             }
             short_endpoint = request[
                 "operation"
@@ -491,22 +617,45 @@ def _supervise(
                 emit(ident, "rejected")
                 return
             private_channel = private_channels.pop(ident, None)
+            custody_parent = custody_child = None
+            if request["operation"] == "private_immutable_cache":
+                custody_parent, custody_child = socket.socketpair(
+                    socket.AF_UNIX, socket.SOCK_DGRAM
+                )
             process = _fork_job(
                 request["operation"],
                 root,
                 request["payload"],
                 create_root=owned_root is not None,
                 private_channel=private_channel,
+                artifact_custody=custody_child,
             )
+            if custody_child is not None:
+                custody_child.close()
             if private_channel is not None:
                 private_channel.close()
             assert process.stdout is not None
             os.set_blocking(process.stdout.fileno(), False)
             job = Job(ident, root, process)
+            job.cache_guard = request["operation"] == "private_immutable_cache"
+            if custody_parent is not None:
+                job.artifact_custody = custody_parent
+                job.artifact_deadline = request["payload"]["deadline"]
+                selector.register(
+                    custody_parent, selectors.EVENT_READ, ("artifact", job)
+                )
             if request["operation"] in {
                 "private_capsule",
                 "private_endpoint",
                 "private_native_auth",
+                "private_immutable_cache",
+                "private_native_launch",
+                "private_capture_root",
+                "private_capture_append",
+                "private_capture_files",
+                "private_capture_read",
+                "private_native_support",
+                "private_native_probe",
             }:
                 job.private_kind = request["operation"]
             if (
@@ -545,6 +694,22 @@ def _supervise(
             if candidate is not None and candidate.state == "accepted":
                 candidate.state = "released"
                 emit(ident, "released")
+        elif action == "artifact_accept":
+            candidate = jobs.get(ident)
+            if (
+                candidate is not None
+                and candidate.state == "released"
+                and candidate.artifact_guard_closed
+                and candidate.artifact_lease is not None
+                and candidate.artifact_deadline is not None
+                and time.monotonic() < candidate.artifact_deadline
+            ):
+                candidate.artifact_lease.close()
+                candidate.artifact_lease = None
+                emit(ident, "artifact_accepted")
+            elif candidate is not None:
+                stop(candidate)
+                emit(ident, "failed")
         elif action == "forget":
             candidate = jobs.get(ident)
             if candidate is not None and candidate.state == "released":
@@ -661,13 +826,15 @@ def _supervise(
         if raw == b"s":
             job.process.group_established = True
             if job.state == "fenced":
-                job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
+                if not job.cache_guard:
+                    job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
             elif job.state in {"running", "removing"}:
                 if ownership_open:
                     emit(
                         job.ident,
                         "cleanup_started" if job.state == "removing" else "started",
                         pid=job.process.pid,
+                        cache_guard=job.cache_guard,
                     )
                 else:
                     stop(job)
@@ -679,6 +846,20 @@ def _supervise(
         raw = os.read(key.fd, 65536)
         if raw:
             job.output.extend(raw)
+            if job.cache_guard:
+                dead = b'{"cache_writers_dead":true}\n'
+                ready = b'{"cache_ready":true}\n'
+                while True:
+                    if job.output.startswith(dead):
+                        del job.output[: len(dead)]
+                        job.cache_writers_dead = True
+                    elif job.output.startswith(ready):
+                        del job.output[: len(ready)]
+                        if job.state == "running" and job.cache_writers_dead:
+                            job.state = "ready"
+                            emit(job.ident, "ready", data={})
+                    else:
+                        break
             if len(job.output) > MAX_FRAME:
                 stop(job)
         else:
@@ -692,13 +873,56 @@ def _supervise(
             for ident, lease in tuple(private_leases.items()):
                 # Native auth may still have a harness writer. Session process
                 # ownership must confirm its death before disposing this lease.
-                if lease.private_kind == "private_native_auth":
+                if lease.private_kind in {
+                    "private_native_auth",
+                    "private_native_launch",
+                    "private_capture_root",
+                    "private_capture_append",
+                    "private_capture_files",
+                    "private_capture_read",
+                    "private_native_support",
+                    "private_native_probe",
+                }:
                     continue
                 lease.state = "fenced"
                 jobs[ident] = lease
                 del private_leases[ident]
         for ident, job in tuple(jobs.items()):
+            if job.state == "quarantined":
+                continue
             if job.state == "released":
+                if job.cache_guard:
+                    if (
+                        job.process.poll() is None
+                        or job.process.alive()
+                        or job.stream_open
+                    ):
+                        continue
+                    try:
+                        result = json.loads(job.output)
+                    except (ValueError, UnicodeError):
+                        result = {"ok": False}
+                    if result.get("ok") is not True:
+                        emit(ident, "failed")
+                        stop(job)
+                        continue
+                    identity = result.get("cleanup_identity")
+                    if identity is not None:
+                        job.cleanup_identity = (identity[0], identity[1])
+                    if job.artifact_deadline is None or now >= job.artifact_deadline:
+                        emit(ident, "failed")
+                        stop(job)
+                        continue
+                    emit(ident, "guard_closed")
+                    job.artifact_guard_closed = True
+                    job.cache_guard = False
+                if job.artifact_lease is not None:
+                    if not controller_open or (
+                        job.artifact_deadline is not None
+                        and now >= job.artifact_deadline
+                    ):
+                        stop(job)
+                    continue
                 if controller_open:
                     continue
                 if job.private_kind in {"private_capsule", "private_endpoint"}:
@@ -712,7 +936,8 @@ def _supervise(
                 # Provisional acceptance is not publication. Only release
                 # transfers ownership; EOF fences unreleased material.
                 continue
-            exited = job.process.poll() is not None
+            job.process.poll()
+            exited = job.process.exited
             alive = job.process.alive()
             if job.state == "running" and exited and not job.stream_open:
                 if alive:
@@ -732,8 +957,12 @@ def _supervise(
                         emit(
                             ident,
                             "failed",
-                            reason="unsupported_git_extensions"
-                            if result.get("reason") == "unsupported_git_extensions"
+                            reason=result.get("reason")
+                            if result.get("reason")
+                            in {
+                                "unsupported_git_extensions",
+                                "unsupported_immutable_cache_build",
+                            }
                             else None,
                         )
                         stop(job)
@@ -746,10 +975,21 @@ def _supervise(
                         job.stop_at is not None
                         and now - job.stop_at >= TERM_GRACE
                         and not job.killed
+                        and not job.cache_guard
                     ):
                         job.process.signal(signal.SIGKILL)
                         job.killed = True
                 elif not job.stream_open:
+                    if job.cache_guard and not job.cache_writers_dead:
+                        # Guardian death alone says nothing about its separate
+                        # writer group. Lost custody permanently quarantines
+                        # this private generation; never signal guessed PGIDs.
+                        if not job.quarantine_sent:
+                            emit(ident, "cleanup_failed")
+                            job.quarantine_sent = True
+                        # Missing death proof keeps both helper and kernel lease alive.
+                        job.state = "quarantined"
+                        continue
                     if ownership_open:
                         spawn_cleanup(job)
                     else:
@@ -758,11 +998,17 @@ def _supervise(
                         del jobs[ident]
             elif job.state == "removing":
                 if exited and not alive:
+                    if job.process.returncode == 0 and job.artifact_lease is not None:
+                        job.artifact_lease.close()
+                        job.artifact_lease = None
                     emit(
                         ident,
                         "removed" if job.process.returncode == 0 else "cleanup_failed",
                     )
-                    del jobs[ident]
+                    if job.process.returncode != 0 and job.artifact_lease is not None:
+                        job.state = "quarantined"
+                    else:
+                        del jobs[ident]
                 elif (
                     job.stop_at is not None
                     and now - job.stop_at >= TERM_GRACE
@@ -799,7 +1045,10 @@ def _supervise(
                 elif key.data == "controller":
                     read_controller_requests()
                 elif isinstance(key.data, tuple):
-                    handle_group_ready(key)
+                    if key.data[0] == "artifact":
+                        receive_artifact_custody(key.data[1])
+                    else:
+                        handle_group_ready(key)
                 else:
                     read_job_output(key)
             progress_jobs()

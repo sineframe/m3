@@ -99,7 +99,7 @@ The `code` is `invalid_configuration` for a bad value, `unknown_setting` for an 
 
 ## Construct and merge native settings
 
-`Config` also parses typed native timeout, permission, cache and admission values. Construction and loading never launch a process. Agent sessions apply native permissions and MCP budgets after merging their explicit settings and checking the selected runtime. Harness phase deadlines, cache reuse and admission values remain a configuration foundation.
+`Config` also parses typed native timeout, permission, cache and admission values. Construction and loading never launch a process. Agent sessions apply native permissions and MCP budgets after merging their explicit settings and checking the selected runtime. Harness deadlines apply to native startup phases after the selected settings have been resolved.
 
 `load_config(config_file=path)` replaces project discovery with an explicit TOML file containing the same `[tool.m3]` table. It adds no environment variables or CLI flags. Invalid fields fail during parsing; no native process is started by this API. Both file forms merge defaults, file values, existing configuration environment values, and explicit Python values in that order. Alias settings describe existing server bindings and never create servers.
 
@@ -126,6 +126,56 @@ busy_timeout_seconds = 30
 ```
 
 Codex permission values choose a named or defined profile, or legacy sandbox options. A profile cannot coexist with legacy sandbox/network overrides. Defined profiles expose a subset of the [Codex 0.160.1 native schema](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/core/config.schema.json): filesystem path decisions (`read`, `write`, `deny`), and network enablement/domain decisions (`allow`, `deny`). Interactive approval policy is separate from filesystem permissions. Claude Code and OpenCode tool rules do not promise OS filesystem confinement. Runtime support must be validated before these values are applied.
+
+### Bound native startup
+
+Set `HarnessTimeouts` on a harness, as `harness_timeouts=` on either kit, or as `harness_timeouts=` on `agent.session(...)`. Values merge by explicit field: global configuration, per-harness configuration, the kit override, harness selection, then session override. An initialization-only override preserves an inherited startup or total budget.
+
+For pytest's selected `agent`, a session override can raise the native ceiling while leaving the selection's other settings in place:
+
+```python
+import sys
+from pathlib import Path
+
+import pytest
+
+from m3.types import HarnessTimeouts, McpTimeouts, StdioServer
+
+pytestmark = pytest.mark.m3(suite_name="slow-startup")
+
+
+def test_slow_startup(agent):
+    server = StdioServer(
+        name="slow",
+        command=sys.executable,
+        args=[str(Path(__file__).with_name("slow_mcp.py"))],
+        environment={"DELAY_S": "40"},
+        timeouts=McpTimeouts(startup_seconds=75),
+    )
+    with agent.session(
+        servers=[server],
+        harness_timeouts=HarnessTimeouts(total_seconds=120, startup_seconds=90),
+    ) as session:
+        turn = session.send("Call lookup and report the code.", timeout=120)
+        assert turn.error is None
+```
+
+Native session entry prepares the workspace and checks capabilities. The first `send()` starts credentials, capture and the native harness; time spent idle between entry and that send does not consume the active total budget. Startup also counts against that send's `timeout=`. Admission queue time suspends the active total budget at the admission checkpoint, while its separate queue deadline and the caller's send deadline continue to run.
+
+`total_seconds` starts with owned preparation and covers active preparation through native and required MCP readiness. Each phase uses the earliest remaining parent deadline; progress frames and HTTP body chunks do not restart it. With total 120 seconds, 15 seconds of preparation leaves 105 seconds. A native ceiling of 90 and an MCP session ceiling of 75 then leave at most 75 seconds for that session phase. Native MCP startup settings also remain in effect, so raise both budgets when a server needs longer to initialize.
+
+| Field | Startup boundary |
+| --- | --- |
+| `startup_seconds` | Aggregate native launch through required MCP readiness. Also selects the owned configuration preparation ceiling. |
+| `initialize_seconds` | Codex initialization; Claude initialization event; OpenCode session creation. |
+| `readiness_seconds` | Codex thread readiness; Claude initialization event; OpenCode server endpoint readiness. |
+| `session_seconds` | Codex thread creation; Claude initialization event; OpenCode session creation and MCP status confirmation. |
+| `request_seconds` | Native startup protocol requests or initial prompt delivery. |
+| `total_seconds` | Active preparation and native startup; `None` disables this optional ceiling. |
+
+Omitted fields preserve existing phase defaults: Codex initialization 5 seconds, account requests 15 seconds and thread creation 30 seconds; OpenCode endpoint readiness 20 seconds and session creation 30 seconds. An explicit native startup ceiling replaces the shorter default Codex thread or OpenCode readiness/session ceiling, while explicit phase values take precedence. Claude initialization remains bounded by the caller when no native phase is configured. Owned configuration jobs share one 30-second preparation ceiling when no `startup_seconds` is supplied; this ceiling ends before native execution and does not cap a separately configured longer initialization phase.
+
+Explicit bounded startup uses owned POSIX processes for framework filesystem preparation and native execution. Cancellation fences publication; unresolved writers retain quarantined resources. Bounded Git worktree preparation rejects executable hooks and external filter, fsmonitor or partial-clone commands before checkout. Arbitrary custom artifact-store hooks cannot run under a bounded capture deadline; built-in memory, temporary-file and SQLite stores are supported. Cleanup has one 10-second attempt, with component waits and cancellation grace clipped to its remaining budget. A cleanup failure preserves the original startup or turn error and leaves uncertain resources owned.
 
 ### Apply native permissions and MCP budgets
 
@@ -179,13 +229,13 @@ Use `harness` in a `HarnessCase`, as shown in [agent matrices](../guides/agents/
 
 Codex receives the selected profile in its isolated native config and `thread/start` request. M3 omits the legacy `sandbox` override and confirms the returned active profile ID. Builtins verified for the supported releases are `:read-only`, `:workspace`, and `:danger-full-access`. A legacy network setting requires `CodexPermissions(sandbox="workspace-write", network_access=True)`; profile filesystem/network rules cannot coexist with these legacy options. Interactive `approval_policy` is checked against the selected runtime's exported RPC schema, so an obsolete policy fails explicitly.
 
-Codex budgets become `startup_timeout_sec` and `tool_timeout_sec`. OpenCode's native `timeout` is one integer millisecond budget used for startup and requests; supplying distinct values for the two phases is invalid. Claude Code's `MCP_TIMEOUT` is process-wide, so all bound servers must have the same effective startup setting, including omitted settings. Claude request budgets use its per-server `timeout` field and may differ. They must be at least one second. Millisecond timers reject fractional milliseconds and values their native timer would clamp. These are native MCP budgets; M3's separate startup phase limits remain unchanged. Direct clients use their existing `timeout=` API and reject native harness budgets.
+Codex budgets become `startup_timeout_sec` and `tool_timeout_sec`. OpenCode's native `timeout` is one integer millisecond budget used for startup and requests; supplying distinct values for the two phases is invalid. Claude Code's `MCP_TIMEOUT` is process-wide, so all bound servers must have the same effective startup setting, including omitted settings. Claude request budgets use its per-server `timeout` field and may differ. They must be at least one second. Millisecond timers reject fractional milliseconds and values their native timer would clamp. These native MCP budgets are nested within M3's configured harness startup deadlines. Direct clients use their existing `timeout=` API and reject native harness budgets.
 
 Claude `permission_mode`, `allowed_tools`, and `denied_tools` become native CLI flags. Explicit rules replace inherited allowlists, and cannot widen a selected native tool policy. OpenCode `rules` become native `permission` entries under the same constraint. Native tool approvals and filesystem access are separate from M3's interaction handlers and portable tool policy.
 
 Config-only support is verified for Codex `0.160.1`/`0.162.1`, OpenCode `1.18.31`/`1.18.35`, and the published macOS arm64 Claude Code `2.1.295`/`2.1.296` distributions. Other requested config-only features fail as unknown. RPC/help fields are discovered with bounded isolated offline commands. Facts retain the native release, source revision or distribution integrity, executable digest, dialect and platform; every final session request is validated again. A script launcher needs a verified managed distribution identity for config-only support. Default sessions perform no additional discovery.
 
-Caches default to `isolated`. `immutable-seed` requests opt-in seed reuse; this type does not materialize a cache. Startup admission defaults to disabled, with four slots and a 300-second queue budget when enabled. Worker bootstrap defaults to one total 30-second budget. Native phase defaults remain unset so the runtime can retain its existing limits.
+Caches default to `isolated`. Opt-in `immutable-seed` copies verified ripgrep 15.1.0 into each isolated OpenCode session. The supported artifact is the macOS arm64 OpenCode 1.18.35 build; other harnesses, platforms, versions and executable digests fail explicitly. Set `cache.root` to an absolute path or a path beginning with `~/`; when omitted, M3 uses its user cache directory, pinned before the native environment is isolated. Every reader holds the artifact lease while validating and copying the seed. Copies use separate files, so a session cannot mutate the shared executable. Corrupt or interrupted generations are quarantined before reuse. Credentials, project files, logs, databases and model catalogs never enter this seed store. Startup admission defaults to disabled, with four slots and a 300-second queue budget when enabled. `admission=StartupAdmission(...)` on either kit or `agent_session()` overrides file settings using the same explicit-field merge as other settings. A kit override applies after file-wide and per-harness settings; selection and session overrides apply afterward. Explicit `enabled=False` disables an inherited opt-in, and `normalized_load_threshold=None` removes an inherited load threshold. Worker bootstrap defaults to one total 30-second budget. Native phase defaults remain unset so the runtime can retain its existing limits.
 
 This complete pytest example constructs each public settings type and verifies merging without launching a harness:
 
