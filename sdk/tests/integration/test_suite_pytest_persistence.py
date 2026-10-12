@@ -641,6 +641,37 @@ def test_xdist_workers_use_controller_configuration_after_file_removal(
     assert json.loads(record_json)["configuration_digest"].startswith("sha256:")
 
 
+def test_plugin_discovers_configuration_from_cwd_not_project_root(
+    tmp_path: Path,
+) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 30\n"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 7\n"
+    )
+    test_file = tmp_path / "test_cwd.py"
+    test_file.write_text(
+        "from m3 import MCPTestKit\n"
+        "def test_cwd():\n"
+        "    kit = MCPTestKit()\n"
+        "    try:\n"
+        "        assert kit.config.results.busy_timeout_seconds == 7.0\n"
+        "    finally:\n"
+        "        kit.close()\n"
+    )
+    result = _run(
+        tmp_path,
+        test_file,
+        persist=False,
+        pytest_args=("--project-root", str(other)),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
 def test_suite_selection_normalizes_marker_for_plain_and_agent_tests(
     tmp_path: Path,
 ) -> None:

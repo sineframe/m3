@@ -892,6 +892,60 @@ def test_cli_forwards_project_root_to_pytest(
     assert command[index + 1] == str(tmp_path.resolve())
 
 
+def _capture_validation_timeout(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    timeouts: list[float] = []
+    monkeypatch.setattr(
+        supervisor,
+        "resolve_project_python",
+        lambda *_args, **_kwargs: Path(sys.executable),
+    )
+
+    def validate(*_args: object, timeout_seconds: float, **_kwargs: object) -> str:
+        timeouts.append(timeout_seconds)
+        return "0.2.0a13"
+
+    monkeypatch.setattr(supervisor, "validate_project_python", validate)
+    monkeypatch.setattr(
+        supervisor.subprocess, "Popen", lambda *_args, **_kwargs: _Process(0)
+    )
+    return timeouts
+
+
+def test_cli_timeout_is_read_from_invocation_dir_for_implicit_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    pkg = repo / "pkg"
+    pkg.mkdir(parents=True)
+    (repo / "m3.toml").write_text("schema_version = 1\n", encoding="utf-8")
+    (pkg / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 60\n", encoding="utf-8"
+    )
+    timeouts = _capture_validation_timeout(monkeypatch)
+    monkeypatch.chdir(pkg)
+    assert main(["test", "--", "-q"]) == 0
+    assert timeouts == [60.0]
+
+
+def test_cli_timeout_is_read_from_explicit_project_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "root"
+    other = tmp_path / "other"
+    root.mkdir()
+    other.mkdir()
+    (root / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 70\n", encoding="utf-8"
+    )
+    (other / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 5\n", encoding="utf-8"
+    )
+    timeouts = _capture_validation_timeout(monkeypatch)
+    monkeypatch.chdir(other)
+    assert main(["test", "--project-root", str(root), "--", "-q"]) == 0
+    assert timeouts == [70.0]
+
+
 def test_cli_module_help() -> None:
     result = supervisor.subprocess.run(
         [sys.executable, "-m", "m3_cli", "--help"],

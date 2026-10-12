@@ -265,7 +265,7 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     try:
         config = load_config(
             env=environment if include_config else {},
-            cwd=root,
+            cwd=args.project_root,
             config_file=getattr(args, "m3_config", None),
         )
     except ConfigError as error:

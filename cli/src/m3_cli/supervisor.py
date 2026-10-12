@@ -1239,13 +1239,19 @@ def _prepare_test(
     return selected, database_path
 
 
-def _cli_project_python_timeout(root: Path, config_file: Path | None) -> float:
-    """Read the CLI's own limits; the pytest controller resolves all other settings."""
+def _cli_project_python_timeout(
+    discovery_dir: Path | None, config_file: Path | None
+) -> float:
+    """Read the CLI's own limits; the pytest controller resolves all other settings.
+
+    ``discovery_dir`` is the directory the pytest child runs in: the project root
+    when it is explicit, otherwise ``None`` for the invocation directory.
+    """
 
     from m3.configuration import load_config
 
     return load_config(
-        env={}, cwd=root, config_file=config_file
+        env={}, cwd=discovery_dir, config_file=config_file
     ).cli.project_python_timeout_seconds
 
 
@@ -1766,7 +1772,9 @@ def run_test_with_runs(
         Path(config_file).expanduser().absolute() if config_file is not None else None
     )
     try:
-        project_python_timeout = _cli_project_python_timeout(root, config_path)
+        project_python_timeout = _cli_project_python_timeout(
+            root if project_root is not None else None, config_path
+        )
     except ConfigError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return TestRunResult(
@@ -1984,7 +1992,9 @@ def run_test(
         Path(config_file).expanduser().absolute() if config_file is not None else None
     )
     try:
-        project_python_timeout = _cli_project_python_timeout(root, config_path)
+        project_python_timeout = _cli_project_python_timeout(
+            root if project_root is not None else None, config_path
+        )
     except ConfigError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR

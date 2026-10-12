@@ -87,6 +87,25 @@ def test_doctor_discovers_project_root_env(tmp_path: Path, monkeypatch, capsys) 
     assert report["configuration"]["settings"]["artifact_policy"] == "always"
 
 
+def test_doctor_reads_config_from_the_invocation_directory(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # Implicit-root test runs keep the invocation cwd, so the SDK reads the
+    # nearest pyproject.toml from there; doctor must validate the same file.
+    (tmp_path / "m3.toml").write_text("", encoding="utf-8")
+    package = tmp_path / "packages" / "server"
+    package.mkdir(parents=True)
+    (package / "pyproject.toml").write_text(
+        '[tool.m3]\nartifact_policy = "sometimes"\n', encoding="utf-8"
+    )
+    monkeypatch.delenv("M3_ARTIFACT_POLICY", raising=False)
+    monkeypatch.chdir(package)
+
+    assert main(["doctor", "--require", "config", "--json"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["field"] == "artifact_policy"
+
+
 def test_doctor_rejects_invalid_requirement_without_echoing_input(capsys) -> None:
     secret = "secret-token-value"
     assert main(["doctor", "--require", secret]) == 2
@@ -417,26 +436,6 @@ def test_doctor_invalid_config_fails_without_config_requirement(
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == "invalid_configuration"
-
-
-def test_doctor_discovers_config_from_resolved_project_root(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    repo = tmp_path / "repo"
-    pkg = repo / "pkg"
-    pkg.mkdir(parents=True)
-    (repo / "m3.toml").write_text("schema_version = 1\n", encoding="utf-8")
-    (repo / "pyproject.toml").write_text(
-        "[tool.m3.results]\nbusy_timeout_seconds = 30\n", encoding="utf-8"
-    )
-    (pkg / "pyproject.toml").write_text("[project]\nname = 'pkg'\n", encoding="utf-8")
-    monkeypatch.chdir(pkg)
-    assert main(["doctor", "--require", "config", "--json"]) in {0, 1}
-    settings = json.loads(capsys.readouterr().out)["configuration"]["settings"]
-    assert settings["results"]["busy_timeout_seconds"] == 30.0
-    assert settings["sources"]["results.busy_timeout_seconds"]["origin"] == (
-        f"pyproject:{(repo / 'pyproject.toml').resolve()}"
-    )
 
 
 def test_doctor_requires_dotted_config_leaf(capsys) -> None:

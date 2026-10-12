@@ -265,11 +265,7 @@ def _configure_run_config(config: _Any) -> None:
         if snapshot is not None:
             run_config = _config_from_snapshot(snapshot)
         else:
-            option_root = config.getoption("--project-root") or _Path.cwd()
-            root = _Path(option_root).expanduser().resolve()
-            run_config = load_config(
-                cwd=root, config_file=config.getoption("--m3-config")
-            )
+            run_config = load_config(config_file=config.getoption("--m3-config"))
     # ConfigError subclasses ValueError; its messages are value-free.
     except ValueError as exc:
         raise _pytest.UsageError(str(exc)) from None
