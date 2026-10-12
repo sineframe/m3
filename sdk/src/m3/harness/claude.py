@@ -25,6 +25,7 @@ from pydantic import JsonValue
 
 from ..agent_session import AdapterTurn
 from ..policy import ToolPolicyEvidence
+from ..trace.redaction import RedactionConfig, RedactionError, redact_for_api
 from ..types import (
     Capability,
     CapabilityStatus,
@@ -38,6 +39,12 @@ from ..types import (
     TurnOutcome,
     TurnResponse,
     UserMessage,
+)
+from ._native_errors import (
+    launch_error_redaction,
+    native_error_info,
+    project_native_observation,
+    project_native_turn,
 )
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -346,6 +353,7 @@ class ClaudeCodeHarnessAdapter:
         self._process_started_emitted = False
         self._cancel_requested = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
+        self._native_error_redaction: RedactionConfig | None = None
 
     @property
     def name(self) -> str:
@@ -473,6 +481,9 @@ class ClaudeCodeHarnessAdapter:
                 launch,
                 environment=self._resolver_environment,
                 secrets=runtime_secrets,
+            )
+            self._native_error_redaction = launch_error_redaction(
+                launch, self.environment, runtime_secrets
             )
             # ``write_config`` resolves selected server references and adds
             # their literals to the runtime-only set before the child exists.
@@ -609,6 +620,7 @@ class ClaudeCodeHarnessAdapter:
                 "interrupted": TurnOutcome.INTERRUPTED,
             }.get(result.status, TurnOutcome.FAILED),
             tool_calls=result.tool_calls,
+            _private_tool_calls=result._private_tool_calls,
             evidence=result.evidence,
             trace_limitations=result.trace_limitations,
             turn_evidence=result.turn_evidence,
@@ -637,6 +649,7 @@ class ClaudeCodeHarnessAdapter:
         self._output = None
         self._launch = None
         self._root = None
+        self._native_error_redaction = None
 
     async def cancel(self) -> None:
         self._cancel_requested = True
@@ -647,9 +660,31 @@ class ClaudeCodeHarnessAdapter:
         """Return observations of a turn cancelled before it returned, once."""
 
         capture, self._partial_capture = self._partial_capture, None
-        return capture() if capture is not None else None
+        if capture is None:
+            return None
+        evidence = capture()
+        redaction = self._native_error_redaction or RedactionConfig(
+            include_environment=False
+        )
+        return evidence.model_copy(
+            update={
+                "observations": tuple(
+                    project_native_observation(item, redaction, index)
+                    for index, item in enumerate(evidence.observations)
+                )
+            }
+        )
 
     async def _send(
+        self, request: HarnessTurnRequest, sequence: int
+    ) -> HarnessTurnResult:
+        result = await self._send_private(request, sequence)
+        return project_native_turn(
+            result,
+            self._native_error_redaction or RedactionConfig(include_environment=False),
+        )
+
+    async def _send_private(
         self, request: HarnessTurnRequest, sequence: int
     ) -> HarnessTurnResult:
         owner, output = self._owner, self._output
@@ -732,6 +767,13 @@ class ClaudeCodeHarnessAdapter:
         def emit_frame(item: Mapping[str, Any]) -> None:
             nonlocal frame_index
             sanitized = safe_frame(item)
+            if self._native_error_redaction is not None:
+                try:
+                    sanitized = redact_for_api(
+                        sanitized, config=self._native_error_redaction
+                    )
+                except RedactionError:
+                    sanitized = {"capture": "unavailable", "reason": "redaction_failed"}
             observations.append(
                 RawFrameObservation(
                     observation_id=f"claude-{sequence}-frame-{frame_index}",
@@ -1043,6 +1085,10 @@ class ClaudeCodeHarnessAdapter:
                 limit()
             add_metadata()
 
+        partial_redaction = self._native_error_redaction or RedactionConfig(
+            include_environment=False
+        )
+
         def partial_evidence() -> TurnEvidence:
             # The session deadline or an outer cancellation stopped this turn
             # before it could return; keep what was already observed.
@@ -1051,7 +1097,10 @@ class ClaudeCodeHarnessAdapter:
             return TurnEvidence(
                 sequence=sequence,
                 status="cancelled",
-                observations=tuple(observations),
+                observations=tuple(
+                    project_native_observation(item, partial_redaction, index)
+                    for index, item in enumerate(observations)
+                ),
                 limitations=tuple(limitations),
                 monotonic_origin=turn_started,
             )
@@ -1390,7 +1439,18 @@ class ClaudeCodeHarnessAdapter:
                         set_meta(name, value, identifier=True)
                 for name in ("api_duration_ms", "cost_usd", "result"):
                     if name in metadata_values:
-                        set_meta(name, metadata_values[name])
+                        value = metadata_values[name]
+                        if failed and name == "result":
+                            value = native_error_info(
+                                value,
+                                summary="Claude Code turn failed",
+                                harness="claude-code",
+                                phase="turn/result",
+                                redaction=self._native_error_redaction,
+                            ).details.get(
+                                "native_message", "native diagnostic unavailable"
+                            )
+                        set_meta(name, value)
                 if failed:
                     await terminate_and_observe("failed")
                 finalize()
@@ -1400,11 +1460,15 @@ class ClaudeCodeHarnessAdapter:
                 return _claude_result(
                     sequence,
                     "failed" if failed else "completed",
-                    ErrorInfo(
+                    native_error_info(
+                        _claude_native_error(item),
+                        summary="Claude Code turn failed",
+                        harness="claude-code",
+                        phase="turn/result",
+                        redaction=self._native_error_redaction,
                         code=ErrorCode.PROTOCOL_ERROR
                         if malformed_error
                         else ErrorCode.TRANSPORT_ERROR,
-                        message="Claude Code turn failed",
                     )
                     if failed
                     else None,
@@ -1443,3 +1507,20 @@ class ClaudeCodeSession(NativeSessionBase):
 
 
 __all__ = ["ClaudeCodeHarnessAdapter", "ClaudeCodeSession"]
+
+
+def _claude_native_error(item: Mapping[str, Any]) -> object:
+    """Select the native result diagnostic without exposing its whole frame."""
+
+    if item.get("error") is not None:
+        return item["error"]
+    errors = item.get("errors")
+    if isinstance(errors, list):
+        # Claude emits a list of textual causes for an error result. Bound
+        # its size before joining; oversized diagnostics are omitted.
+        if len(errors) <= 16 and all(
+            isinstance(value, str) and len(value) <= 4096 for value in errors
+        ):
+            return {"code": item.get("subtype"), "message": "\n".join(errors)}
+        return {"code": item.get("subtype")}
+    return {"code": item.get("subtype"), "message": item.get("result")}

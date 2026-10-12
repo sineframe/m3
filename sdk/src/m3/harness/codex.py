@@ -18,7 +18,7 @@ from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
-from ..trace.redaction import is_sensitive_key
+from ..trace.redaction import RedactionConfig, is_sensitive_key
 from ..types import (
     Codex,
     ErrorCode,
@@ -30,6 +30,11 @@ from ..types import (
 )
 from ._codex_managed_mrtr import CodexManagedMRTRCoordinator
 from ._codex_mrtr import CodexMRTRAction
+from ._native_errors import (
+    NativeHarnessStartupError,
+    launch_error_redaction,
+    native_error_info,
+)
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -594,6 +599,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         # configured. The isolated home is temporary and cleaned with the
         # execution workspace; auth material never enters the serializable spec.
         login_secrets: set[str] = set()
+        login_registry_available = True
         if (
             isinstance(launch.spec.harness, Codex)
             and not launch.spec.harness.credential_references
@@ -631,9 +637,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     ) from exc
                 # Login tokens are runtime secrets, redacted from trace evidence.
                 try:
-                    login_secrets = _login_values(json.loads(auth))
+                    login_secrets = _login_values(json.loads(auth), sensitive=True)
                 except ValueError:
-                    login_secrets = set()
+                    login_registry_available = False
         environment = dict(self.environment)
         runtime_secrets: set[str] = set()
         protocol_markers: dict[str, str] = {}
@@ -693,6 +699,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if value and is_sensitive_key(key)
         }
         self._runtime_secrets = runtime_secrets
+        self._native_error_registry_unavailable = not login_registry_available
+        self._native_error_redaction = (
+            launch_error_redaction(launch, self.environment, runtime_secrets)
+            if login_registry_available
+            else None
+        )
         self._mcp_protocol_markers = protocol_markers
         add_secrets = getattr(launch.capture, "add_secrets", None)
         if callable(add_secrets) and runtime_secrets:
@@ -754,6 +766,17 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex App Server initialization failed")
             if frame.get("id") == self._request_id:
+                error = frame.get("error")
+                if isinstance(error, Mapping):
+                    raise NativeHarnessStartupError(
+                        native_error_info(
+                            error,
+                            summary="Codex App Server initialization failed",
+                            harness="codex",
+                            phase="initialize",
+                            redaction=self._native_error_redaction,
+                        )
+                    )
                 break
             self._deferred_frames.append(frame)
         await self._write_frame(
@@ -857,12 +880,24 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             )
             error = response.get("error")
             if error is not None or not isinstance(response.get("result"), Mapping):
-                # Codex's free text is never passed on (see _thread_start_failure).
+                # Native free text crosses the pinned launch-secret boundary.
                 code = error.get("code") if isinstance(error, Mapping) else None
                 summary = "Codex API key login failed"
-                if isinstance(code, int) and not isinstance(code, bool):
+                if (
+                    isinstance(code, int)
+                    and not isinstance(code, bool)
+                    and -(2**63) <= code < 2**63
+                ):
                     summary += f" (JSON-RPC {code})"
-                raise HarnessStartupError(summary)
+                raise NativeHarnessStartupError(
+                    native_error_info(
+                        error,
+                        summary=summary,
+                        harness="codex",
+                        phase="account/login/start",
+                        redaction=self._native_error_redaction,
+                    )
+                )
         response = await self._startup_request(
             process, "account/read", {"refreshToken": False}
         )
@@ -879,23 +914,21 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 "credential_env or sign in to Codex"
             )
 
-    @staticmethod
     def _thread_start_failure(
-        error: Mapping[str, Any], launch: HarnessLaunch
+        self, error: Mapping[str, Any], launch: HarnessLaunch
     ) -> HarnessStartupError:
-        """Describe a thread/start error without Codex's free text.
-
-        Codex can echo any credential it was started with (environment, native
-        login, MCP environment or headers), so its message is never passed on.
-        The error is built from M3-known values only: the JSON-RPC code and the
-        configured MCP servers the message names as failing to start.
-        """
+        """Describe thread/start using its pinned launch-secret projection."""
 
         code = error.get("code")
         summary = "Codex thread/start failed"
-        if isinstance(code, int) and not isinstance(code, bool):
+        if (
+            isinstance(code, int)
+            and not isinstance(code, bool)
+            and -(2**63) <= code < 2**63
+        ):
             summary += f" (JSON-RPC {code})"
         message = error.get("message")
+        details = None
         if isinstance(message, str):
             _, marker, rest = message.partition(_MCP_STARTUP_FAILURE)
             failed = sorted(
@@ -907,10 +940,20 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 }
             )
             if failed:
-                summary += (
-                    f": required MCP server failed to initialize: {', '.join(failed)}"
-                )
-        return HarnessStartupError(summary)
+                summary += ": required MCP server failed to initialize"
+                details = {"reason": "required_mcp_failed_to_initialize"}
+                if self._native_error_redaction is not None:
+                    summary += f": {', '.join(failed)}"
+        return NativeHarnessStartupError(
+            native_error_info(
+                error,
+                summary=summary,
+                harness="codex",
+                phase="thread/start",
+                redaction=self._native_error_redaction,
+                details=details,
+            )
+        )
 
     def initial_observations(
         self, sequence: int, wall: datetime, started: float
@@ -1017,7 +1060,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         observations: list[HarnessObservation],
     ) -> tuple[bool, str, list[Mapping[str, Any]]]:
         if frame.get("error") is not None:
-            raise HarnessStartupError("Codex App Server returned a protocol error")
+            raise NativeHarnessStartupError(
+                native_error_info(
+                    frame["error"],
+                    summary="Codex App Server returned a protocol error",
+                    harness="codex",
+                    phase="turn/start"
+                    if self._pending_turn_request is not None
+                    and frame.get("id") == self._pending_turn_request
+                    else "turn/protocol",
+                    redaction=self._native_error_redaction,
+                    code=ErrorCode.PROTOCOL_ERROR,
+                )
+            )
         method = str(frame.get("method") or frame.get("type") or "")
         params = (
             frame.get("params") if isinstance(frame.get("params"), Mapping) else frame
@@ -1318,7 +1373,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                             else "failed"
                         )
                         if self._terminal_status == "failed":
-                            self._terminal_error = _turn_failure(turn.get("error"))
+                            self._terminal_error = _turn_failure(
+                                turn.get("error"), self._native_error_redaction
+                            )
                     if self._unscoped_elicitation_failure:
                         self._terminal_status = "failed"
                     usage = turn.get("usage")
@@ -1809,14 +1866,8 @@ _CODEX_TURN_FAILURES = {
 }
 
 
-def _turn_failure(error: Any) -> ErrorInfo:
-    """Describe a failed Codex turn from its structured error fields only.
-
-    Codex's ``message`` can quote request details and any credential it was
-    started with, so it is never passed on (see ``_thread_start_failure``).
-    The reason is a known ``codexErrorInfo`` variant and the HTTP status a
-    bounded integer.
-    """
+def _turn_failure(error: Any, redaction: RedactionConfig | None = None) -> ErrorInfo:
+    """Keep structured Codex reasons and project its native diagnostic."""
 
     info = error.get("codexErrorInfo") if isinstance(error, Mapping) else None
     reason: str | None = None
@@ -1843,7 +1894,23 @@ def _turn_failure(error: Any) -> ErrorInfo:
     if status is not None:
         details["http_status"] = status
         message += f" (HTTP {status})"
-    return ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message=message, details=details)
+    projected = native_error_info(
+        error,
+        summary=message,
+        harness="codex",
+        phase="turn/completed",
+        redaction=redaction,
+        details=details,
+    )
+    if redaction is None and reason is not None:
+        # This reason is a validated protocol variant with an M3-authored
+        # description, independent of the unavailable native free text.
+        return type(projected)(
+            code=projected.code,
+            message=projected.message,
+            details={**projected.details, "reason": reason},
+        )
+    return projected
 
 
 def _tool_error_message(error: Any) -> str | None:

@@ -38,6 +38,11 @@ from ..types import (
     TurnResponse,
     UserMessage,
 )
+from ._native_errors import (
+    NativeHarnessStartupError,
+    project_native_observation,
+    project_native_turn,
+)
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessAdapterError,
@@ -251,6 +256,8 @@ class NativeRPCAdapter:
         self._terminal_error: ErrorInfo | None = None
         self.last_policy_evidence: ToolPolicyEvidence | None = None
         self._runtime_secrets: set[str] = set()
+        self._native_error_redaction: RedactionConfig | None = None
+        self._native_error_registry_unavailable = False
         self._process_observed = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
 
@@ -396,6 +403,7 @@ class NativeRPCAdapter:
                 "failed": TurnOutcome.FAILED,
             }[result.status],
             tool_calls=result.tool_calls,
+            _private_tool_calls=result._private_tool_calls,
             evidence=result.evidence,
             trace_limitations=result.trace_limitations,
             turn_evidence=result.turn_evidence,
@@ -409,7 +417,18 @@ class NativeRPCAdapter:
         """Return observations of a turn cancelled before it returned, once."""
 
         capture, self._partial_capture = self._partial_capture, None
-        return capture() if capture is not None else None
+        if capture is None:
+            return None
+        evidence = capture()
+        redaction = self._public_redaction()
+        return evidence.model_copy(
+            update={
+                "observations": tuple(
+                    project_native_observation(item, redaction, index)
+                    for index, item in enumerate(evidence.observations)
+                )
+            }
+        )
 
     def process_argv(self, launch: HarnessLaunch) -> tuple[str, ...]:
         return ()
@@ -427,6 +446,22 @@ class NativeRPCAdapter:
         await process.close()
 
     async def _send(
+        self, request: HarnessTurnRequest, sequence: int, process: JsonRpcProcess
+    ) -> HarnessTurnResult:
+        result = await self._send_private(request, sequence, process)
+        return project_native_turn(
+            result,
+            self._public_redaction(),
+        )
+
+    def _public_redaction(self) -> RedactionConfig | None:
+        if self._native_error_registry_unavailable:
+            return None
+        return self._native_error_redaction or RedactionConfig(
+            secrets=frozenset(self._runtime_secrets), include_environment=False
+        )
+
+    async def _send_private(
         self, request: HarnessTurnRequest, sequence: int, process: JsonRpcProcess
     ) -> HarnessTurnResult:
         started = time.monotonic()
@@ -461,6 +496,7 @@ class NativeRPCAdapter:
         tool_calls: list[Mapping[str, Any]] = []
         text_parts: list[str] = []
         limitations: list[str] = []
+        partial_redaction = self._public_redaction()
 
         def partial_evidence() -> TurnEvidence:
             # The session deadline or an outer cancellation stopped this turn
@@ -468,7 +504,10 @@ class NativeRPCAdapter:
             return TurnEvidence(
                 sequence=sequence,
                 status="cancelled",
-                observations=tuple(observations),
+                observations=tuple(
+                    project_native_observation(item, partial_redaction, index)
+                    for index, item in enumerate(observations)
+                ),
                 limitations=tuple(dict.fromkeys((*limitations, "capture_incomplete"))),
                 monotonic_origin=started,
             )
@@ -516,11 +555,14 @@ class NativeRPCAdapter:
                     raise HarnessAdapterError("harness response was invalid")
                 raw = _json_safe(frame)
                 try:
-                    raw = redact_for_api(
-                        raw,
-                        config=RedactionConfig.from_environment(
-                            secrets=self._runtime_secrets
-                        ),
+                    registry = self._public_redaction()
+                    raw = (
+                        redact_for_api(raw, config=registry)
+                        if registry is not None
+                        else {
+                            "capture": "unavailable",
+                            "reason": "unavailable_registry",
+                        }
                     )
                 except Exception:
                     raw = {"capture": "unavailable", "reason": "redaction_failed"}
@@ -540,11 +582,10 @@ class NativeRPCAdapter:
                         ),
                     )
                 )
-                safe_frame = (
-                    raw if isinstance(raw, Mapping) else {"__invalid_frame__": True}
-                )
+                # Native identities are decoded only in process memory.
+                # Evidence projection must never change request correlation.
                 terminal, text, calls = self.consume_frame(
-                    safe_frame, sequence, wall, started, observations
+                    frame, sequence, wall, started, observations
                 )
                 if text:
                     text_parts.append(text)
@@ -615,7 +656,7 @@ class NativeRPCAdapter:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             failure_status: Literal["failed", "cancelled"] = (
                 "cancelled" if self._cancel_requested else "failed"
             )
@@ -634,7 +675,10 @@ class NativeRPCAdapter:
             return HarnessTurnResult(
                 sequence=sequence,
                 status=failure_status,
-                error=ErrorInfo(code=code, message="harness turn failed"),
+                error=exc.error
+                if isinstance(exc, NativeHarnessStartupError)
+                and failure_status == "failed"
+                else ErrorInfo(code=code, message="harness turn failed"),
                 turn_evidence=evidence,
             )
 
@@ -670,4 +714,6 @@ class NativeRPCAdapter:
         self._session = None
         self._process = None
         self._runtime_secrets.clear()
+        self._native_error_redaction = None
+        self._native_error_registry_unavailable = False
         self._process_observed = False
