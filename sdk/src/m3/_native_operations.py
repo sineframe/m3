@@ -64,23 +64,25 @@ def discover_support(root: Path, request: dict[str, Any]) -> str:
 
     from .harness.native_capabilities import (
         NativeRuntimeIdentity,
-        NativeSupport,
-        discover_native_support,
+        _OwnedNativeFacts,
+        discover_native_support_receipt,
     )
 
     identity = request["runtime_identity"]
     runtime_identity = (
         None if identity is None else NativeRuntimeIdentity.from_provenance(identity)
     )
-    support = asyncio.run(
-        discover_native_support(
-            request["executable"],
-            request["kind"],
-            runtime_identity,
-            owned_root=root,
+    cached = (
+        TypeAdapter(_OwnedNativeFacts).validate_python(request["cached"])
+        if request["cached"] is not None
+        else None
+    )
+    facts = asyncio.run(
+        discover_native_support_receipt(
+            request["executable"], request["kind"], runtime_identity, cached, root
         )
     )
-    raw = TypeAdapter(NativeSupport).dump_json(support)
+    raw = TypeAdapter(_OwnedNativeFacts).dump_json(facts)
     return base64.b64encode(raw).decode("ascii")
 
 

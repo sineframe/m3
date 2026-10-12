@@ -118,3 +118,66 @@ async def test_fenced_append_keeps_capture_root_until_writer_death(
     operations.close(deadline=time.monotonic() + 3)
     assert operations.cleanup_complete and not resource.root.exists()
     assert failures == ["capture_write_failed"]
+
+
+@pytest.mark.process_lifecycle
+@pytest.mark.asyncio
+async def test_owned_stdio_capture_is_correlated_before_session_close(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    from pathlib import Path
+
+    from m3._types.specs import AgentSpec
+    from m3.async_api import AsyncMCPTestKit
+    from m3.harness.codex import CodexHarnessAdapter
+    from m3.types import (
+        Codex,
+        EventKind,
+        EventOrigin,
+        RestrictiveToolPolicy,
+        ServerBinding,
+        StdioServer,
+        TurnOutcome,
+    )
+
+    fixtures = Path(__file__).parents[1] / "fixtures"
+    server_path = Path(__file__).parents[2] / "examples/docs/configuration/slow_mcp.py"
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "no-login"))
+    spec = AgentSpec(
+        harness=Codex(model="fixture"),
+        tool_policy=RestrictiveToolPolicy(allowed_tools=("slow:lookup",)),
+        harness_timeouts=HarnessTimeouts(total_seconds=10, startup_seconds=5),
+        servers=(
+            ServerBinding(
+                server=StdioServer(
+                    name="slow",
+                    command=sys.executable,
+                    args=(str(server_path),),
+                )
+            ),
+        ),
+    )
+    adapter = CodexHarnessAdapter(
+        executable=str(fixtures / "codex_app_server_fixture.py"),
+        environment={
+            "M3_DOCS_LOCAL_PROVIDER": "1",
+            "PYTHONPATH": str(Path(__file__).parents[2] / "src"),
+        },
+    )
+    async with AsyncMCPTestKit(env={}, cwd=tmp_path) as kit:
+        async with kit.agent_session(spec, adapter=adapter) as session:
+            turn = await session.send("Call lookup and report the code.", timeout=5)
+            assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
+            assert turn.error is None
+            wire = [
+                event
+                for event in session._trace_recorder.events()
+                if event.provenance.origin is EventOrigin.WIRE_OBSERVED
+                and event.kind is EventKind.TOOL_CALL_REQUESTED
+                and event.payload.get("method") == "tools/call"
+            ]
+            assert wire
+            assert all(event.turn_id == turn.snapshot.turn_id for event in wire)
+            assert all(event.correlation is not None for event in wire)

@@ -735,6 +735,17 @@ class ServerGroupManager:
             )
         return ServerGroupSnapshot(tuple(records), self._evidence)
 
+    def validate_bounded_startup(self) -> None:
+        if self._expose_in_process and any(
+            isinstance(binding.server, InProcessServer) for binding in self._bindings
+        ):
+            from .errors import UnsupportedFeature
+
+            raise UnsupportedFeature(
+                "bounded startup cannot own an in-process server factory; "
+                "bind a stdio server or an already-running HTTP server"
+            )
+
     @_timing.timed("servers.start")
     async def start(
         self,
