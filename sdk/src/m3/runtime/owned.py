@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from .._startup_deadlines import StartupBudget
 
 RUNTIME_ENVIRONMENT = (
     "HOME",
@@ -155,6 +159,9 @@ class RuntimeAcquisition:
 
 
 class RuntimeOperationOwner(Protocol):
+    @property
+    def cleanup_complete(self) -> bool: ...
+
     def release_runtime(
         self, path: str, device: int, inode: int, *, deadline: float
     ) -> None: ...
@@ -165,11 +172,19 @@ class OwnedRuntimeLease:
     """A private package handle; native guardians retain acknowledged copies."""
 
     def __init__(
-        self, descriptor: int, path: Path, operations: RuntimeOperationOwner
+        self,
+        descriptor: int,
+        path: Path,
+        operations: RuntimeOperationOwner,
+        clock: StartupBudget,
     ) -> None:
         self.descriptor = descriptor
         self.path = path
         self.operations = operations
+        self._clock = clock
+        self._release_identity: tuple[int, int] | None = None
+        self._marker_released = False
+        self._release_lock = asyncio.Lock()
 
     def __repr__(self) -> str:
         return "OwnedRuntimeLease(<private>)"
@@ -182,22 +197,25 @@ class OwnedRuntimeLease:
         return (self.descriptor,) if self.descriptor >= 0 else ()
 
     async def release(self) -> None:
-        import asyncio
-        import time
+        async with self._release_lock:
+            if self.descriptor >= 0:
+                info = os.fstat(self.descriptor)
+                self._release_identity = (info.st_dev, info.st_ino)
+                os.close(self.descriptor)
+                self.descriptor = -1
+            deadline = self._clock.begin_cleanup()
+            try:
+                if not self._marker_released and self._release_identity is not None:
+                    await asyncio.to_thread(
+                        self.operations.release_runtime,
+                        str(self.path),
+                        *self._release_identity,
+                        deadline=deadline,
+                    )
+                    self._marker_released = True
+            finally:
+                await asyncio.to_thread(self.operations.close, deadline=deadline)
+            if not self.operations.cleanup_complete:
+                from .core import RuntimeValidationError
 
-        if self.descriptor < 0:
-            return
-        info = os.fstat(self.descriptor)
-        os.close(self.descriptor)
-        self.descriptor = -1
-        deadline = time.monotonic() + 3
-        try:
-            await asyncio.to_thread(
-                self.operations.release_runtime,
-                str(self.path),
-                info.st_dev,
-                info.st_ino,
-                deadline=deadline,
-            )
-        finally:
-            await asyncio.to_thread(self.operations.close, deadline=deadline)
+                raise RuntimeValidationError("owned runtime cleanup is incomplete")

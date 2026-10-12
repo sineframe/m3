@@ -244,9 +244,20 @@ async def validate_native_settings(
     spec: AgentSpec,
     configurations: tuple[HarnessServerConfig, ...],
     runtime_identity: NativeRuntimeIdentity | None = None,
+    *,
+    deadline: float | None = None,
 ) -> NativeSupport:
     harness = spec.harness
     assert isinstance(harness, (Codex, ClaudeCode, OpenCode))
-    support = await discover_native_support(executable, harness.kind, runtime_identity)
+    if deadline is not None:
+        from .native_capabilities import discover_native_support_owned
+
+        support = await discover_native_support_owned(
+            executable, harness.kind, runtime_identity, deadline=deadline
+        )
+    else:
+        support = await discover_native_support(
+            executable, harness.kind, runtime_identity
+        )
     validate_support(spec, configurations, support)
     return support

@@ -30,11 +30,14 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .. import _timing
 from .owned import RUNTIME_ENVIRONMENT, OwnedRuntimeLease, RuntimeAcquisition
 from .recipes import default_manifest_url
+
+if TYPE_CHECKING:
+    from .._startup_deadlines import StartupBudget
 
 RECEIPT_FORMAT = 2
 
@@ -479,8 +482,10 @@ class RuntimeManager:
         progress_file: str | Path | None = None,
         *,
         _owned: bool = False,
+        _startup_clock: StartupBudget | None = None,
     ):
         self._leases: list[RuntimeLease] = []
+        self._startup_clock = _startup_clock
         self._manifest_cache: dict[str, Mapping[str, Any]] = {}
         self._owned_inputs = (cache_root, project_root, invocation_dir, progress_file)
         self._filesystem_deferred = _owned
@@ -504,6 +509,14 @@ class RuntimeManager:
             self.invocation_dir,
             progress_file,
         )
+
+    def _owned_clock(self) -> StartupBudget:
+        if self._startup_clock is None:
+            from .._startup_deadlines import StartupBudget
+            from .._types.settings import HarnessTimeouts
+
+            self._startup_clock = StartupBudget(HarnessTimeouts())
+        return self._startup_clock
 
     @_timing.timed("runtime.acquire")
     async def acquire_owned(
@@ -558,7 +571,10 @@ class RuntimeManager:
             ):
                 raise RuntimeValidationError("owned managed runtime result is invalid")
             owned = OwnedRuntimeLease(
-                result.descriptor, Path(payload["lease_path"]), operations
+                result.descriptor,
+                Path(payload["lease_path"]),
+                operations,
+                self._owned_clock(),
             )
             lease = RuntimeLease(
                 Path(payload["executable"]), payload["provenance"], _owned=owned
@@ -568,8 +584,11 @@ class RuntimeManager:
             return lease
         finally:
             if not adopted:
+                operations.cancel_pending()
                 acquisition.add_done_callback(discard_receipt)
-                await asyncio.to_thread(operations.close, deadline=time.monotonic() + 3)
+                await asyncio.to_thread(
+                    operations.close, deadline=self._owned_clock().begin_cleanup()
+                )
 
     async def prepare_models_owned(
         self, directory: Path, source: str | None = None, *, deadline: float
@@ -577,7 +596,14 @@ class RuntimeManager:
         """Prepare run catalog evidence within the same absolute resolution budget."""
         from .._bootstrap_operations import OwnedBootstrapOperations
 
+        if not directory.is_absolute() or (
+            source is not None and not Path(source).is_absolute()
+        ):
+            raise RuntimeValidationError("owned catalog inputs require absolute paths")
+        if not math.isfinite(deadline) or deadline <= time.monotonic():
+            raise RuntimeValidationError("managed catalog deadline exceeded")
         operations = OwnedBootstrapOperations()
+        adopted = False
         acquisition = asyncio.create_task(
             asyncio.to_thread(
                 operations.prepare_models, directory, source, deadline=deadline
@@ -594,14 +620,20 @@ class RuntimeManager:
                 or not isinstance(material["path"], str)
                 or not isinstance(material["digest"], str)
                 or not SHA_RE.fullmatch(material["digest"])
+                or time.monotonic() >= deadline
             ):
                 raise RuntimeValidationError("owned catalog result is invalid")
+            adopted = True
             return Path(material["path"]), material["digest"]
         finally:
+            operations.cancel_pending()
             acquisition.add_done_callback(
                 lambda done: done.exception() if not done.cancelled() else None
             )
-            await asyncio.to_thread(operations.close, deadline=time.monotonic() + 3)
+            await asyncio.to_thread(
+                operations.close,
+                deadline=deadline if adopted else self._owned_clock().begin_cleanup(),
+            )
 
     @_timing.timed("runtime.acquire")
     async def acquire(
@@ -1066,10 +1098,15 @@ class RuntimeManager:
         return lease
 
     async def close(self) -> None:
-        await asyncio.gather(
-            *(x.release() for x in self._leases), return_exceptions=True
+        leases = tuple(self._leases)
+        outcomes = await asyncio.gather(
+            *(lease.release() for lease in leases), return_exceptions=True
         )
-        self._leases.clear()
+        self._leases = [
+            lease
+            for lease, outcome in zip(leases, outcomes, strict=True)
+            if lease._owned is not None and isinstance(outcome, BaseException)
+        ]
 
     async def release(self, lease: RuntimeLease) -> None:
         await lease.release()

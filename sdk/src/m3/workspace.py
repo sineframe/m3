@@ -16,6 +16,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from glob import has_magic
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ._bootstrap_operations import OwnedBootstrapOperations
     from .preparation import PreparationSupervisor
 
 from . import _timing
@@ -170,6 +172,7 @@ class WorkspaceManager:
         )
         self._include_excluded = include_excluded
         self._root: Path | None = None
+        self._root_identity: tuple[int, int] | None = None
         self._owned_root = False
         self._baseline: dict[str, tuple[int, str]] = {}
         self._lock = threading.RLock()
@@ -177,8 +180,13 @@ class WorkspaceManager:
         self._cleaned = False
         self._cleanup_error: WorkspaceError | None = None
         self._preparation_root: Path | None = None
+        self._preparation_root_identity: tuple[int, int] | None = None
         self._async_create_lock = asyncio.Lock()
         self._preparing = False
+        self._async_cleanup_lock = asyncio.Lock()
+        self._cleanup_operations: OwnedBootstrapOperations | None = None
+        self._capture_operations: OwnedBootstrapOperations | None = None
+        self._artifact_secrets: frozenset[str] = frozenset()
 
     async def create_async(
         self,
@@ -204,6 +212,8 @@ class WorkspaceManager:
         with self._lock:
             if self._root is not None:
                 return self._root
+        if deadline is not None:
+            self.validate_owned_capture()
         if self.policy.kind is WorkspaceKind.TEMPORARY and deadline is None:
             # No source reads, copying or background writer in this default
             # path. A requested total budget always uses owned jobs below.
@@ -239,7 +249,11 @@ class WorkspaceManager:
                 }
                 self._owned_root = material.data["owned"]
                 self._preparation_root = material.staging_root
+                self._preparation_root_identity = tuple(
+                    material.data["staging_identity"]
+                )
                 self._root = Path(material.data["root"])
+                self._root_identity = tuple(material.data["root_identity"])
                 return self._root
         finally:
             with self._lock:
@@ -311,6 +325,8 @@ class WorkspaceManager:
                     if kind is WorkspaceKind.READ_ONLY:
                         self._make_read_only(root)
             self._root = root
+            identity = root.stat(follow_symlinks=False)
+            self._root_identity = (identity.st_dev, identity.st_ino)
             self._baseline = self._snapshot(root)
             return root
 
@@ -483,6 +499,8 @@ class WorkspaceManager:
         with self._lock:
             if self._captured is not None:
                 return self._captured
+            if self._capture_operations is not None:
+                raise WorkspaceError("workspace capture remains quarantined")
             root = self.root
             current = self._snapshot(root)
             entries: list[WorkspaceEntry] = []
@@ -514,6 +532,89 @@ class WorkspaceManager:
                 diff, tuple(artifacts), tuple(limitations)
             )
             return self._captured
+
+    def validate_owned_capture(self) -> None:
+        from ._workspace_operations import artifact_backend
+
+        artifact_backend(
+            self._store,
+            collect=bool(self.declared_artifacts)
+            and self.artifact_policy is not ArtifactPolicy.NEVER,
+        )
+
+    def add_artifact_secrets(self, values: Iterable[str]) -> None:
+        """Retain launch-pinned values for artifact redaction without resolving them."""
+        with self._lock:
+            self._artifact_secrets |= frozenset(value for value in values if value)
+
+    async def capture_async(
+        self, outcome: ExecutionOutcome, *, deadline: float | None = None
+    ) -> WorkspaceCapture:
+        """Collect through a fixed owned reader and adopt only its accepted result."""
+        if deadline is None:
+            return await asyncio.to_thread(self.capture, outcome)
+        if deadline <= time.monotonic():
+            raise asyncio.TimeoutError
+        from ._bootstrap_operations import OwnedBootstrapOperations
+        from ._workspace_operations import artifact_backend
+        from .storage import TemporaryArtifactStore
+
+        async with self._async_cleanup_lock:
+            with self._lock:
+                if self._captured is not None:
+                    return self._captured
+                if self._capture_operations is not None:
+                    raise WorkspaceError("workspace capture remains quarantined")
+                backend = artifact_backend(
+                    self._store,
+                    collect=bool(self.declared_artifacts)
+                    and self.artifact_policy is not ArtifactPolicy.NEVER,
+                    known_literals=self._artifact_secrets,
+                )
+                payload = {
+                    "policy": self.policy.model_dump(mode="json"),
+                    "root": str(self.root),
+                    "identity": self._root_identity,
+                    "baseline": self._baseline,
+                    "execution_id": (
+                        self.execution_id.root
+                        if isinstance(self.execution_id, ExecutionId)
+                        else self.execution_id
+                    ),
+                    "artifact_policy": self.artifact_policy.value,
+                    "declared_artifacts": self.declared_artifacts,
+                    "include_excluded": self._include_excluded,
+                    "outcome": outcome.value,
+                    "backend": backend,
+                }
+                operations = OwnedBootstrapOperations()
+                self._capture_operations = operations
+            try:
+                material = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        operations.capture_workspace, payload, deadline=deadline
+                    ),
+                    timeout=max(0, deadline - time.monotonic()),
+                )
+            except BaseException:
+                operations.cancel_pending()
+                raise
+            # Accepted readers/writers have died. Adoption touches only the
+            # built-in in-memory index, without filesystem work or suspension.
+            if isinstance(self._store, InMemoryArtifactStore):
+                with self._store._lock:
+                    for ref, compressed in material.blobs:
+                        self._store._commit_ref(ref, compressed)
+                        if isinstance(self._store, TemporaryArtifactStore):
+                            self._store._paths.add(
+                                self._store.root
+                                / ref.sha256[:2]
+                                / ref.sha256[2:4]
+                                / f"{ref.sha256}.gz"
+                            )
+            with self._lock:
+                self._captured = material.capture
+                return self._captured
 
     def _collect_declared(self, relative: str) -> list[ArtifactRef]:
         root = self.root.resolve()
@@ -626,11 +727,22 @@ class WorkspaceManager:
 
     @_timing.timed("workspace.cleanup")
     def cleanup(self) -> None:
+        self._cleanup(bounded=False)
+
+    def _cleanup(self, *, bounded: bool) -> None:
         with self._lock:
             if self._preparing:
                 raise WorkspaceError("workspace preparation is in progress")
             if self._cleaned:
                 return
+            if self._cleanup_operations is not None:
+                raise WorkspaceError("workspace cleanup remains quarantined")
+            if (
+                self._captured is None
+                and self._capture_operations is not None
+                and not self._capture_operations.cleanup_complete
+            ):
+                raise WorkspaceError("workspace capture remains quarantined")
             root = self._root
             if root is None:
                 self._cleaned = True
@@ -662,8 +774,14 @@ class WorkspaceManager:
                     )
                     if source is None:
                         raise WorkspaceError("git worktree source is unavailable")
+                    if bounded:
+                        from ._preparation_worker import _bounded_git_argv
+
+                        git_argv = _bounded_git_argv(source)
+                    else:
+                        git_argv = ["git"]
                     subprocess.run(
-                        ["git", "worktree", "remove", "--force", str(root)],
+                        [*git_argv, "worktree", "remove", "--force", str(root)],
                         cwd=str(source),
                         check=True,
                         capture_output=True,
@@ -682,6 +800,66 @@ class WorkspaceManager:
                 self._cleanup_error = WorkspaceError("workspace cleanup failed")
                 raise self._cleanup_error from None
             self._cleaned = True
+
+    async def cleanup_async(
+        self,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        """Remove a workspace through an owned job when cleanup is bounded."""
+        if deadline is None:
+            await asyncio.to_thread(self.cleanup)
+            return
+        if deadline <= time.monotonic():
+            raise asyncio.TimeoutError
+        if os.name != "posix":
+            raise WorkspaceError("bounded workspace cleanup is unsupported")
+        from ._bootstrap_operations import OwnedBootstrapOperations
+
+        async with self._async_cleanup_lock:
+            with self._lock:
+                if self._cleaned:
+                    return
+                if self._preparing:
+                    raise WorkspaceError("workspace preparation is in progress")
+                if self._root is None:
+                    self._cleaned = True
+                    return
+                if self._cleanup_operations is not None:
+                    raise WorkspaceError("workspace cleanup remains quarantined")
+                if (
+                    self._captured is None
+                    and self._capture_operations is not None
+                    and not self._capture_operations.cleanup_complete
+                ):
+                    raise WorkspaceError("workspace capture remains quarantined")
+                operations = OwnedBootstrapOperations()
+                self._cleanup_operations = operations
+                payload = {
+                    "policy": self.policy.model_dump(mode="json"),
+                    "root": str(self._root),
+                    "owned": self._owned_root,
+                    "identity": self._root_identity,
+                    "preparation_identity": self._preparation_root_identity,
+                    "preparation_root": (
+                        str(self._preparation_root)
+                        if self._preparation_root is not None
+                        else None
+                    ),
+                }
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        operations.remove_workspace, payload, deadline=deadline
+                    ),
+                    timeout=max(0, deadline - time.monotonic()),
+                )
+                with self._lock:
+                    self._cleaned = True
+            except BaseException:
+                operations.cancel_pending()
+                self._cleanup_error = WorkspaceError("workspace cleanup failed")
+                raise
 
 
 __all__ = [

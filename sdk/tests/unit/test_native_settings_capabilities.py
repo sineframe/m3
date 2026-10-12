@@ -409,11 +409,18 @@ async def test_default_session_skips_added_native_discovery() -> None:
         async def start(self, spec: AgentSpec) -> None:
             self.started = True
 
+        async def send(self, message, *, timeout=None, metadata=None):
+            from m3.types import TextContent, TurnResponse
+
+            return TurnResponse(content=(TextContent(text="fixture"),))
+
         async def close(self) -> None:
             pass
 
     adapter = Adapter()
-    async with AsyncAgentSession(launch.spec, adapter):
+    async with AsyncAgentSession(launch.spec, adapter) as session:
+        assert not adapter.started
+        await session.send("hello")
         assert adapter.started
 
 

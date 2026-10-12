@@ -122,3 +122,50 @@ def test_kernel_runtime_lease_tracks_open_custody_not_child_pid(tmp_path: Path) 
         for owned in (descriptor, transferred):
             if owned >= 0:
                 os.close(owned)
+
+
+@pytest.mark.asyncio
+async def test_owned_lease_retries_marker_cleanup_after_descriptor_close(
+    tmp_path: Path,
+) -> None:
+    from m3._startup_deadlines import StartupBudget
+    from m3.runtime.owned import OwnedRuntimeLease
+    from m3.types import HarnessTimeouts
+
+    marker = tmp_path / "lease-owned"
+    marker.write_text("kernel-v1\n")
+    descriptor = os.open(marker, os.O_RDWR)
+    identity = os.fstat(descriptor)
+    clock = StartupBudget(HarnessTimeouts())
+    deadline = clock.begin_cleanup()
+
+    class Owner:
+        cleanup_complete = False
+        attempts = 0
+        deadlines: list[float] = []
+
+        def release_runtime(
+            self, path: str, device: int, inode: int, *, deadline: float
+        ) -> None:
+            self.deadlines.append(deadline)
+            self.attempts += 1
+            assert (device, inode) == (identity.st_dev, identity.st_ino)
+            assert Path(path) == marker
+            if self.attempts == 1:
+                raise RuntimeError("controlled cleanup interruption")
+            marker.unlink()
+
+        def close(self, *, deadline: float) -> None:
+            self.deadlines.append(deadline)
+            self.cleanup_complete = True
+
+    owner = Owner()
+    lease = OwnedRuntimeLease(descriptor, marker, owner, clock)
+    with pytest.raises(RuntimeError, match="controlled cleanup interruption"):
+        await lease.release()
+    assert lease.descriptors == ()
+    assert marker.exists()
+    await lease.release()
+    assert not marker.exists()
+    assert owner.attempts == 2
+    assert owner.deadlines == [deadline] * 4

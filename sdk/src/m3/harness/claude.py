@@ -65,8 +65,10 @@ from .native import (
     ProcessOwner,
     _executable,
     _isolated_environment,
+    _server_configuration,
     _text,
     probe_help,
+    probe_help_for_launch,
     read_bounded_line,
     startup_spawn_options,
     workspace_for_launch,
@@ -353,6 +355,7 @@ class ClaudeCodeHarnessAdapter:
         self._config: Path | None = None
         self._owner: ProcessOwner | None = None
         self._launch: HarnessLaunch | None = None
+        self._startup_phase_deadline: float | None = None
         self._session: ClaudeCodeSession | None = None
         self._output: asyncio.Queue[Mapping[str, Any] | None] | None = None
         self._reader_task: asyncio.Task[None] | None = None
@@ -379,11 +382,12 @@ class ClaudeCodeHarnessAdapter:
         configurations: tuple[HarnessServerConfig, ...],
         *,
         runtime_identity: NativeRuntimeIdentity | None = None,
+        deadline: float | None = None,
     ) -> None:
         from .native_settings import validate_native_settings
 
         await validate_native_settings(
-            self.executable, spec, configurations, runtime_identity
+            self.executable, spec, configurations, runtime_identity, deadline=deadline
         )
         startup = next(
             (
@@ -400,7 +404,9 @@ class ClaudeCodeHarnessAdapter:
                 )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        if (
+        from ._native_preparation import owned_native_preparation
+
+        if not owned_native_preparation(launch) and (
             shutil.which(self.executable) is None
             and not Path(self.executable).is_file()
         ):
@@ -415,7 +421,11 @@ class ClaudeCodeHarnessAdapter:
                 ),
                 reason="executable unavailable",
             )
-        help_text = await asyncio.to_thread(probe_help, self.executable, ("--help",))
+        help_text = (
+            await probe_help_for_launch(launch, self.executable, ("--help",))
+            if owned_native_preparation(launch)
+            else await asyncio.to_thread(probe_help, self.executable, ("--help",))
+        )
         if help_text is None or "stream-json" not in help_text:
             capability = Capability(
                 name="harness:claude-code",
@@ -482,18 +492,45 @@ class ClaudeCodeHarnessAdapter:
         )
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
+        from ._native_preparation import validate_owned_startup
+
+        validate_owned_startup(launch)
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("Claude Code streaming is unavailable")
         if self._session is not None:
             raise HarnessStartupError("Claude Code session is already open")
         launch = await self.prepare_launch_credentials(launch)
-        root = Path(tempfile.mkdtemp(prefix="m3-claude-"))
+        from ._native_preparation import NativePreparation, owned_native_preparation
+
+        preparation = None
+        assert launch._credentials is not None
+        runtime_secrets: set[str] = set()
+        if owned_native_preparation(launch):
+            payload = json.dumps(
+                _server_configuration(
+                    launch,
+                    resolve_credentials=True,
+                    environment=launch._credentials.reference_environment(),
+                    secrets=runtime_secrets,
+                ),
+                separators=(",", ":"),
+            ).encode("utf-8")
+            preparation = await NativePreparation.create(
+                launch, "claude_code", {"mcp-config.json": payload}
+            )
+            root = preparation.root
+        else:
+            root = Path(tempfile.mkdtemp(prefix="m3-claude-"))
         owner = ProcessOwner(root)
+        if preparation is not None:
+            preparation.adopt(owner)
         try:
             credentials = launch._credentials
             assert credentials is not None
-            environment = _isolated_environment(root, credentials.child_environment())
+            environment = _isolated_environment(
+                root, credentials.child_environment(), prepared=preparation is not None
+            )
             environment["DISABLE_UPDATES"] = "1"
             harness = launch.spec.harness
             if harness is None:
@@ -517,7 +554,6 @@ class ClaudeCodeHarnessAdapter:
                             "Claude MCP timeout conflicts with explicit harness environment"
                         )
                     environment["MCP_TIMEOUT"] = native_budget
-            runtime_secrets: set[str] = set()
             for target, reference in getattr(
                 harness, "credential_references", {}
             ).items():
@@ -537,11 +573,15 @@ class ClaudeCodeHarnessAdapter:
             # resolver source.  A selected map takes precedence for each
             # named reference, while missing named references retain the
             # legacy ambient fallback.
-            config = write_config(
-                root,
-                launch,
-                environment=credentials.reference_environment(),
-                secrets=runtime_secrets,
+            config = (
+                root / "mcp-config.json"
+                if preparation is not None
+                else write_config(
+                    root,
+                    launch,
+                    environment=credentials.reference_environment(),
+                    secrets=runtime_secrets,
+                )
             )
             self._native_error_redaction = launch_error_redaction(
                 launch, self.environment, runtime_secrets
@@ -618,6 +658,17 @@ class ClaudeCodeHarnessAdapter:
             from ._launch_credentials import check_credential_deadline
 
             check_credential_deadline(launch)
+            if preparation is not None and launch._startup_clock is not None:
+                launch._startup_clock.clear_owned_preparation()
+                launch._startup_clock.begin_native()
+                from .._startup_deadlines import earliest
+
+                clock = launch._startup_clock
+                self._startup_phase_deadline = earliest(
+                    clock.phase("initialize", None).deadline,
+                    clock.phase("readiness", None).deadline,
+                    clock.phase("session", None).deadline,
+                )
             await owner.spawn(
                 argv,
                 environment,
@@ -629,6 +680,11 @@ class ClaudeCodeHarnessAdapter:
                         if launch._runtime_lease is not None
                         else ()
                     ),
+                    owned_startup=preparation is not None,
+                    startup_deadline=launch._startup_clock.deadline
+                    if launch._startup_clock is not None
+                    and (preparation is not None or launch._startup_lease is not None)
+                    else None,
                 ),
             )
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(
@@ -693,6 +749,41 @@ class ClaudeCodeHarnessAdapter:
                 pass
             raise
 
+    async def _startup_ready(
+        self, item: Mapping[str, Any], owner: ProcessOwner
+    ) -> None:
+        launch = self._launch
+        if launch is None:
+            return
+        statuses = item.get("mcp_servers")
+        required = {
+            config.key
+            for config in launch.configurations
+            if config.required and config.available
+        }
+        if required and (
+            (
+                launch._startup_clock is not None
+                and launch._startup_clock.requires_ownership
+            )
+            or launch.spec.admission.enabled
+        ):
+            if not isinstance(statuses, list):
+                raise HarnessStartupError("Claude MCP readiness was unavailable")
+            connected = {
+                status.get("name")
+                for status in statuses
+                if isinstance(status, Mapping) and status.get("status") == "connected"
+            }
+            if not required <= connected:
+                raise HarnessStartupError(
+                    "required Claude MCP server failed to initialize"
+                )
+        await owner.startup_ready()
+        self._startup_phase_deadline = None
+        if launch._startup_clock is not None:
+            launch._startup_clock.finish()
+
     async def start(self, spec: Any) -> None:
         raise HarnessStartupError("Claude Code requires a resolved harness launch")
 
@@ -735,7 +826,9 @@ class ClaudeCodeHarnessAdapter:
             await session.close()
         elif self._owner is not None:
             await self._owner.close()
-        if self._config is not None:
+        if self._config is not None and (
+            self._owner is None or self._owner._owned_preparation is None
+        ):
             try:
                 self._config.unlink(missing_ok=True)
             except OSError:
@@ -1260,7 +1353,19 @@ class ClaudeCodeHarnessAdapter:
                     + "\n"
                 ).encode()
             )
-            await owner.process.stdin.drain()
+            from .._startup_deadlines import earliest
+
+            clock = self._launch._startup_clock if self._launch is not None else None
+            request_deadline = (
+                clock.phase("request", None).deadline if clock is not None else None
+            )
+            send_deadline = earliest(deadline, request_deadline)
+            await asyncio.wait_for(
+                owner.process.stdin.drain(),
+                timeout=None
+                if send_deadline is None
+                else max(0.0, send_deadline - time.monotonic()),
+            )
         except (BrokenPipeError, ConnectionError):
             limit()
             await terminate_and_observe("failed")
@@ -1278,7 +1383,22 @@ class ClaudeCodeHarnessAdapter:
             )
         while True:
             try:
-                remaining = None if deadline is None else deadline - time.monotonic()
+                from .._startup_deadlines import earliest
+
+                startup_deadline = (
+                    self._launch._startup_clock.deadline
+                    if self._launch is not None
+                    and self._launch._startup_clock is not None
+                    else None
+                )
+                active_deadline = earliest(
+                    deadline, startup_deadline, self._startup_phase_deadline
+                )
+                remaining = (
+                    None
+                    if active_deadline is None
+                    else active_deadline - time.monotonic()
+                )
                 if remaining is not None and remaining <= 0:
                     raise asyncio.TimeoutError
                 item = await asyncio.wait_for(output.get(), timeout=remaining)
@@ -1356,6 +1476,8 @@ class ClaudeCodeHarnessAdapter:
                 elif "message" in item:
                     limit()
             elif event_type in {"system", "init"}:
+                if item.get("subtype") == "init" or event_type == "init":
+                    await self._startup_ready(item, owner)
                 if "session_id" in item:
                     metadata_values["session_id"] = item["session_id"]
                 if "model" in item:
@@ -1493,6 +1615,15 @@ class ClaudeCodeHarnessAdapter:
             elif event_type in {"tool_use", "tool_call", "tool_result"}:
                 parse_content([item], current_message, complete=True)
             if event_type in {"result", "turn_complete", "assistant_result"}:
+                from ._native_preparation import owned_native_preparation
+
+                if (
+                    self._launch is not None
+                    and owned_native_preparation(self._launch)
+                    and self._launch._startup_clock is not None
+                    and not self._launch._startup_clock.finished
+                ):
+                    raise HarnessStartupError("Claude initialization was not confirmed")
                 for source_key in (
                     "session_id",
                     "model",

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 if os.environ.get("M3_DOCS_LOCAL_PROVIDER") == "1":
     from docs_live_mcp_client import codex_call, prompt_text
@@ -39,6 +40,21 @@ for line in sys.stdin:
     method = frame.get("method")
     ident = frame.get("id")
     if method == "initialize":
+        if os.environ.get("M3_CODEX_FIXTURE_INITIALIZE_ERROR") == "1":
+            print(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "error": {
+                            "code": -32600,
+                            "message": "fixture_initialize_cause",
+                        },
+                    }
+                ),
+                flush=True,
+            )
+            continue
         print(
             json.dumps(
                 {"jsonrpc": "2.0", "id": ident, "result": {"protocolVersion": 1}}
@@ -69,6 +85,13 @@ for line in sys.stdin:
             flush=True,
         )
     elif method == "thread/start":
+        delay = float(os.environ.get("M3_CODEX_FIXTURE_THREAD_DELAY", "0"))
+        deadline = time.monotonic() + delay
+        while time.monotonic() < deadline:
+            print(
+                json.dumps({"method": "mcpServer/progress", "params": {}}), flush=True
+            )
+            time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
         print(
             json.dumps(
                 {"jsonrpc": "2.0", "id": ident, "result": {"thread": {"id": thread}}}

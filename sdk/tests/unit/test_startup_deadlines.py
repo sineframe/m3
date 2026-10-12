@@ -108,3 +108,32 @@ def test_timeout_leaves_inherit_across_file_kit_selection_and_session(
     assert disabled.harness is not None
     assert disabled.harness.timeouts.total_seconds is None
     assert disabled.harness.timeouts.startup_seconds == 90
+
+
+def test_owned_configuration_jobs_share_one_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 100.0
+    monkeypatch.setattr(deadlines.time, "monotonic", lambda: now)
+    budget = StartupBudget(HarnessTimeouts(total_seconds=120, initialize_seconds=90))
+    assert budget.begin_owned_preparation() == 130
+    now += 10
+    assert budget.begin_owned_preparation() == 130
+    budget.clear_owned_preparation()
+    budget.begin_native()
+    assert budget.deadline == 220
+    assert budget.phase("initialize", 5).deadline == 200
+
+
+def test_explicit_startup_bounds_configuration_then_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 100.0
+    monkeypatch.setattr(deadlines.time, "monotonic", lambda: now)
+    budget = StartupBudget(HarnessTimeouts(total_seconds=120, startup_seconds=90))
+    assert budget.begin_owned_preparation() == 190
+    now += 15
+    budget.clear_owned_preparation()
+    budget.begin_native()
+    assert budget.deadline == 205
+    assert budget.phase("session", 75).deadline == 190

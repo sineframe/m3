@@ -76,6 +76,7 @@ from .native import (
     _server_configuration,
     _text,
     probe_help,
+    probe_help_for_launch,
     read_bounded_line,
     run_probe,
     startup_spawn_options,
@@ -398,15 +399,18 @@ class OpenCodeHarnessAdapter:
         configurations: tuple[HarnessServerConfig, ...],
         *,
         runtime_identity: NativeRuntimeIdentity | None = None,
+        deadline: float | None = None,
     ) -> None:
         from .native_settings import validate_native_settings
 
         await validate_native_settings(
-            self.executable, spec, configurations, runtime_identity
+            self.executable, spec, configurations, runtime_identity, deadline=deadline
         )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        if (
+        from ._native_preparation import owned_native_preparation
+
+        if not owned_native_preparation(launch) and (
             shutil.which(self.executable) is None
             and not Path(self.executable).is_file()
         ):
@@ -418,8 +422,12 @@ class OpenCodeHarnessAdapter:
             return Readiness(
                 ready=False, capabilities=(capability,), reason="executable unavailable"
             )
-        help_text = await asyncio.to_thread(
-            probe_help, self.executable, ("serve", "--help")
+        help_text = (
+            await probe_help_for_launch(launch, self.executable, ("serve", "--help"))
+            if owned_native_preparation(launch)
+            else await asyncio.to_thread(
+                probe_help, self.executable, ("serve", "--help")
+            )
         )
         if help_text is None or "serve" not in help_text.lower():
             capability = Capability(
@@ -440,7 +448,20 @@ class OpenCodeHarnessAdapter:
                 ready=False, reason="unsupported OpenCode configuration dialect"
             )
         try:
-            detected = await asyncio.to_thread(self._detect_dialect, launch)
+            if owned_native_preparation(launch):
+                version = await probe_help_for_launch(
+                    launch, self.executable, ("--version",)
+                )
+                if version is not None and re.search(r"\b1\.\d+", version):
+                    detected = "legacy"
+                elif version is not None and re.search(r"\b2\.\d+", version):
+                    detected = "v2"
+                else:
+                    raise HarnessStartupError(
+                        "OpenCode configuration dialect is unsupported"
+                    )
+            else:
+                detected = await asyncio.to_thread(self._detect_dialect, launch)
         except HarnessStartupError as error:
             return Readiness(ready=False, reason=str(error))
         if (
@@ -550,20 +571,45 @@ class OpenCodeHarnessAdapter:
         )
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
+        from ._native_preparation import validate_owned_startup
+
+        validate_owned_startup(launch)
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("OpenCode server is unavailable")
         if self._session is not None:
             raise HarnessStartupError("OpenCode session is already open")
         launch = await self.prepare_launch_credentials(launch)
-        root = Path(tempfile.mkdtemp(prefix="m3-opencode-"))
+        from ._native_preparation import NativePreparation, owned_native_preparation
+
+        preparation = None
+        if owned_native_preparation(launch):
+            dialect = self._detected_dialect
+            if dialect not in ("legacy", "v2"):
+                raise HarnessStartupError(
+                    "OpenCode configuration dialect could not be detected"
+                )
+            rendered = opencode_configuration(launch, dialect=dialect)
+            if getattr(launch.spec.harness, "runtime", None) == "managed":
+                rendered["autoupdate"] = False
+            payload = json.dumps(rendered, separators=(",", ":")).encode("utf-8")
+            preparation = await NativePreparation.create(
+                launch, "opencode", {"opencode.json": payload}
+            )
+            root = preparation.root
+        else:
+            root = Path(tempfile.mkdtemp(prefix="m3-opencode-"))
         owner = ProcessOwner(root)
+        if preparation is not None:
+            preparation.adopt(owner)
         client: httpx.AsyncClient | None = None
         try:
             harness = launch.spec.harness
             credentials = launch._credentials
             assert credentials is not None
-            environment = _isolated_environment(root, credentials.child_environment())
+            environment = _isolated_environment(
+                root, credentials.child_environment(), prepared=preparation is not None
+            )
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             if isinstance(harness, OpenCode) and harness.runtime == "managed":
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
@@ -638,12 +684,19 @@ class OpenCodeHarnessAdapter:
                 raise HarnessStartupError(
                     "OpenCode configuration dialect could not be detected"
                 )
-            config = _write_opencode_config(root, launch, dialect)
+            config = (
+                root / "opencode.json"
+                if preparation is not None
+                else _write_opencode_config(root, launch, dialect)
+            )
             workspace = workspace_for_launch(launch, root)
             environment["OPENCODE_CONFIG"] = str(config)
             from ._launch_credentials import check_credential_deadline
 
             check_credential_deadline(launch)
+            if preparation is not None and launch._startup_clock is not None:
+                launch._startup_clock.clear_owned_preparation()
+                launch._startup_clock.begin_native()
             await owner.spawn(
                 [self.executable, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                 environment,
@@ -655,38 +708,46 @@ class OpenCodeHarnessAdapter:
                         if launch._runtime_lease is not None
                         else ()
                     ),
+                    owned_startup=preparation is not None,
+                    startup_deadline=launch._startup_clock.deadline
+                    if launch._startup_clock is not None
+                    and (preparation is not None or launch._startup_lease is not None)
+                    else None,
                 ),
             )
             assert owner.process is not None and owner.process.stdout is not None
-            base_url = await self._read_server_url(owner.process.stdout)
+            from .._startup_deadlines import native_phase
+
+            readiness_phase = native_phase(launch._startup_clock, "readiness", 20.0)
+            base_url = await self._read_server_url(
+                owner.process.stdout, readiness_phase.deadline
+            )
+            session_phase = native_phase(launch._startup_clock, "session", 30.0)
             # OpenCode scopes server sessions to a project directory.  The
             # official API accepts this as a request header, not as a
             # session-body field.
             client = httpx.AsyncClient(
                 base_url=base_url,
-                timeout=httpx.Timeout(30.0, connect=5.0),
+                timeout=httpx.Timeout(session_phase.remaining()),
                 headers={"x-opencode-directory": str(workspace)},
             )
-            async with client.stream("POST", "/session", json={}) as response:
-                if response.status_code >= 400:
-                    raise NativeHarnessStartupError(
-                        native_error_info(
-                            _native_response_error(
-                                await self._read_bounded_response(response)
-                            ),
-                            summary="OpenCode session could not be created",
-                            harness="opencode",
-                            phase="session/create",
-                            redaction=self._native_error_redaction,
-                            details={"http_status": response.status_code},
-                        )
-                    )
-                try:
-                    body = json.loads(await self._read_bounded_response(response))
-                except json.JSONDecodeError:
-                    raise HarnessStartupError(
-                        "OpenCode session response is invalid"
-                    ) from None
+            from .._startup_deadlines import PhaseDeadline, earliest
+
+            request_phase = native_phase(launch._startup_clock, "request", 30.0)
+            initialize_deadline = (
+                launch._startup_clock.phase("initialize", None).deadline
+                if launch._startup_clock is not None
+                else None
+            )
+            create_phase = PhaseDeadline(
+                "session",
+                earliest(
+                    session_phase.deadline, request_phase.deadline, initialize_deadline
+                ),
+            )
+            body = await asyncio.wait_for(
+                self._create_native_session(client), timeout=create_phase.remaining()
+            )
             session_id = body.get("id") if isinstance(body, Mapping) else None
             if not isinstance(session_id, str) or not session_id:
                 raise HarnessStartupError("OpenCode session identity was unavailable")
@@ -698,7 +759,16 @@ class OpenCodeHarnessAdapter:
             self._session = OpenCodeSession(
                 self, owner, client, self._capabilities, session_id
             )
-            config.unlink(missing_ok=True)
+            if preparation is not None or launch.spec.admission.enabled:
+                await asyncio.wait_for(
+                    self._await_mcp_ready(client, launch, session_phase.deadline),
+                    timeout=session_phase.remaining(),
+                )
+            await owner.startup_ready()
+            if launch._startup_clock is not None:
+                launch._startup_clock.finish()
+            if preparation is None:
+                config.unlink(missing_ok=True)
             return self._session
         except BaseException:
             self._runtime_secrets.clear()
@@ -768,18 +838,80 @@ class OpenCodeHarnessAdapter:
         if self._session is not None:
             await self._session.cancel()
 
-    async def _read_server_url(self, stream: asyncio.StreamReader) -> str:
-        for _ in range(100):
+    async def _read_server_url(
+        self, stream: asyncio.StreamReader, deadline: float | None = None
+    ) -> str:
+        from .._startup_deadlines import PhaseDeadline
+
+        phase = PhaseDeadline(
+            "readiness", deadline if deadline is not None else time.monotonic() + 20.0
+        )
+        while True:
             try:
-                line = await asyncio.wait_for(read_bounded_line(stream), timeout=0.2)
+                line = await asyncio.wait_for(
+                    read_bounded_line(stream), timeout=phase.remaining()
+                )
             except asyncio.TimeoutError:
-                continue
+                raise HarnessStartupError(
+                    "OpenCode server readiness timed out"
+                ) from None
             if not line:
                 break
             match = _URL.search(line.decode("utf-8"))
             if match is not None:
                 return match.group(0)
         raise HarnessStartupError("OpenCode server endpoint was unavailable")
+
+    async def _create_native_session(self, client: httpx.AsyncClient) -> Any:
+        async with client.stream("POST", "/session", json={}) as response:
+            if response.status_code >= 400:
+                raise NativeHarnessStartupError(
+                    native_error_info(
+                        _native_response_error(
+                            await self._read_bounded_response(response)
+                        ),
+                        summary="OpenCode session could not be created",
+                        harness="opencode",
+                        phase="session/create",
+                        redaction=self._native_error_redaction,
+                        details={"http_status": response.status_code},
+                    )
+                )
+            try:
+                body = json.loads(await self._read_bounded_response(response))
+            except json.JSONDecodeError:
+                raise HarnessStartupError(
+                    "OpenCode session response is invalid"
+                ) from None
+        return body
+
+    async def _await_mcp_ready(
+        self, client: httpx.AsyncClient, launch: HarnessLaunch, deadline: float | None
+    ) -> None:
+        if not launch.configurations:
+            return
+        from .._startup_deadlines import PhaseDeadline
+
+        phase = PhaseDeadline("session", deadline)
+        async with client.stream("GET", "/mcp", timeout=phase.remaining()) as response:
+            if response.status_code >= 400:
+                raise HarnessStartupError("OpenCode MCP readiness was unavailable")
+            try:
+                statuses = json.loads(await self._read_bounded_response(response))
+            except json.JSONDecodeError:
+                raise HarnessStartupError(
+                    "OpenCode MCP readiness response is invalid"
+                ) from None
+        if not isinstance(statuses, Mapping):
+            raise HarnessStartupError("OpenCode MCP readiness response is invalid")
+        for configuration in launch.configurations:
+            if not configuration.required or not configuration.available:
+                continue
+            status = statuses.get(configuration.key)
+            if not isinstance(status, Mapping) or status.get("status") != "connected":
+                raise HarnessStartupError(
+                    "required OpenCode MCP server failed to initialize"
+                )
 
     @staticmethod
     async def _read_bounded_response(response: httpx.Response) -> bytes:
