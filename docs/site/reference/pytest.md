@@ -60,6 +60,9 @@ in the same file. Keep direct-only and agent tests in separate files.
 installs a default `SQLiteExecutionStore` for kits without an explicit store;
 an explicit kit store takes precedence.
 
+`--m3-config PATH` selects the settings file for direct pytest runs as well; see
+[Configuration](configuration.md#sdk-settings).
+
 ## Trials
 
 `--trials N` (or marker `trials=N`) expands the `agent` fixture, so only tests
@@ -109,6 +112,9 @@ Python; run m3 setup in the project`. `-n` cannot be combined with `-n` or
 All workers write one run: the same run ID, verdicts, feedback, and judge
 budget. `--judge-max-requests` is shared across workers. When `-n` is used,
 pytest's normal output replaces the M3 progress line.
+
+Workers use the controller's resolved settings; see
+[Configuration](configuration.md#sdk-settings).
 
 Inside one test, up to 4 executions submitted with `agent.submit(...)` or
 `kit.submit(...)` run at once; further submissions wait. A kit created by the

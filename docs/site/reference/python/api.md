@@ -435,6 +435,7 @@ this release. Use the capability pages to see how the objects work together.
 - <a id="m3.pytest_plugin.agent"></a><a id="agent"></a>[`agent`](api/pytest-plugin.md#agent)
 - <a id="m3.pytest_plugin.server"></a><a id="server"></a>[`server`](api/pytest-plugin.md#server)
 - <a id="m3.pytest_plugin.pytest_collection_modifyitems"></a><a id="pytest-collection-modifyitems"></a>[`pytest_collection_modifyitems`](api/pytest-plugin.md#pytest-collection-modifyitems)
+- <a id="m3.pytest_plugin.pytest_configure_node"></a><a id="pytest-configure-node"></a>[`pytest_configure_node`](api/pytest-plugin.md#pytest-configure-node)
 
 ## `m3.matrix`
 
