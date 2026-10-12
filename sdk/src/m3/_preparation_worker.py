@@ -398,247 +398,259 @@ def _supervise(
         os.set_blocking(process.ready.fileno(), False)
         selector.register(process.ready, selectors.EVENT_READ, ("group", job))
 
-    try:
-        while controller_open or jobs or outgoing:
-            if outgoing:
-                try:
-                    sent = os.write(sys.stdout.fileno(), outgoing[:65536])
-                    del outgoing[:sent]
-                except BlockingIOError:
-                    pass
-                except BrokenPipeError:
-                    controller_open = False
-                    ownership_open = False
-                    outgoing.clear()
-                    for job in jobs.values():
-                        stop(job)
-            for key, _mask in selector.select(timeout=0.02):
-                if key.data == "ownership":
-                    assert ownership_fd is not None
-                    raw = os.read(ownership_fd, 65536)
-                    if not raw:
-                        selector.unregister(ownership_fd)
-                        ownership_open = False
-                        controller_open = False
-                        if sys.stdin.fileno() in selector.get_map():
-                            selector.unregister(sys.stdin)
-                        outgoing.clear()
-                        for job in jobs.values():
-                            stop(job)
-                        continue
-                    ownership_input.extend(raw)
-                    if len(ownership_input) > MAX_FRAME:
-                        raise ValueError("preparation acknowledgement exceeds limit")
-                    while b"\n" in ownership_input:
-                        line, _, rest = ownership_input.partition(b"\n")
-                        ownership_input[:] = rest
-                        acknowledgement = json.loads(line)
-                        if (
-                            acknowledgement.get("version") != 1
-                            or acknowledgement.get("action") != "begin"
-                        ):
-                            raise ValueError("invalid preparation acknowledgement")
-                        candidate = jobs.get(acknowledgement["id"])
-                        if candidate is not None and candidate.state in {
-                            "running",
-                            "removing",
-                        }:
-                            candidate.process.begin()
-                elif key.data == "controller":
-                    raw = os.read(sys.stdin.fileno(), 65536)
-                    if not raw:
-                        selector.unregister(sys.stdin)
-                        controller_open = False
-                        if ownership_fd is None:
-                            ownership_open = False
-                            outgoing.clear()
-                        for job in jobs.values():
-                            emit(job.ident, "failed")
-                            stop(job)
-                        continue
-                    incoming.extend(raw)
-                    if len(incoming) > MAX_FRAME:
-                        raise ValueError("preparation request exceeds limit")
-                    while b"\n" in incoming:
-                        line, _, rest = incoming.partition(b"\n")
-                        incoming[:] = rest
-                        request = json.loads(line)
-                        if request.get("version", 1) != 1:
-                            raise ValueError("invalid preparation protocol")
-                        ident = request["id"]
-                        action = request["action"]
-                        if action == "submit":
-                            root = Path(request["root"])
-                            if (
-                                ident in jobs
-                                or len(jobs) >= max_jobs
-                                or (
-                                    owned_root is not None and root.parent != owned_root
-                                )
-                            ):
-                                emit(ident, "rejected")
-                                continue
-                            process = _fork_job(
-                                request["operation"],
-                                root,
-                                request["payload"],
-                                create_root=owned_root is not None,
-                            )
-                            assert process.stdout is not None
-                            os.set_blocking(process.stdout.fileno(), False)
-                            job = Job(ident, root, process)
-                            if (
-                                request["operation"] == "workspace"
-                                and request["payload"]["policy"]["kind"]
-                                == "git_worktree"
-                            ):
-                                job.cleanup_source = request["payload"]["policy"][
-                                    "source"
-                                ]
-                            jobs[ident] = job
-                            selector.register(process.stdout, selectors.EVENT_READ, job)
-                            os.set_blocking(process.ready.fileno(), False)
-                            selector.register(
-                                process.ready, selectors.EVENT_READ, ("group", job)
-                            )
-                        elif action == "begin" and ownership_fd is None:
-                            candidate = jobs.get(ident)
-                            if candidate is not None and candidate.state in {
-                                "running",
-                                "removing",
-                            }:
-                                candidate.process.begin()
-                        elif action in {"cancel", "discard"}:
-                            candidate = jobs.get(ident)
-                            if candidate is not None:
-                                stop(candidate)
-                        elif action == "accept":
-                            candidate = jobs.get(ident)
-                            if candidate is not None and candidate.state == "ready":
-                                candidate.state = "accepted"
-                                emit(ident, "accepted")
-                            else:
-                                emit(ident, "failed")
-                        elif action == "release":
-                            candidate = jobs.get(ident)
-                            if candidate is not None and candidate.state == "accepted":
-                                candidate.state = "released"
-                                emit(ident, "released")
-                        elif action == "forget":
-                            candidate = jobs.get(ident)
-                            if candidate is not None and candidate.state == "released":
-                                del jobs[ident]
-                        elif action == "shutdown":
-                            controller_open = False
-                            if ownership_fd is None:
-                                ownership_open = False
-                                outgoing.clear()
-                            for job in jobs.values():
-                                stop(job)
-                elif isinstance(key.data, tuple):
-                    _phase, job = key.data
-                    raw = os.read(key.fd, 1)
-                    selector.unregister(key.fileobj)
-                    cast(IO[bytes], key.fileobj).close()
-                    if raw == b"s":
-                        job.process.group_established = True
-                        if job.state == "fenced":
-                            job.process.signal(
-                                signal.SIGKILL if job.killed else signal.SIGTERM
-                            )
-                        elif job.state in {"running", "removing"}:
-                            if ownership_open:
-                                emit(
-                                    job.ident,
-                                    "cleanup_started"
-                                    if job.state == "removing"
-                                    else "started",
-                                    pid=job.process.pid,
-                                )
-                            else:
-                                stop(job)
-                    else:
-                        stop(job)
+    def handle_request(request: dict[str, Any]) -> None:
+        nonlocal controller_open, ownership_open
+        if request.get("version", 1) != 1:
+            raise ValueError("invalid preparation protocol")
+        ident = request["id"]
+        action = request["action"]
+        if action == "submit":
+            root = Path(request["root"])
+            if (
+                ident in jobs
+                or len(jobs) >= max_jobs
+                or (owned_root is not None and root.parent != owned_root)
+            ):
+                emit(ident, "rejected")
+                return
+            process = _fork_job(
+                request["operation"],
+                root,
+                request["payload"],
+                create_root=owned_root is not None,
+            )
+            assert process.stdout is not None
+            os.set_blocking(process.stdout.fileno(), False)
+            job = Job(ident, root, process)
+            if (
+                request["operation"] == "workspace"
+                and request["payload"]["policy"]["kind"] == "git_worktree"
+            ):
+                job.cleanup_source = request["payload"]["policy"]["source"]
+            jobs[ident] = job
+            selector.register(process.stdout, selectors.EVENT_READ, job)
+            os.set_blocking(process.ready.fileno(), False)
+            selector.register(process.ready, selectors.EVENT_READ, ("group", job))
+        elif action == "begin" and ownership_fd is None:
+            candidate = jobs.get(ident)
+            if candidate is not None and candidate.state in {
+                "running",
+                "removing",
+            }:
+                candidate.process.begin()
+        elif action in {"cancel", "discard"}:
+            candidate = jobs.get(ident)
+            if candidate is not None:
+                stop(candidate)
+        elif action == "accept":
+            candidate = jobs.get(ident)
+            if candidate is not None and candidate.state == "ready":
+                candidate.state = "accepted"
+                emit(ident, "accepted")
+            else:
+                emit(ident, "failed")
+        elif action == "release":
+            candidate = jobs.get(ident)
+            if candidate is not None and candidate.state == "accepted":
+                candidate.state = "released"
+                emit(ident, "released")
+        elif action == "forget":
+            candidate = jobs.get(ident)
+            if candidate is not None and candidate.state == "released":
+                del jobs[ident]
+        elif action == "shutdown":
+            controller_open = False
+            if ownership_fd is None:
+                ownership_open = False
+                outgoing.clear()
+            for job in jobs.values():
+                stop(job)
+
+    def read_ownership_acknowledgements() -> None:
+        nonlocal controller_open, ownership_open
+        assert ownership_fd is not None
+        raw = os.read(ownership_fd, 65536)
+        if not raw:
+            selector.unregister(ownership_fd)
+            ownership_open = False
+            controller_open = False
+            if sys.stdin.fileno() in selector.get_map():
+                selector.unregister(sys.stdin)
+            outgoing.clear()
+            for job in jobs.values():
+                stop(job)
+            return
+        ownership_input.extend(raw)
+        if len(ownership_input) > MAX_FRAME:
+            raise ValueError("preparation acknowledgement exceeds limit")
+        while b"\n" in ownership_input:
+            line, _, rest = ownership_input.partition(b"\n")
+            ownership_input[:] = rest
+            acknowledgement = json.loads(line)
+            if (
+                acknowledgement.get("version") != 1
+                or acknowledgement.get("action") != "begin"
+            ):
+                raise ValueError("invalid preparation acknowledgement")
+            candidate = jobs.get(acknowledgement["id"])
+            if candidate is not None and candidate.state in {
+                "running",
+                "removing",
+            }:
+                candidate.process.begin()
+
+    def read_controller_requests() -> None:
+        nonlocal controller_open, ownership_open
+        raw = os.read(sys.stdin.fileno(), 65536)
+        if not raw:
+            selector.unregister(sys.stdin)
+            controller_open = False
+            if ownership_fd is None:
+                ownership_open = False
+                outgoing.clear()
+            for job in jobs.values():
+                emit(job.ident, "failed")
+                stop(job)
+            return
+        incoming.extend(raw)
+        if len(incoming) > MAX_FRAME:
+            raise ValueError("preparation request exceeds limit")
+        while b"\n" in incoming:
+            line, _, rest = incoming.partition(b"\n")
+            incoming[:] = rest
+            request = json.loads(line)
+            handle_request(request)
+
+    def handle_group_ready(key: selectors.SelectorKey) -> None:
+        _phase, job = key.data
+        raw = os.read(key.fd, 1)
+        selector.unregister(key.fileobj)
+        cast(IO[bytes], key.fileobj).close()
+        if raw == b"s":
+            job.process.group_established = True
+            if job.state == "fenced":
+                job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
+            elif job.state in {"running", "removing"}:
+                if ownership_open:
+                    emit(
+                        job.ident,
+                        "cleanup_started" if job.state == "removing" else "started",
+                        pid=job.process.pid,
+                    )
                 else:
-                    job = key.data
-                    raw = os.read(key.fd, 65536)
-                    if raw:
-                        job.output.extend(raw)
-                        if len(job.output) > MAX_FRAME:
-                            stop(job)
+                    stop(job)
+        else:
+            stop(job)
+
+    def read_job_output(key: selectors.SelectorKey) -> None:
+        job = key.data
+        raw = os.read(key.fd, 65536)
+        if raw:
+            job.output.extend(raw)
+            if len(job.output) > MAX_FRAME:
+                stop(job)
+        else:
+            selector.unregister(key.fileobj)
+            cast(IO[bytes], key.fileobj).close()
+            job.stream_open = False
+
+    def progress_jobs() -> None:
+        now = time.monotonic()
+        for ident, job in tuple(jobs.items()):
+            if job.state == "released":
+                if not controller_open:
+                    del jobs[ident]
+                continue
+            if job.state == "accepted":
+                # Provisional acceptance is not publication. Only release
+                # transfers ownership; EOF fences unreleased material.
+                continue
+            exited = job.process.poll() is not None
+            alive = job.process.alive()
+            if job.state == "running" and exited and not job.stream_open:
+                if alive:
+                    stop(job)
+                else:
+                    try:
+                        result = json.loads(job.output)
+                    except (ValueError, UnicodeError):
+                        result = {"ok": False}
+                    if result.get("ok") is True:
+                        job.state = "ready"
+                        emit(ident, "ready", data=result["data"])
                     else:
-                        selector.unregister(key.fileobj)
-                        cast(IO[bytes], key.fileobj).close()
-                        job.stream_open = False
-            now = time.monotonic()
-            for ident, job in tuple(jobs.items()):
-                if job.state == "released":
-                    if not controller_open:
-                        del jobs[ident]
-                    continue
-                if job.state == "accepted":
-                    # Provisional acceptance is not publication. Only release
-                    # transfers ownership; EOF fences unreleased material.
-                    continue
-                exited = job.process.poll() is not None
-                alive = job.process.alive()
-                if job.state == "running" and exited and not job.stream_open:
-                    if alive:
-                        stop(job)
-                    else:
-                        try:
-                            result = json.loads(job.output)
-                        except (ValueError, UnicodeError):
-                            result = {"ok": False}
-                        if result.get("ok") is True:
-                            job.state = "ready"
-                            emit(ident, "ready", data=result["data"])
-                        else:
-                            emit(
-                                ident,
-                                "failed",
-                                reason="unsupported_git_extensions"
-                                if result.get("reason") == "unsupported_git_extensions"
-                                else None,
-                            )
-                            stop(job)
-                if job.state == "fenced":
-                    if not exited or alive:
-                        if not job.quarantine_sent:
-                            emit(ident, "quarantined")
-                            job.quarantine_sent = True
-                        if (
-                            job.stop_at is not None
-                            and now - job.stop_at >= TERM_GRACE
-                            and not job.killed
-                        ):
-                            job.process.signal(signal.SIGKILL)
-                            job.killed = True
-                    elif not job.stream_open:
-                        if ownership_open:
-                            spawn_cleanup(job)
-                        else:
-                            # No router remains to register/ACK a new mutation
-                            # group. Dead writers leave explicit quarantine.
-                            del jobs[ident]
-                elif job.state == "removing":
-                    if exited and not alive:
                         emit(
                             ident,
-                            "removed"
-                            if job.process.returncode == 0
-                            else "cleanup_failed",
+                            "failed",
+                            reason="unsupported_git_extensions"
+                            if result.get("reason") == "unsupported_git_extensions"
+                            else None,
                         )
-                        del jobs[ident]
-                    elif (
+                        stop(job)
+            if job.state == "fenced":
+                if not exited or alive:
+                    if not job.quarantine_sent:
+                        emit(ident, "quarantined")
+                        job.quarantine_sent = True
+                    if (
                         job.stop_at is not None
                         and now - job.stop_at >= TERM_GRACE
                         and not job.killed
                     ):
                         job.process.signal(signal.SIGKILL)
                         job.killed = True
-                if len(outgoing) > MAX_FRAME * 2:
-                    raise ValueError("preparation output exceeds limit")
+                elif not job.stream_open:
+                    if ownership_open:
+                        spawn_cleanup(job)
+                    else:
+                        # No router remains to register/ACK a new mutation
+                        # group. Dead writers leave explicit quarantine.
+                        del jobs[ident]
+            elif job.state == "removing":
+                if exited and not alive:
+                    emit(
+                        ident,
+                        "removed" if job.process.returncode == 0 else "cleanup_failed",
+                    )
+                    del jobs[ident]
+                elif (
+                    job.stop_at is not None
+                    and now - job.stop_at >= TERM_GRACE
+                    and not job.killed
+                ):
+                    job.process.signal(signal.SIGKILL)
+                    job.killed = True
+            if len(outgoing) > MAX_FRAME * 2:
+                raise ValueError("preparation output exceeds limit")
+
+    def flush_events() -> None:
+        nonlocal controller_open, ownership_open
+        if outgoing:
+            try:
+                sent = os.write(sys.stdout.fileno(), outgoing[:65536])
+                del outgoing[:sent]
+            except BlockingIOError:
+                pass
+            except BrokenPipeError:
+                controller_open = False
+                ownership_open = False
+                outgoing.clear()
+                for job in jobs.values():
+                    stop(job)
+
+    try:
+        while controller_open or jobs or outgoing:
+            flush_events()
+            for key, _mask in selector.select(timeout=0.02):
+                if key.data == "ownership":
+                    read_ownership_acknowledgements()
+                elif key.data == "controller":
+                    read_controller_requests()
+                elif isinstance(key.data, tuple):
+                    handle_group_ready(key)
+                else:
+                    read_job_output(key)
+            progress_jobs()
     finally:
         # Protocol corruption cannot leave an unfenced writer. Kill owned
         # groups, retain roots (no deletion while writer death is uncertain).
