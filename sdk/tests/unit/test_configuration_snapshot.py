@@ -10,6 +10,7 @@ from m3._configuration_snapshot import (
     ConfigurationSnapshotError,
     configuration_digest,
     freeze_configuration,
+    parse_configuration_snapshot,
     restore_configuration_snapshot,
 )
 from m3._literal_store import RunLiteralStore
@@ -44,7 +45,7 @@ def test_configured_snapshot_retains_private_values_after_source_deletion(
         assert len(snapshot.handles) == 1
         project.unlink()
         restored = restore_configuration_snapshot(
-            ConfigurationSnapshot.model_validate_json(metadata), registry
+            parse_configuration_snapshot(metadata), registry
         )
         assert restored.config == config
         assert restored.literal_registry is registry
@@ -96,3 +97,9 @@ def test_closed_registry_does_not_trigger_source_rediscovery() -> None:
     registry.close()
     with pytest.raises(ConfigurationSnapshotError):
         restore_configuration_snapshot(snapshot, registry)
+
+
+def test_malformed_worker_snapshot_has_value_free_error() -> None:
+    with pytest.raises(ConfigurationSnapshotError) as caught:
+        parse_configuration_snapshot('{"version":"PRIVATE-CANARY"}')
+    assert "PRIVATE-CANARY" not in str(caught.value)

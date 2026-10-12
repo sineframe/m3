@@ -57,6 +57,11 @@ def configuration_digest(config: Config) -> str:
     """Hash diagnostic field/source information, never the private payload."""
     projection: dict[str, Any] = config.redacted_projection()
     projection.pop("sources", None)
+    if "native_settings" in projection:
+        projection["native_settings"] = sorted(
+            projection["native_settings"],
+            key=lambda item: (item["field"], item["source"]),
+        )
     projection["budgets"] = {
         "harness": config.harness_timeouts.model_dump(mode="json"),
         "mcp": config.mcp_timeouts.model_dump(mode="json"),
@@ -84,6 +89,16 @@ def configuration_digest(config: Config) -> str:
     }
     encoded = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def parse_configuration_snapshot(raw: str) -> ConfigurationSnapshot:
+    """Reject malformed transport metadata without exposing its input."""
+    if len(raw) > 1024 * 1024:
+        raise ConfigurationSnapshotError("configuration snapshot exceeds limit")
+    try:
+        return ConfigurationSnapshot.model_validate_json(raw)
+    except (ValueError, TypeError, RecursionError):
+        raise ConfigurationSnapshotError("configuration snapshot is invalid") from None
 
 
 def freeze_configuration(
