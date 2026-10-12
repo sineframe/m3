@@ -390,6 +390,28 @@ async def test_pi_action_channel_is_turn_scoped_and_cleaned() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pi_rejected_second_open_leaves_the_live_session_alone() -> None:
+    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    session = await adapter.open(launch)
+    process = adapter._process
+    control = adapter.control_channel
+    try:
+        with pytest.raises(HarnessStartupError, match="already open"):
+            await adapter.open(launch)
+        assert adapter._session is session
+        assert adapter._process is process
+        assert adapter.control_channel is control
+        assert process is not None and process.owner is not None
+        assert process.owner.process is not None
+        assert process.owner.process.returncode is None
+        # The live session's stderr is not reported as a failed startup.
+        assert adapter.take_startup_evidence() is None
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_pi_open_closes_native_session_when_control_extension_does_not_connect() -> (
     None
 ):

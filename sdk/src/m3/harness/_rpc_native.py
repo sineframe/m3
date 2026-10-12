@@ -407,9 +407,11 @@ class NativeRPCAdapter:
 
         A drain still running (the child is alive) is never awaited or read
         here: this runs on the turn path. A finished or cancelled drain leaves
-        its bytes in the owner's buffer. Text is redacted with this adapter's
-        secrets and the launch's configured credentials before it reaches the
-        observation; the sink redacts again and applies the capture policy.
+        its bytes in the owner's buffer; cancellation happens between reads,
+        so only the size limit can cut a secret. Text is redacted with this
+        adapter's secrets and the launch's configured credentials before it
+        reaches the observation; the sink redacts again and applies the
+        capture policy.
         """
 
         owner = process.owner
@@ -424,9 +426,13 @@ class NativeRPCAdapter:
                     self._runtime_secrets | self._launch_secrets.known,
                     guessed=self._launch_secrets.guessed,
                 ),
-                truncated=task.cancelled() or len(retained) >= MAX_STDERR_BYTES,
+                truncated=len(retained) >= MAX_STDERR_BYTES,
             )
         except Exception:
+            return {"stderr_state": "unavailable"}
+        if retained and not text:
+            # Nothing is left once a cut secret is dropped; claiming an empty
+            # observation would misreport what the child wrote.
             return {"stderr_state": "unavailable"}
         return {"stderr": text, "stderr_state": "observed"}
 

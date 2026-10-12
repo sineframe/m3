@@ -21,7 +21,7 @@ from m3.errors import MCPError, TransportError, UnsupportedFeature
 from m3.execution_runtime import _error_info
 from m3.harness._rpc_native import NativeRPCAdapter
 from m3.harness.contracts import HarnessLaunch, HarnessStartupError
-from m3.harness.native import ProcessOwner, launch_secrets
+from m3.harness.native import MAX_STDERR_BYTES, ProcessOwner, launch_secrets
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
@@ -192,7 +192,7 @@ async def test_unclaimed_startup_evidence_is_not_reused_by_a_later_open() -> Non
 
 def test_launch_secrets_keep_ordinary_settings_readable() -> None:
     spec = _spec()
-    configuration = HarnessServerConfig(
+    local = HarnessServerConfig(
         key="fs",
         transport=TransportKind.STDIO,
         required=True,
@@ -207,15 +207,32 @@ def test_launch_secrets_keep_ordinary_settings_readable() -> None:
             "NODE_ENV": "production",
             "PYTHONPATH": "/srv/app/lib",
             "RELEASE": "2025-06-18",
+            "SERVICE": "github-mcp-server-v2",
         },
     )
-    secrets = launch_secrets(
-        HarnessLaunch(spec, ServerGroupSnapshot(), (configuration,), spec.tool_policy)
+    remote = HarnessServerConfig(
+        key="remote",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="remote",
+        endpoint=(
+            "https://api.example.com/github-mcp-server/s/ZapKey9137abcdEF/mcp"
+            "?version=2025-06-18&mode=streamable-http-2025&api_key=k123"
+        ),
     )
-    assert secrets.known == {"4821"}
-    # Credential-like names and token-shaped values only; ordinary settings
-    # are not collected, so they stay readable in a kept reason.
-    assert secrets.guessed == {"ghp_patvalue", "hunter-two", "zx81Kq0vT3mN7pLw"}
+    secrets = launch_secrets(
+        HarnessLaunch(spec, ServerGroupSnapshot(), (local, remote), spec.tool_policy)
+    )
+    assert secrets.known == {"4821", "k123"}
+    # Credential-like names and token-shaped values only; ordinary settings,
+    # names, dates and versions are not collected, so they stay readable.
+    assert secrets.guessed == {
+        "ghp_patvalue",
+        "hunter-two",
+        "zx81Kq0vT3mN7pLw",
+        "ZapKey9137abcdEF",
+    }
 
 
 @pytest.mark.asyncio
@@ -293,8 +310,9 @@ async def test_startup_stderr_evidence_redacts_credentials_the_proxy_forwards(
 async def test_turn_process_observation_reads_only_a_stopped_drain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Only this adapter's secret: ambient credentials would change the cut.
-    monkeypatch.setattr("m3.trace.redaction.known_secret_values", set)
+    # Long ambient credentials (an SSH agent socket, a JWT) must not shorten
+    # evidence that was never cut.
+    monkeypatch.setenv("AUTH_TOKEN", "ambient-" + "x" * 120)
     adapter = NativeRPCAdapter(executable=sys.executable)
     adapter._runtime_secrets = {"adapter-secret-canary"}
     retained = bytearray(b"fatal: adapter-secret-canary rejected")
@@ -306,20 +324,27 @@ async def test_turn_process_observation_reads_only_a_stopped_drain(
     assert adapter._stderr_fields(process) == {"stderr_state": "unavailable"}  # type: ignore[arg-type]
 
     drain.set_result(bytes(retained))
-    fields = adapter._stderr_fields(process)  # type: ignore[arg-type]
-    assert fields == {
+    assert adapter._stderr_fields(process) == {  # type: ignore[arg-type]
         "stderr": "fatal: [REDACTED] rejected",
         "stderr_state": "observed",
     }
 
     # A drain cancelled because a detached descendant held the pipe keeps what
-    # it read; its tail may hold a cut secret, so that much is dropped.
+    # it read, whole: it stops between reads, so it cut nothing.
     cancelled: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
     cancelled.cancel()
     owner = SimpleNamespace(
-        stderr_task=cancelled,
-        stderr_retained=bytearray(b"fatal: auth failed for adapter-sec"),
+        stderr_task=cancelled, stderr_retained=bytearray(b"fatal: auth failed\n")
+    )
+    assert adapter._stderr_fields(SimpleNamespace(owner=owner)) == {  # type: ignore[arg-type]
+        "stderr": "fatal: auth failed\n",
+        "stderr_state": "observed",
+    }
+
+    # Stderr cut at the size limit loses only a secret's start left at the end.
+    head = b"x" * (MAX_STDERR_BYTES - len(b" key adapter-sec"))
+    owner = SimpleNamespace(
+        stderr_task=drain, stderr_retained=bytearray(head + b" key adapter-sec")
     )
     fields = adapter._stderr_fields(SimpleNamespace(owner=owner))  # type: ignore[arg-type]
-    # The 21-character secret's length is dropped from the end.
-    assert fields == {"stderr": "fatal: auth f", "stderr_state": "observed"}
+    assert fields["stderr"] == head.decode() + " key "

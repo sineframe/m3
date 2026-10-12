@@ -94,6 +94,14 @@ _CREDENTIAL_NAME_PART: Final[re.Pattern[str]] = re.compile(
 )
 # A value shaped like a generated token: long, unbroken, letters and digits.
 _TOKEN_SHAPED: Final[re.Pattern[str]] = re.compile(r"(?=\S*[A-Za-z])(?=\S*\d)\S{16,}")
+# Token-shaped values that are still ordinary identifiers: dates and versions
+# (``2025-06-18``, ``1.2.3-beta.4``) and lowercase hyphenated names whose
+# parts are words or carry at most four digits (``github-mcp-server-v2``,
+# ``streamable-http-2025``).
+_ORDINARY_IDENTIFIER: Final[re.Pattern[str]] = re.compile(
+    r"v?\d+(?:[._-]\d+)+(?:[-+.][0-9A-Za-z.]+)?"
+    r"|[a-z]+(?:[._-](?:[a-z]+|[a-z]*\d{1,4}[a-z]*))+"
+)
 _MAX_NESTING_DEPTH: Final[int] = 64
 _SAFE_PATH_COMPONENTS: Final[frozenset[str]] = frozenset(
     {
@@ -791,10 +799,9 @@ class NativeTextSecrets:
         return NativeTextSecrets(self.known | other.known, self.guessed | other.guessed)
 
 
-def _credential_url_part(value: str) -> bool:
-    return len(value) >= 16 or (
-        len(value) >= _GUESSED_SECRET_MIN_LENGTH
-        and any(character.isdigit() for character in value)
+def _token_like(value: str) -> bool:
+    return bool(_TOKEN_SHAPED.fullmatch(value)) and not _ORDINARY_IDENTIFIER.fullmatch(
+        value
     )
 
 
@@ -806,11 +813,12 @@ def mcp_configuration_secrets(configurations: Iterable[Any]) -> NativeTextSecret
     forwards the original endpoint path and query to the harness.
 
     Known: literal env/header values under sensitive names, the endpoint's
-    password, and endpoint path segments and query values shaped like
-    credentials (16+ characters, or 8+ with a digit), raw and decoded.
-    Guessed: other literal env/header values whose name still suggests a
-    credential (``GITHUB_PAT``) or whose value is token-shaped. Ordinary
-    settings such as ``NODE_ENV=production`` are not collected.
+    password, and query values under sensitive query names. Guessed: other
+    literal env/header values whose name still suggests a credential
+    (``GITHUB_PAT``), and env/header values, path segments and query values
+    shaped like generated tokens. Ordinary settings, names, dates and
+    versions (``NODE_ENV=production``, ``github-mcp-server``,
+    ``version=2025-06-18``) are not collected.
     """
 
     known: set[str] = set()
@@ -825,9 +833,7 @@ def mcp_configuration_secrets(configurations: Iterable[Any]) -> NativeTextSecret
                     continue
                 if _is_sensitive_key(key, frozenset()):
                     known.add(value)
-                elif _CREDENTIAL_NAME_PART.search(key) or _TOKEN_SHAPED.fullmatch(
-                    value
-                ):
+                elif _CREDENTIAL_NAME_PART.search(key) or _token_like(value):
                     guessed.add(value)
         endpoint = getattr(configuration, "endpoint", None)
         if not isinstance(endpoint, str) or not endpoint:
@@ -839,14 +845,16 @@ def mcp_configuration_secrets(configurations: Iterable[Any]) -> NativeTextSecret
             continue
         if password:
             known.add(password)
-        candidates = [*parts.path.split("/")]
         for pair in parts.query.split("&"):
-            candidates.append(pair.partition("=")[2])
-        for candidate in candidates:
-            known.update(
-                value
-                for value in (candidate, unquote_plus(candidate))
-                if _credential_url_part(value)
+            key, _, raw = pair.partition("=")
+            values = {item for item in (raw, unquote_plus(raw)) if item}
+            if is_sensitive_query_key(unquote_plus(key)):
+                known.update(values)
+            else:
+                guessed.update(item for item in values if _token_like(item))
+        for segment in parts.path.split("/"):
+            guessed.update(
+                item for item in (segment, unquote_plus(segment)) if _token_like(item)
             )
     return NativeTextSecrets(frozenset(known), frozenset(guessed))
 
@@ -867,7 +875,9 @@ def _url_origin(url: str) -> str:
     if not parts.scheme:
         return REDACTED
     if not host:
-        return f"{parts.scheme}://…"
+        # A local ``file:`` URL (a Node stack frame) has no host or userinfo
+        # to leak and its path is the useful part; keep it whole.
+        return url if "@" not in parts.netloc else f"{parts.scheme}://…"
     netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc += f":{port}"
@@ -877,6 +887,22 @@ def _url_origin(url: str) -> str:
         or "@" in parts.netloc
     )
     return f"{parts.scheme}://{netloc}" + ("/…" if elided else "")
+
+
+def _drop_cut_secret(text: str, secrets: Iterable[str]) -> str:
+    """Drop the longest tail of ``text`` that is the start of a secret.
+
+    A secret cut by a size limit leaves only its start, which no exact match
+    finds. Single characters are left alone: they reveal nothing.
+    """
+
+    cut = 1
+    for secret in secrets:
+        for length in range(min(len(secret) - 1, len(text)), cut, -1):
+            if text.endswith(secret[:length]):
+                cut = length
+                break
+    return text[: len(text) - cut] if cut > 1 else text
 
 
 def redact_native_text(
@@ -892,14 +918,14 @@ def redact_native_text(
     preserved: callers normalize only afterwards, otherwise a secret
     containing a newline or a double space would no longer match.
 
-    ``truncated`` marks text cut at a size limit: its tail could hold only a
-    prefix of a secret, which no exact match would find, so the tail as long
-    as the longest secret is dropped.
+    ``truncated`` marks text cut at a size limit, whose end may hold the
+    start of a secret; only that start is dropped.
     """
 
-    secrets = set(config.secrets).union(config.credential_file_contents)
-    if truncated and secrets:
-        text = text[: max(0, len(text) - max(map(len, secrets)))]
+    if truncated:
+        text = _drop_cut_secret(
+            text, set(config.secrets).union(config.credential_file_contents)
+        )
 
     def reduce(match: re.Match[str]) -> str:
         url = match.group(0)

@@ -35,11 +35,15 @@ def test_native_text_reduces_embedded_urls_to_their_origin() -> None:
     text = (
         "remote: error sending request for url "
         "(http://127.0.0.1:5555/api/mcp/s/ZapPathSecret/mcp?zap=s%C3%A9cret), "
-        "then https://user:pass-word@example.com, and https://example.com/."
+        "then https://user:pass-word@example.com, and https://example.com/. "
+        "at load (file:///home/u/.pi/extensions/foo/dist/index.js:45:11)"
     )
+    # A hostless file URL (a Node stack frame) has nothing to leak; its path
+    # is the useful part, so it stays whole.
     assert redact_native_text(text, native_text_redaction()) == (
         "remote: error sending request for url (http://127.0.0.1:5555/…), "
-        "then https://example.com/…, and https://example.com."
+        "then https://example.com/…, and https://example.com. "
+        "at load (file:///home/u/.pi/extensions/foo/dist/index.js:45:11)"
     )
 
 
