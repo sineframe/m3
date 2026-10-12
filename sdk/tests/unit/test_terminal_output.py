@@ -14,12 +14,14 @@ from m3._terminal import Style, truncate, visible_len
 
 @pytest.fixture(autouse=True)
 def _simulated_terminal_size(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Use each test's simulated width, not the terminal running the tests."""
+    """Use each test's simulated terminal, not the one running the tests."""
 
     import os
 
     from m3 import pytest_plugin
 
+    # TERM=dumb (common in agent and CI shells) turns live output off.
+    monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setattr(
         pytest_plugin._shutil,
         "get_terminal_size",
