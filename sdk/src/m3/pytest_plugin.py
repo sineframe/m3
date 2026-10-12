@@ -158,6 +158,13 @@ def _parse_credential_mappings(
 def pytest_addoption(parser: _Any) -> None:
     group = parser.getgroup("m3")
     group.addoption(
+        "--m3-config",
+        action="store",
+        default=None,
+        metavar="PATH",
+        help="TOML file containing [tool.m3]",
+    )
+    group.addoption(
         "--results-db",
         action="store",
         default=None,
@@ -248,6 +255,9 @@ def pytest_configure(config: _Any) -> None:
 
 
 def _configure(config: _Any) -> None:
+    from ._pytest_configuration import configure_invocation
+
+    config._m3_configuration_plugin = configure_invocation(config)
     raw_ci_metadata = config.getoption("--m3-ci-metadata")
     ci_metadata: dict[str, str] = {}
     if raw_ci_metadata is not None:
@@ -641,6 +651,13 @@ def _parameterize_agent(metafunc: _Any) -> None:
 def _server_choices(
     config: _Any, marker_kwargs: _Mapping[str, _Any]
 ) -> tuple[_Any, ...] | None:
+    from ._configuration_context import current_configuration
+
+    context = current_configuration()
+    if context is not None:
+        frozen_servers = context.server_selections
+        if frozen_servers is not None:
+            return frozen_servers
     raw_cli = config.getoption("--m3-server-selections")
     if raw_cli is not None:
         import json
@@ -883,9 +900,15 @@ def _check_trials(config: _Any, items: list[_Any]) -> None:
 def pytest_unconfigure(config: _Any) -> None:
     from ._preparation_owner import shutdown_worker_preparation
 
-    # A run/worker owns the reusable helper; individual trial kits only fence
-    # their own jobs. No settings or profiles are reread during teardown.
-    shutdown_worker_preparation()
+    configuration_plugin = getattr(config, "_m3_configuration_plugin", None)
+    try:
+        if configuration_plugin is not None:
+            configuration_plugin.close()
+            config.pluginmanager.unregister(configuration_plugin)
+    finally:
+        # Private configuration cleanup uses the run-owned helper, so settle
+        # it before shutting down preparation ownership.
+        shutdown_worker_preparation()
     timing_plugin = getattr(config, "_m3_timing_plugin", None)
     if timing_plugin is not None:
         timing_plugin.close(config)
