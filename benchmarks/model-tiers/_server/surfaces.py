@@ -7,13 +7,25 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from _backend.store import DomainError, Store
+
 from _server.surface_parts import distractors as dx
-from _server.surface_parts.common import Cfg, Ctx, cfg_for, dump, inject_descriptions, obj, st, it, bo
-from _server.surface_parts.tools import PD, TOOLS, nm
+from _server.surface_parts.common import (
+    Cfg,
+    Ctx,
+    bo,
+    cfg_for,
+    dump,
+    inject_descriptions,
+    it,
+    obj,
+    st,
+)
+from _server.surface_parts.tools import TOOLS, nm
 
 # Logical Store op behind each logical tool id (None = never reaches the Store: deprecated
 # add_dependency, comment listing, and every distractor).
@@ -27,22 +39,47 @@ from _server.surface_parts.tools import PD, TOOLS, nm
 #  C: Slack/GitHub/Zendesk  - 60-70 endpoints incl. v2-beta near-duplicates, PUT-vs-PATCH twins, deprecated routes, admin/webhook noise.
 #  D: terse OpenAPI summary - "List issues", "Patch issue" with no parameter descriptions.
 OP_BY_TOOL_ID: dict[str, str | None] = {
-    "search": "search_issues", "get": "get_issue", "get_v2": "get_issue",
-    "update": "update_issue", "put": "update_issue", "bulk": "bulk_update_issues",
-    "create": "create_issue", "comment": "add_comment", "comments_list": None,
-    "link": "link_issues", "dependency": None, "users": "find_users", "users_list": "find_users",
-    "labels": "list_labels", "cycles": "list_cycles", "projects": "list_projects",
+    "search": "search_issues",
+    "get": "get_issue",
+    "get_v2": "get_issue",
+    "update": "update_issue",
+    "put": "update_issue",
+    "bulk": "bulk_update_issues",
+    "create": "create_issue",
+    "comment": "add_comment",
+    "comments_list": None,
+    "link": "link_issues",
+    "dependency": None,
+    "users": "find_users",
+    "users_list": "find_users",
+    "labels": "list_labels",
+    "cycles": "list_cycles",
+    "projects": "list_projects",
     # Jira-style workflow tools: a transition is a status write; listing transitions/priorities reads no Store op.
-    "transition": "update_issue", "transitions_list": None, "priorities": None,
+    "transition": "update_issue",
+    "transitions_list": None,
+    "priorities": None,
 }
 # Distractor-catalog tools that are real read-only user lookups.
-OP_BY_DISTRACTOR: dict[str, str] = {"teams_members_list": "find_users", "users_get": "find_users"}
+OP_BY_DISTRACTOR: dict[str, str] = {
+    "teams_members_list": "find_users",
+    "users_get": "find_users",
+}
 
 VARIANTS = ["good", "naive", "good-D", "good-C", "good-S", "good-E", "good-P"]
 
-_NAIVE_HINT_NAMES = {"find_users": "users_search", "list_labels": "labels_list", "search_issues": "issues_list",
-                     "link_issues": "issue_relations_create", "update_issue": "issues_patch"}
-_HTTP = {"not_found": "404 Not Found", "unknown_tool": "404 Not Found", "conflict": "409 Conflict"}
+_NAIVE_HINT_NAMES = {
+    "find_users": "users_search",
+    "list_labels": "labels_list",
+    "search_issues": "issues_list",
+    "link_issues": "issue_relations_create",
+    "update_issue": "issues_patch",
+}
+_HTTP = {
+    "not_found": "404 Not Found",
+    "unknown_tool": "404 Not Found",
+    "conflict": "409 Conflict",
+}
 
 
 @dataclass(frozen=True)
@@ -63,7 +100,11 @@ class Surface:
         except DomainError as e:
             return self._error(e), True
         except Exception as e:  # never raise out of dispatch
-            return self._error(DomainError("internal_error", f"internal error: {type(e).__name__}: {e}", "")), True
+            return self._error(
+                DomainError(
+                    "internal_error", f"internal error: {type(e).__name__}: {e}", ""
+                )
+            ), True
 
     # -- internals
     def _error(self, e: DomainError) -> str:
@@ -84,11 +125,17 @@ class Surface:
         spec = self._impl.get(name) if isinstance(name, str) else None
         if spec is None:
             avail = ", ".join(sorted(self._impl)) if self.cfg.C else "see tools/list"
-            raise DomainError("unknown_tool", f"unknown tool {name!r}", f"Available tools: {avail}")
+            raise DomainError(
+                "unknown_tool", f"unknown tool {name!r}", f"Available tools: {avail}"
+            )
         if args is None:
             args = {}
         if not isinstance(args, dict):
-            raise DomainError("invalid_argument", "arguments must be an object", "Pass a JSON object of named arguments.")
+            raise DomainError(
+                "invalid_argument",
+                "arguments must be an object",
+                "Pass a JSON object of named arguments.",
+            )
         schema, run = spec
         check(schema, args, "", top=True)
         data = run(Ctx(store, self.cfg, name), args)
@@ -122,27 +169,50 @@ def check(schema: dict, v: Any, path: str, top: bool = False) -> None:
     if t is not None:
         ts = t if isinstance(t, list) else [t]
         if not any(_TYPES[x](v) for x in ts):
-            raise DomainError("invalid_argument", f"{label}: expected {' or '.join(ts)}, got {type(v).__name__}",
-                              f"Pass {path or 'arguments'} as {' or '.join(ts)}.", path or None)
+            raise DomainError(
+                "invalid_argument",
+                f"{label}: expected {' or '.join(ts)}, got {type(v).__name__}",
+                f"Pass {path or 'arguments'} as {' or '.join(ts)}.",
+                path or None,
+            )
     if "enum" in schema and v not in schema["enum"]:
-        raise DomainError("invalid_enum", f"invalid {label} {v!r}",
-                          "Allowed values: " + ", ".join(str(x) for x in schema["enum"] if x is not None), path or None)
+        raise DomainError(
+            "invalid_enum",
+            f"invalid {label} {v!r}",
+            "Allowed values: "
+            + ", ".join(str(x) for x in schema["enum"] if x is not None),
+            path or None,
+        )
     if isinstance(v, int) and not isinstance(v, bool):
-        if "minimum" in schema and v < schema["minimum"] or "maximum" in schema and v > schema["maximum"]:
-            raise DomainError("invalid_value", f"{label} out of range: {v}",
-                              f"Use a value between {schema.get('minimum', '-inf')} and {schema.get('maximum', 'inf')}.", path or None)
+        if ("minimum" in schema and v < schema["minimum"]) or (
+            "maximum" in schema and v > schema["maximum"]
+        ):
+            raise DomainError(
+                "invalid_value",
+                f"{label} out of range: {v}",
+                f"Use a value between {schema.get('minimum', '-inf')} and {schema.get('maximum', 'inf')}.",
+                path or None,
+            )
     if isinstance(v, dict) and "properties" in schema:
         props = schema["properties"]
         for r in schema.get("required", []):
             if r not in v:
                 full = f"{path}.{r}" if path else r
-                raise DomainError("missing_field", f"missing required argument '{full}'",
-                                  "Required: " + ", ".join(schema["required"]), full)
+                raise DomainError(
+                    "missing_field",
+                    f"missing required argument '{full}'",
+                    "Required: " + ", ".join(schema["required"]),
+                    full,
+                )
         if schema.get("additionalProperties") is False:
             extra = [k for k in v if k not in props]
             if extra:
-                raise DomainError("invalid_argument", f"unknown argument '{extra[0]}'",
-                                  "Valid arguments: " + ", ".join(props), extra[0])
+                raise DomainError(
+                    "invalid_argument",
+                    f"unknown argument '{extra[0]}'",
+                    "Valid arguments: " + ", ".join(props),
+                    extra[0],
+                )
         for k, sub in props.items():
             if k in v:
                 check(sub, v[k], f"{path}.{k}" if path else k)
@@ -163,24 +233,44 @@ def _dx_schema(cfg: Cfg, params: list, write: bool) -> dict:
     attrs = {p: s for p, s in flat.items() if p != "id"}
     inner_req = [p for p in req if p != "id"]
     from _server.surface_parts.common import body
+
     out = {**path, "body": body(obj(attrs, inner_req))} if attrs else dict(path)
     return obj(out, (["id"] if path else []) + (["body"] if inner_req else []))
 
 
 def _dx_desc(cfg: Cfg, spec: tuple) -> str:
-    name, short, core, ret, params, write = spec
+    name, short, core, ret, params, _write = spec
     if not cfg.D:
         return short
-    ex = ", ".join(f'{p}="x"' if k == "s" else f"{p}=1" if k == "i" else f"{p}=true" for p, k, r in params if r) or ""
+    ex = (
+        ", ".join(
+            f'{p}="x"' if k == "s" else f"{p}=1" if k == "i" else f"{p}=true"
+            for p, k, r in params
+            if r
+        )
+        or ""
+    )
     if name in ("teams_list", "teams_members_list", "users_get"):
         return f"{core} Useful together with users_list, which has no team, role or on-call data. Example: {name}({ex}). Returns {ret}."
-    return (f"{core} Administrative/ancillary endpoint unrelated to issue tracking: it never reads or changes issues, so do not use it to "
-            f"look up or edit issues. Example: {name}({ex}). Returns {ret}.")
+    return (
+        f"{core} Administrative/ancillary endpoint unrelated to issue tracking: it never reads or changes issues, so do not use it to "
+        f"look up or edit issues. Example: {name}({ex}). Returns {ret}."
+    )
 
 
-_DX_PD = {"id": "Identifier of the record.", "page": "Page number (1-based).", "url": "HTTPS endpoint URL.",
-          "events": "Event name to subscribe to.", "locale": "Locale code such as en-US.", "name": "Display name.",
-          "format": "csv or json.", "provider": "Provider slug such as slack.", "team": "Team name.", "team_id": "Team id from teams_list, such as T1.", "email": "Enable email delivery."}
+_DX_PD = {
+    "id": "Identifier of the record.",
+    "page": "Page number (1-based).",
+    "url": "HTTPS endpoint URL.",
+    "events": "Event name to subscribe to.",
+    "locale": "Locale code such as en-US.",
+    "name": "Display name.",
+    "format": "csv or json.",
+    "provider": "Provider slug such as slack.",
+    "team": "Team name.",
+    "team_id": "Team id from teams_list, such as T1.",
+    "email": "Enable email delivery.",
+}
 
 
 # ------------------------------------------------------------------ build
@@ -191,7 +281,16 @@ def build_surface(variant: str) -> Surface:
     ops: dict[str, str | None] = {}
 
     def add(name: str, desc: str, schema: dict, run: Callable) -> None:
-        tools.append({"name": name, "description": desc, "inputSchema": {"$schema": "https://json-schema.org/draft/2020-12/schema", **schema}})
+        tools.append(
+            {
+                "name": name,
+                "description": desc,
+                "inputSchema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    **schema,
+                },
+            }
+        )
         impl[name] = (schema, run)
 
     for t in TOOLS:
@@ -202,7 +301,14 @@ def build_surface(variant: str) -> Surface:
             continue
         schema = t.schema(cfg)
         if cfg.D:
-            pdesc = t.pdesc if cfg.S else {**t.pdesc, "priority": f"Priority id (integer); the valid ids are listed by {nm(cfg, 'priorities')}."}
+            pdesc = (
+                t.pdesc
+                if cfg.S
+                else {
+                    **t.pdesc,
+                    "priority": f"Priority id (integer); the valid ids are listed by {nm(cfg, 'priorities')}.",
+                }
+            )
             schema = inject_descriptions(schema, pdesc)
         add(name, t.desc(cfg, name) if cfg.D else t.short, schema, t.run)
         ops[name] = OP_BY_TOOL_ID[t.id]
@@ -212,6 +318,11 @@ def build_surface(variant: str) -> Surface:
             schema = _dx_schema(cfg, params, write)
             if cfg.D:
                 schema = inject_descriptions(schema, _DX_PD)
-            add(name, _dx_desc(cfg, spec), schema, (lambda n: lambda ctx, a: dx.stub(ctx.store, n, a))(name))
+            add(
+                name,
+                _dx_desc(cfg, spec),
+                schema,
+                (lambda n: lambda ctx, a: dx.stub(ctx.store, n, a))(name),
+            )
             ops[name] = OP_BY_DISTRACTOR.get(name)
     return Surface(variant=variant, tools=tools, cfg=cfg, _impl=impl, _ops=ops)

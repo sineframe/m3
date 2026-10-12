@@ -17,6 +17,7 @@ from mcp import types
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _backend.store import Store
 from _lib.lowlevel import serve
+
 from _server.surfaces import build_surface
 
 
@@ -27,7 +28,12 @@ def main() -> None:
     ns = parser.parse_args()
     surface = build_surface(ns.variant)
     store = Store(7, ns.nonce)
-    tools = [types.Tool(name=t["name"], description=t["description"], input_schema=t["inputSchema"]) for t in surface.tools]
+    tools = [
+        types.Tool(
+            name=t["name"], description=t["description"], input_schema=t["inputSchema"]
+        )
+        for t in surface.tools
+    ]
     seq = 0
 
     async def handle(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
@@ -37,11 +43,23 @@ def main() -> None:
         seq += 1
         path = os.environ.get("MT_CALL_LOG")
         if path:
-            receipt = store.mutations[-1]["receipt"] if len(store.mutations) > before else None
-            line = {"seq": seq, "tool": name, "arguments": arguments, "is_error": is_error, "receipt": receipt}
+            receipt = (
+                store.mutations[-1]["receipt"]
+                if len(store.mutations) > before
+                else None
+            )
+            line = {
+                "seq": seq,
+                "tool": name,
+                "arguments": arguments,
+                "is_error": is_error,
+                "receipt": receipt,
+            }
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(line, sort_keys=True, default=str) + "\n")
-        return types.CallToolResult(content=[types.TextContent(text=text)], is_error=is_error)
+        return types.CallToolResult(
+            content=[types.TextContent(text=text)], is_error=is_error
+        )
 
     serve("tracker", tools, handle)
 

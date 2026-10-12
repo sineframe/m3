@@ -1,5 +1,5 @@
-from _lib.grade import Check, CheckContext
 from _lib import checks as C
+from _lib.grade import Check, CheckContext
 
 
 def check(ctx: CheckContext) -> Check:
@@ -8,7 +8,11 @@ def check(ctx: CheckContext) -> Check:
     d = C.diff(ctx)
     i = d.final_issue("PAY-201")
     body = f"no-link-{ctx.nonce}"
-    commented = [c for c in d.new_comments if c["body"].strip().strip("`").strip() == body and c["issue_key"] == "PAY-201"]
+    commented = [
+        c
+        for c in d.new_comments
+        if c["body"].strip().strip("`").strip() == body and c["issue_key"] == "PAY-201"
+    ]
     bumped = bool(i) and i["priority"] == "urgent"
     if ctx.facts["t12_has_ticket"]:
         sub = {

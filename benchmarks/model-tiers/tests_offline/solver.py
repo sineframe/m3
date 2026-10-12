@@ -7,20 +7,60 @@ from collections.abc import Mapping
 
 OPEN = ("backlog", "todo", "in_progress", "in_review")
 PROJECTS = ["PAY", "INF", "OPS", "GRO", "WEB", "MOB"]
-GN = dict(search="search_issues", get="get_issue", update="update_issue", bulk="bulk_update_issues",
-          create="create_issue", link="link_issues", comment="add_comment", users="find_users", labels="list_labels")
-NN = dict(search="issues_list", get="issues_get", update="issues_patch", bulk="issues_bulk_patch",
-          create="issues_create", link="issue_relations_create", comment="issues_comments_create",
-          users="users_search", labels="labels_list", cycles="cycles_list", users_list="users_list", teams="teams_list",
-          members="teams_members_list", transitions="issues_transitions_list", transition="issues_transition",
-          priorities="priorities_list")
-GN_WF = dict(transitions="list_transitions", transition="transition_issue", priorities="list_priorities")
+GN = dict(
+    search="search_issues",
+    get="get_issue",
+    update="update_issue",
+    bulk="bulk_update_issues",
+    create="create_issue",
+    link="link_issues",
+    comment="add_comment",
+    users="find_users",
+    labels="list_labels",
+)
+NN = dict(
+    search="issues_list",
+    get="issues_get",
+    update="issues_patch",
+    bulk="issues_bulk_patch",
+    create="issues_create",
+    link="issue_relations_create",
+    comment="issues_comments_create",
+    users="users_search",
+    labels="labels_list",
+    cycles="cycles_list",
+    users_list="users_list",
+    teams="teams_list",
+    members="teams_members_list",
+    transitions="issues_transitions_list",
+    transition="issues_transition",
+    priorities="priorities_list",
+)
+GN_WF = dict(
+    transitions="list_transitions",
+    transition="transition_issue",
+    priorities="list_priorities",
+)
 # good catalog = 9 tools; S naive (no direct status write) adds the 3 workflow tools; C naive = ~70 REST tools.
-COUNTS = {"good": 9, "naive": 70, "good-D": 9, "good-C": 70, "good-S": 12, "good-E": 9, "good-P": 9}
+COUNTS = {
+    "good": 9,
+    "naive": 70,
+    "good-D": 9,
+    "good-C": 70,
+    "good-S": 12,
+    "good-E": 9,
+    "good-P": 9,
+}
 PRIO = ["none", "low", "medium", "high", "urgent"]
 CHAIN = ["backlog", "todo", "in_progress", "in_review", "done"]
-DISPLAY = {"Backlog": "backlog", "To Do": "todo", "In Progress": "in_progress", "In Review": "in_review",
-           "Done": "done", "Closed": "closed"}
+DISPLAY = {
+    "Backlog": "backlog",
+    "To Do": "todo",
+    "In Progress": "in_progress",
+    "In Review": "in_review",
+    "Done": "done",
+    "Closed": "closed",
+}
 
 
 def flags(var):
@@ -58,7 +98,6 @@ class Wire:
             return text, r.is_error, text
 
 
-
 # ---------------------------------------------------------------- a tiny agent-like solver (any var)
 class Solver:
     """Solves the benchmark tasks using only what each var's tools expose."""
@@ -75,7 +114,9 @@ class Solver:
     def labels(self):
         if self._labels is None:
             d = self.ok(self.n["labels"], {})
-            self._labels = {l["id"]: l["name"] for l in (d["labels"] if self.f["C"] else d["data"])}
+            self._labels = {
+                l["id"]: l["name"] for l in (d["labels"] if self.f["C"] else d["data"])
+            }
         return self._labels
 
     def cycles(self):
@@ -104,20 +145,41 @@ class Solver:
                 d = self.ok(self.n["search"], args)
                 raw, cursor = d["issues"], d["next_cursor"]
                 for r in raw:
-                    out.append(dict(key=r["key"], title=r["title"], status=r["status"], assignee_id=r["assignee_id"],
-                                    labels=r["labels"], cycle=r["cycle"], type=r["type"],
-                                    priority=self._pname(r["priority"]), seq=r["created_seq"]))
+                    out.append(
+                        dict(
+                            key=r["key"],
+                            title=r["title"],
+                            status=r["status"],
+                            assignee_id=r["assignee_id"],
+                            labels=r["labels"],
+                            cycle=r["cycle"],
+                            type=r["type"],
+                            priority=self._pname(r["priority"]),
+                            seq=r["created_seq"],
+                        )
+                    )
                 if not cursor:
                     return out
             else:
                 # GitHub-style: no total and no has_more, so page until a short page comes back
-                raw = self.ok(self.n["search"], {"project": project, "page": page, "per_page": 50})
+                raw = self.ok(
+                    self.n["search"], {"project": project, "page": page, "per_page": 50}
+                )
                 assert isinstance(raw, list)
                 for r in raw:
-                    out.append(dict(key=r["key"], title=r["title"], status=r["status"], assignee_id=r["assignee_id"],
-                                    labels=[self.labels()[i] for i in r["label_ids"]],
-                                    cycle=self.cycles().get(r["cycle_id"]), type=r["type"],
-                                    priority=self._pname(r["priority"]), seq=r["created_seq"]))
+                    out.append(
+                        dict(
+                            key=r["key"],
+                            title=r["title"],
+                            status=r["status"],
+                            assignee_id=r["assignee_id"],
+                            labels=[self.labels()[i] for i in r["label_ids"]],
+                            cycle=self.cycles().get(r["cycle_id"]),
+                            type=r["type"],
+                            priority=self._pname(r["priority"]),
+                            seq=r["created_seq"],
+                        )
+                    )
                 if len(raw) < 50:
                     return out
                 page += 1
@@ -128,7 +190,10 @@ class Solver:
             if self.f["C"]:
                 out, page = [], 1
                 while True:
-                    d = self.ok(self.n["users"], {} if self.f["P"] else {"page": page, "per_page": 50})
+                    d = self.ok(
+                        self.n["users"],
+                        {} if self.f["P"] else {"page": page, "per_page": 50},
+                    )
                     rows = d["users"] if self.f["P"] else d
                     out += rows
                     if self.f["P"] or len(rows) < 50:
@@ -139,14 +204,26 @@ class Solver:
                 self._users = []
                 for t in self.ok(self.n["teams"], {})["data"]:
                     for m in self.ok(self.n["members"], {"team_id": t["id"]})["data"]:
-                        self._users.append(dict(id=m["id"], name=m["display_name"], team=t["name"], role=m["role"],
-                                                active=m["active"], on_call=m["on_call"]))
+                        self._users.append(
+                            dict(
+                                id=m["id"],
+                                name=m["display_name"],
+                                team=t["name"],
+                                role=m["role"],
+                                active=m["active"],
+                                on_call=m["on_call"],
+                            )
+                        )
         return self._users
 
     def users(self, **kw):
         q, team = kw.get("query"), kw.get("team")
-        return [u for u in self.all_users() if (team is None or u["team"] == team)
-                and (q is None or q.lower() in u["name"].lower())]
+        return [
+            u
+            for u in self.all_users()
+            if (team is None or u["team"] == team)
+            and (q is None or q.lower() in u["name"].lower())
+        ]
 
     def prio(self, name):
         if self.f["S"] or name is None:
@@ -188,17 +265,42 @@ class Solver:
             last = self.call(self.n["transition"], a)
             assert not last[1], last[2]
 
-    def update(self, key, *, status=None, priority=None, assignee_id=None, cycle=None, resolution=None, duplicate_of=None):
+    def update(
+        self,
+        key,
+        *,
+        status=None,
+        priority=None,
+        assignee_id=None,
+        cycle=None,
+        resolution=None,
+        duplicate_of=None,
+    ):
         if self.f["S"]:
-            a = {"key": key, "status": status, "priority": priority, "assignee": assignee_id, "cycle": cycle,
-                 "resolution": resolution, "duplicate_of": duplicate_of}
-            return self.call(self.n["update"], {k: v for k, v in a.items() if v is not None})
-        attrs = {"priority": self.prio(priority), "assignee_id": assignee_id,
-                 "cycle_id": self.id_of(self.cycles(), cycle) if cycle else None}
+            a = {
+                "key": key,
+                "status": status,
+                "priority": priority,
+                "assignee": assignee_id,
+                "cycle": cycle,
+                "resolution": resolution,
+                "duplicate_of": duplicate_of,
+            }
+            return self.call(
+                self.n["update"], {k: v for k, v in a.items() if v is not None}
+            )
+        attrs = {
+            "priority": self.prio(priority),
+            "assignee_id": assignee_id,
+            "cycle_id": self.id_of(self.cycles(), cycle) if cycle else None,
+        }
         attrs = {k: v for k, v in attrs.items() if v is not None}
         last = None
         if attrs or status is None:
-            last = self.call(self.n["update"], {"issue_id": key, "body": {"data": {"attributes": attrs}}})
+            last = self.call(
+                self.n["update"],
+                {"issue_id": key, "body": {"data": {"attributes": attrs}}},
+            )
             if last[1]:
                 return last
         if status is not None:
@@ -209,7 +311,14 @@ class Solver:
         if self.f["S"]:
             a = {"keys": keys, "cycle": cycle}
         else:
-            a = {"body": {"data": {"issue_ids": keys, "attributes": {"cycle_id": self.id_of(self.cycles(), cycle)}}}}
+            a = {
+                "body": {
+                    "data": {
+                        "issue_ids": keys,
+                        "attributes": {"cycle_id": self.id_of(self.cycles(), cycle)},
+                    }
+                }
+            }
         return self.ok(self.n["bulk"], a)
 
     def create_task(self, project, title):
@@ -217,45 +326,102 @@ class Solver:
         if self.f["S"]:
             a = {"project": project, "title": title, "type": "task"}
         else:
-            a = {"body": {"data": {"attributes": {"project": project, "title": title, "type": "task"}}}}
+            a = {
+                "body": {
+                    "data": {
+                        "attributes": {
+                            "project": project,
+                            "title": title,
+                            "type": "task",
+                        }
+                    }
+                }
+            }
         return self.ok(self.n["create"], a)
 
     def create(self, title="New regression bug", project="PAY"):
         if self.f["S"]:
-            a = {"project": project, "title": title, "type": "bug", "priority": "high",
-                 "labels": ["regression", "payments"], "due_date": "2026-11-30", "customer_impact": "enterprise"}
+            a = {
+                "project": project,
+                "title": title,
+                "type": "bug",
+                "priority": "high",
+                "labels": ["regression", "payments"],
+                "due_date": "2026-11-30",
+                "customer_impact": "enterprise",
+            }
         else:
-            lab = [{"id": self.id_of(self.labels(), n)} for n in ("regression", "payments")]
-            a = {"body": {"data": {"attributes": {"project": project, "title": title, "type": "bug",
-                                                  "priority": self.prio("high"), "labels": {"connect": lab}, "due_date": "2026-11-30",
-                                                  "custom_fields": [{"key": "customer_impact", "value": "enterprise"}]}}}}
+            lab = [
+                {"id": self.id_of(self.labels(), n)} for n in ("regression", "payments")
+            ]
+            a = {
+                "body": {
+                    "data": {
+                        "attributes": {
+                            "project": project,
+                            "title": title,
+                            "type": "bug",
+                            "priority": self.prio("high"),
+                            "labels": {"connect": lab},
+                            "due_date": "2026-11-30",
+                            "custom_fields": [
+                                {"key": "customer_impact", "value": "enterprise"}
+                            ],
+                        }
+                    }
+                }
+            }
         return self.ok(self.n["create"], a)
 
     def link(self, a, t, b):
         if self.f["S"]:
             args = {"from_key": a, "type": t, "to_key": b}
         else:
-            args = {"body": {"data": {"attributes": {"from_issue_id": a, "to_issue_id": b, "relation_type": t}}}}
+            args = {
+                "body": {
+                    "data": {
+                        "attributes": {
+                            "from_issue_id": a,
+                            "to_issue_id": b,
+                            "relation_type": t,
+                        }
+                    }
+                }
+            }
         return self.ok(self.n["link"], args)
 
     def comment(self, key, text):
         if self.f["S"]:
             return self.ok(self.n["comment"], {"key": key, "body": text})
-        return self.ok(self.n["comment"], {"issue_id": key, "body": {"data": {"attributes": {"body": text}}}})
+        return self.ok(
+            self.n["comment"],
+            {"issue_id": key, "body": {"data": {"attributes": {"body": text}}}},
+        )
 
     def get(self, key):
-        return self.ok(self.n["get"], {"key": key} if self.f["S"] else {"issue_id": key})
-
+        return self.ok(
+            self.n["get"], {"key": key} if self.f["S"] else {"issue_id": key}
+        )
 
 
 # ------------------------------------------------------------------ search with filters (server-side on P good)
-def _find(self, projects=None, *, labels=(), unassigned=None, type=None, priority=None, assignee_id=None, is_open=True):
+def _find(
+    self,
+    projects=None,
+    *,
+    labels=(),
+    unassigned=None,
+    type=None,
+    priority=None,
+    assignee_id=None,
+    is_open=True,
+):
     """Issues matching ALL filters. P good: filters go to the server (cursor-paged); P naive: page every requested
     project to a short page and filter client-side. Results are always re-filtered locally."""
     want = list(projects) if projects else list(PROJECTS)
     if self.f["P"]:
         out = []
-        for p in ([None] if not projects else want):
+        for p in [None] if not projects else want:
             args = {"limit": 100}
             if p:
                 args["project"] = p
@@ -281,21 +447,39 @@ def _find(self, projects=None, *, labels=(), unassigned=None, type=None, priorit
                 args["type"] = type
             cursor = None
             while True:
-                d = self.ok(self.n["search"], {**args, **({"cursor": cursor} if cursor else {})})
-                out += [dict(key=r["key"], title=r["title"], status=r["status"], assignee_id=r["assignee_id"],
-                             labels=r["labels"], cycle=r["cycle"], type=r["type"],
-                             priority=self._pname(r["priority"]), seq=r["created_seq"]) for r in d["issues"]]
+                d = self.ok(
+                    self.n["search"], {**args, **({"cursor": cursor} if cursor else {})}
+                )
+                out += [
+                    dict(
+                        key=r["key"],
+                        title=r["title"],
+                        status=r["status"],
+                        assignee_id=r["assignee_id"],
+                        labels=r["labels"],
+                        cycle=r["cycle"],
+                        type=r["type"],
+                        priority=self._pname(r["priority"]),
+                        seq=r["created_seq"],
+                    )
+                    for r in d["issues"]
+                ]
                 cursor = d["next_cursor"]
                 if not cursor:
                     break
     else:
         out = [r for p in want for r in self.rows(p)]
-    return [r for r in out
-            if (not is_open or r["status"] in OPEN) and all(l in r["labels"] for l in labels)
-            and (unassigned is None or (r["assignee_id"] is None) == unassigned)
-            and (type is None or r["type"] == type) and (priority is None or r["priority"] == priority)
-            and (assignee_id is None or r["assignee_id"] == assignee_id)
-            and (not projects or r["key"].split("-")[0] in want)]
+    return [
+        r
+        for r in out
+        if (not is_open or r["status"] in OPEN)
+        and all(l in r["labels"] for l in labels)
+        and (unassigned is None or (r["assignee_id"] is None) == unassigned)
+        and (type is None or r["type"] == type)
+        and (priority is None or r["priority"] == priority)
+        and (assignee_id is None or r["assignee_id"] == assignee_id)
+        and (not projects or r["key"].split("-")[0] in want)
+    ]
 
 
 def _projects(self):
@@ -321,8 +505,13 @@ def _team_of(sv):
 
 
 def h01(sv, n):
-    keys = sorted(r["key"] for r in sv.find(["PAY", "WEB"], labels=["regression"], unassigned=True, type="bug")
-                  if r["cycle"] in ("Oct-W2", "Oct-W3") and "wontfix-candidate" not in r["labels"])
+    keys = sorted(
+        r["key"]
+        for r in sv.find(
+            ["PAY", "WEB"], labels=["regression"], unassigned=True, type="bug"
+        )
+        if r["cycle"] in ("Oct-W2", "Oct-W3") and "wontfix-candidate" not in r["labels"]
+    )
     return f"Found {len(keys)}.\nSTATUS: DONE {len(keys)} issues: {', '.join(keys)}"
 
 
@@ -337,7 +526,9 @@ def h02(sv, n):
 
 def h03(sv, n):
     ops_team = next(p["team"] for p in sv.projects() if p["key"] == "OPS")
-    oncall = next(u["id"] for u in sv.users(team=ops_team) if u["on_call"] and u["active"])
+    oncall = next(
+        u["id"] for u in sv.users(team=ops_team) if u["on_call"] and u["active"]
+    )
     rows = sv.find(["OPS"], labels=["flaky"])
     for r in rows:
         if r["assignee_id"] is None:
@@ -373,7 +564,10 @@ def h05(sv, n):
     moves = 0
     for e in donors:
         for r in sorted(mine[e], key=lambda r: r["seq"])[3:]:
-            tgt = min((x for x in engs if x not in donors and counts[x] < 3), key=lambda x: counts[x])
+            tgt = min(
+                (x for x in engs if x not in donors and counts[x] < 3),
+                key=lambda x: counts[x],
+            )
             sv.update(r["key"], assignee_id=tgt)
             counts[tgt] += 1
             counts[e] -= 1
@@ -385,7 +579,9 @@ def h06(sv, n):
     done = []
     for r in sv.find(["GRO"], labels=["duplicate-candidate"]):
         m = re.search(r"[Dd]uplicate of ([A-Z]+-\d+)", sv.get(r["key"])["description"])
-        sv.update(r["key"], status="closed", resolution="duplicate", duplicate_of=m.group(1))
+        sv.update(
+            r["key"], status="closed", resolution="duplicate", duplicate_of=m.group(1)
+        )
         done.append(r["key"])
     return f"STATUS: DONE closed {len(done)} duplicates"
 

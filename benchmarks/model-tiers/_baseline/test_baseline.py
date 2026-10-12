@@ -18,8 +18,12 @@ def test_baseline(agent) -> None:
     if outcome == "completed":
         try:
             expect(result).to_have_tool_call(
-                "echo", server="control", arguments={"text": "ok"},
-                arguments_partial=True, status="success", evidence="wire",
+                "echo",
+                server="control",
+                arguments={"text": "ok"},
+                arguments_partial=True,
+                status="success",
+                evidence="wire",
             )
             ok = True
         except AssertionError:
@@ -32,6 +36,14 @@ def test_baseline(agent) -> None:
         state = "harness_error"
     else:
         state = "other"
-    grade.record(agent, result, task="BASE", band="baseline", variant=None, nonce=None,
-                 state=state, text=telemetry.final_text(result))
+    grade.record(
+        agent,
+        result,
+        task="BASE",
+        band="baseline",
+        variant=None,
+        nonce=None,
+        state=state,
+        text=telemetry.final_text(result),
+    )
     assert state == "success", state

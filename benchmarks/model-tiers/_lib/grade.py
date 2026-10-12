@@ -30,12 +30,14 @@ since the target work was done. The status line is always recorded separately.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from _lib import telemetry
 
@@ -43,8 +45,18 @@ ROOT = Path(__file__).resolve().parents[1]
 INBOX = ROOT / "results" / "_inbox" / "records.jsonl"
 
 STATES = (
-    "harness_error", "timeout", "escaped", "success", "looped", "hallucinated",
-    "gave_up", "wrong_tool", "bad_args", "wrong_target", "side_effects", "other",
+    "harness_error",
+    "timeout",
+    "escaped",
+    "success",
+    "looped",
+    "hallucinated",
+    "gave_up",
+    "wrong_tool",
+    "bad_args",
+    "wrong_target",
+    "side_effects",
+    "other",
 )
 
 
@@ -66,7 +78,9 @@ class Check:
 
 # Not anchored to a line start: Codex joins streamed message chunks without a separator,
 # so a correct answer can arrive as "...audit code.STATUS: DONE ...".
-_STATUS = re.compile(r"STATUS\s*[*_`]*\s*:\s*[*_`]*\s*(DONE|FAILED)\b[*_`]*[ \t]*([^\n]*)", re.I)
+_STATUS = re.compile(
+    r"STATUS\s*[*_`]*\s*:\s*[*_`]*\s*(DONE|FAILED)\b[*_`]*[ \t]*([^\n]*)", re.I
+)
 
 
 def parse_status_line(text: str | None) -> tuple[str | None, str]:
@@ -83,7 +97,9 @@ def identity_op(tool: str) -> str | None:
     return tool
 
 
-def target_op_stats(op_of, target_ops, tracker_calls, outputs, mutations=()) -> dict[str, dict[str, int]]:
+def target_op_stats(
+    op_of, target_ops, tracker_calls, outputs, mutations=()
+) -> dict[str, dict[str, int]]:
     """Per target op: calls mapping to it that were attempted / errored / succeeded.
 
     Successful store mutations also count as succeeded (they are ground truth)."""
@@ -111,7 +127,7 @@ def _looped(calls) -> bool:
     if len(calls) > MAX_TRACKER_CALLS:
         return True
     run = 1
-    for a, b in zip(calls, calls[1:]):
+    for a, b in itertools.pairwise(calls):
         run = run + 1 if a == b else 1
         if run >= 3:
             return True
@@ -147,9 +163,8 @@ def classify(
     if _looped(tracker_calls):
         return "looped"
     sub = dict(check.subgoals)
-    side_only = (
-        sub.get("no_side_effects") is False
-        and all(v for k, v in sub.items() if k != "no_side_effects")
+    side_only = sub.get("no_side_effects") is False and all(
+        v for k, v in sub.items() if k != "no_side_effects"
     )
     stats = target_op_stats(op_of, check.target_ops, tracker_calls, outputs, mutations)
     hit = (not check.target_ops) or any(v["succeeded"] > 0 for v in stats.values())
@@ -188,7 +203,9 @@ def record(
         stats["tracker_errors"] = sum(1 for o in outputs if o[1])
     calls = tracker_calls or []
     rec = {
-        "task": task, "band": band, "variant": variant,
+        "task": task,
+        "band": band,
+        "variant": variant,
         "harness": getattr(agent, "harness", None),
         "model": getattr(agent, "model", None),
         "trial": getattr(agent, "trial", None),
@@ -202,9 +219,14 @@ def record(
         "turn_count": telemetry.turn_count(result),
         "tool_calls": stats,
         "usage": telemetry.usage_stats(result),
-        "mutations": [{"op": m.get("op"), "args": m.get("args")} for m in (mutations or [])],
+        "mutations": [
+            {"op": m.get("op"), "args": m.get("args")} for m in (mutations or [])
+        ],
         "calls": [
-            {"tool": t, "is_error": (outputs[i][1] if outputs and i < len(outputs) else None)}
+            {
+                "tool": t,
+                "is_error": (outputs[i][1] if outputs and i < len(outputs) else None),
+            }
             for i, (t, _a) in enumerate(calls)
         ],
         "final_text": text[:2000] if text else None,

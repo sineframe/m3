@@ -14,7 +14,7 @@ import random
 from datetime import date, timedelta
 
 OPEN = ("backlog", "todo", "in_progress", "in_review")
-STATUSES = OPEN + ("done", "closed")
+STATUSES = (*OPEN, "done", "closed")
 PRIORITIES = ("none", "low", "medium", "high", "urgent")
 TYPES = ("bug", "feature", "task")
 RESOLUTIONS = ("fixed", "wontfix", "duplicate", "cannot_reproduce")
@@ -30,94 +30,395 @@ PROJECTS = [  # key, name, team(s), first number, count
     ("MOB", "Mobile App", ("Mobile",), 1, 50),
 ]
 LABELS = [
-    "bug", "feature", "regression", "regressions-old", "payments", "flaky", "customer",
-    "infra", "security", "performance", "docs", "ux", "tech-debt", "api", "mobile", "web",
-    "ios", "android", "growth", "experiment", "onboarding", "billing", "observability",
-    "on-call", "compliance", "migration", "accessibility", "i18n", "needs-design", "blocked",
-    "wontfix-candidate", "duplicate-candidate", "sla-breach",
+    "bug",
+    "feature",
+    "regression",
+    "regressions-old",
+    "payments",
+    "flaky",
+    "customer",
+    "infra",
+    "security",
+    "performance",
+    "docs",
+    "ux",
+    "tech-debt",
+    "api",
+    "mobile",
+    "web",
+    "ios",
+    "android",
+    "growth",
+    "experiment",
+    "onboarding",
+    "billing",
+    "observability",
+    "on-call",
+    "compliance",
+    "migration",
+    "accessibility",
+    "i18n",
+    "needs-design",
+    "blocked",
+    "wontfix-candidate",
+    "duplicate-candidate",
+    "sla-breach",
 ]
 CYCLES = ["Oct-W1", "Oct-W2", "Oct-W3", "Oct-W4"]
 SPECIAL = ("PAY-142", "PAY-087", "PAY-149", "PAY-150", "PAY-201", "INF-33")
 SPECIAL_V2 = ("PAY-151", "WEB-12")
-INACTIVE = {("Platform", 7), ("Growth", 7), ("Web", 3)}  # (team, slot); Web slot 3 is Sam Patel
-SAMS = {("Web", 3): ("Sam Patel", "sam.patel"), ("Web", 4): ("Sam Okafor", "sam.okafor"),
-        ("Mobile", 3): ("Sam Reyes", "sam.reyes")}
+INACTIVE = {
+    ("Platform", 7),
+    ("Growth", 7),
+    ("Web", 3),
+}  # (team, slot); Web slot 3 is Sam Patel
+SAMS = {
+    ("Web", 3): ("Sam Patel", "sam.patel"),
+    ("Web", 4): ("Sam Okafor", "sam.okafor"),
+    ("Mobile", 3): ("Sam Reyes", "sam.reyes"),
+}
 _KEEP = object()
 
-FIRST = ["Marcus", "Elena", "Tomas", "Hana", "Diego", "Sofia", "Kenji", "Amara", "Lars", "Noor",
-         "Jonah", "Mei", "Callum", "Ines", "Rafael", "Yara", "Owen", "Zainab", "Felix", "Leila",
-         "Mateo", "Ingrid", "Soren", "Dana", "Theo", "Anika", "Victor", "Rosa", "Isaac", "Maya",
-         "Gideon", "Nadia", "Carlos", "Freya", "Ravi", "Tessa", "Hugo", "Lucia", "Emil", "Bianca"]
-LAST = ["Okafor", "Lindqvist", "Moreau", "Tanaka", "Silva", "Novak", "Haddad", "Brennan", "Kowalski",
-        "Reyes", "Ito", "Fischer", "Mbeki", "Larsen", "Costa", "Petrov", "Walsh", "Dubois", "Sato",
-        "Ahmed", "Grant", "Rossi", "Weber", "Quinn", "Mehta", "Lopez", "Nguyen", "Kaplan", "Olsen",
-        "Bauer", "Duarte", "Farouk", "Hale", "Ivanov", "Jensen", "Kim", "Lang", "Marsh", "Nilsson", "Ortiz"]
+FIRST = [
+    "Marcus",
+    "Elena",
+    "Tomas",
+    "Hana",
+    "Diego",
+    "Sofia",
+    "Kenji",
+    "Amara",
+    "Lars",
+    "Noor",
+    "Jonah",
+    "Mei",
+    "Callum",
+    "Ines",
+    "Rafael",
+    "Yara",
+    "Owen",
+    "Zainab",
+    "Felix",
+    "Leila",
+    "Mateo",
+    "Ingrid",
+    "Soren",
+    "Dana",
+    "Theo",
+    "Anika",
+    "Victor",
+    "Rosa",
+    "Isaac",
+    "Maya",
+    "Gideon",
+    "Nadia",
+    "Carlos",
+    "Freya",
+    "Ravi",
+    "Tessa",
+    "Hugo",
+    "Lucia",
+    "Emil",
+    "Bianca",
+]
+LAST = [
+    "Okafor",
+    "Lindqvist",
+    "Moreau",
+    "Tanaka",
+    "Silva",
+    "Novak",
+    "Haddad",
+    "Brennan",
+    "Kowalski",
+    "Reyes",
+    "Ito",
+    "Fischer",
+    "Mbeki",
+    "Larsen",
+    "Costa",
+    "Petrov",
+    "Walsh",
+    "Dubois",
+    "Sato",
+    "Ahmed",
+    "Grant",
+    "Rossi",
+    "Weber",
+    "Quinn",
+    "Mehta",
+    "Lopez",
+    "Nguyen",
+    "Kaplan",
+    "Olsen",
+    "Bauer",
+    "Duarte",
+    "Farouk",
+    "Hale",
+    "Ivanov",
+    "Jensen",
+    "Kim",
+    "Lang",
+    "Marsh",
+    "Nilsson",
+    "Ortiz",
+]
 
 SUBJECTS = {
-    "PAY": ["3DS challenge flow", "refund webhook", "ledger reconciliation", "payout scheduler",
-            "card tokenization", "chargeback evidence upload", "invoice PDF tax lines",
-            "Stripe Connect onboarding", "FX rate cache", "SEPA mandate", "Apple Pay session",
-            "dunning emails", "subscription proration", "fraud score callback",
-            "settlement report export", "currency rounding", "wallet top-up", "PayPal capture",
-            "dispute notifications", "idempotency keys"],
-    "INF": ["Terraform state lock", "Kubernetes node autoscaler", "staging TLS certs",
-            "Postgres replica lag", "Vault secret rotation", "CI runner pool", "S3 lifecycle rules",
-            "VPC peering", "Redis eviction policy", "service mesh sidecar", "artifact registry",
-            "DNS failover", "log shipping pipeline", "Prometheus alerts", "bastion hosts"],
-    "OPS": ["on-call rotation", "incident postmortem template", "pager escalation policy",
-            "status page", "support macros", "vendor invoice approvals", "SLA dashboard",
-            "runbook index", "access reviews", "backup restore drill", "change calendar",
-            "capacity forecast", "release checklist", "audit evidence", "shift handoff notes"],
-    "GRO": ["signup funnel", "referral banner", "onboarding checklist", "pricing page experiment",
-            "email drip campaign", "trial expiry nudge", "UTM attribution", "churn survey",
-            "landing page copy", "in-app announcement", "lifecycle segments", "coupon codes",
-            "SEO sitemap", "waitlist form", "NPS prompt"],
-    "WEB": ["settings page", "data table pagination", "dark mode tokens", "search autocomplete",
-            "session timeout banner", "CSV export button", "keyboard navigation", "form validation",
-            "dashboard charts", "file upload widget", "notification center", "SSO login redirect",
-            "breadcrumb nav", "modal focus trap", "i18n date formats"],
-    "MOB": ["push notification", "offline sync", "biometric login", "deep link handling",
-            "launch screen", "image cache", "app store review prompt", "in-app purchase restore",
-            "camera permission flow", "tab bar layout", "background refresh", "widget extension",
-            "accessibility labels", "locale switching", "upload retry"],
+    "PAY": [
+        "3DS challenge flow",
+        "refund webhook",
+        "ledger reconciliation",
+        "payout scheduler",
+        "card tokenization",
+        "chargeback evidence upload",
+        "invoice PDF tax lines",
+        "Stripe Connect onboarding",
+        "FX rate cache",
+        "SEPA mandate",
+        "Apple Pay session",
+        "dunning emails",
+        "subscription proration",
+        "fraud score callback",
+        "settlement report export",
+        "currency rounding",
+        "wallet top-up",
+        "PayPal capture",
+        "dispute notifications",
+        "idempotency keys",
+    ],
+    "INF": [
+        "Terraform state lock",
+        "Kubernetes node autoscaler",
+        "staging TLS certs",
+        "Postgres replica lag",
+        "Vault secret rotation",
+        "CI runner pool",
+        "S3 lifecycle rules",
+        "VPC peering",
+        "Redis eviction policy",
+        "service mesh sidecar",
+        "artifact registry",
+        "DNS failover",
+        "log shipping pipeline",
+        "Prometheus alerts",
+        "bastion hosts",
+    ],
+    "OPS": [
+        "on-call rotation",
+        "incident postmortem template",
+        "pager escalation policy",
+        "status page",
+        "support macros",
+        "vendor invoice approvals",
+        "SLA dashboard",
+        "runbook index",
+        "access reviews",
+        "backup restore drill",
+        "change calendar",
+        "capacity forecast",
+        "release checklist",
+        "audit evidence",
+        "shift handoff notes",
+    ],
+    "GRO": [
+        "signup funnel",
+        "referral banner",
+        "onboarding checklist",
+        "pricing page experiment",
+        "email drip campaign",
+        "trial expiry nudge",
+        "UTM attribution",
+        "churn survey",
+        "landing page copy",
+        "in-app announcement",
+        "lifecycle segments",
+        "coupon codes",
+        "SEO sitemap",
+        "waitlist form",
+        "NPS prompt",
+    ],
+    "WEB": [
+        "settings page",
+        "data table pagination",
+        "dark mode tokens",
+        "search autocomplete",
+        "session timeout banner",
+        "CSV export button",
+        "keyboard navigation",
+        "form validation",
+        "dashboard charts",
+        "file upload widget",
+        "notification center",
+        "SSO login redirect",
+        "breadcrumb nav",
+        "modal focus trap",
+        "i18n date formats",
+    ],
+    "MOB": [
+        "push notification",
+        "offline sync",
+        "biometric login",
+        "deep link handling",
+        "launch screen",
+        "image cache",
+        "app store review prompt",
+        "in-app purchase restore",
+        "camera permission flow",
+        "tab bar layout",
+        "background refresh",
+        "widget extension",
+        "accessibility labels",
+        "locale switching",
+        "upload retry",
+    ],
 }
 CONTEXTS = {
-    "PAY": ["for EU merchants", "after the last deploy", "in sandbox", "on retries", "for JPY payments",
-            "for enterprise accounts", "during peak load", "in the nightly job", "for partial refunds",
-            "on Safari", "for recurring charges", "with expired cards"],
-    "INF": ["in us-east-1", "in eu-west-1", "on the staging cluster", "after the upgrade",
-            "for cost reduction", "before the audit", "on spot instances", "for the data plane"],
-    "OPS": ["for Q4", "this week", "for the EU team", "after the outage", "before the freeze",
-            "for new hires", "across regions", "per compliance request"],
-    "GRO": ["for self-serve users", "on mobile web", "in the EU", "for returning visitors",
-            "in variant B", "for the Q4 campaign", "on the pricing page", "after signup"],
-    "WEB": ["in Firefox", "on small screens", "for screen readers", "after login",
-            "in the admin console", "with long names", "on slow networks", "in dark mode"],
-    "MOB": ["on iOS 17", "on Android 14", "on low-memory devices", "after app update", "on tablets",
-            "in airplane mode", "on first launch", "with VoiceOver"],
+    "PAY": [
+        "for EU merchants",
+        "after the last deploy",
+        "in sandbox",
+        "on retries",
+        "for JPY payments",
+        "for enterprise accounts",
+        "during peak load",
+        "in the nightly job",
+        "for partial refunds",
+        "on Safari",
+        "for recurring charges",
+        "with expired cards",
+    ],
+    "INF": [
+        "in us-east-1",
+        "in eu-west-1",
+        "on the staging cluster",
+        "after the upgrade",
+        "for cost reduction",
+        "before the audit",
+        "on spot instances",
+        "for the data plane",
+    ],
+    "OPS": [
+        "for Q4",
+        "this week",
+        "for the EU team",
+        "after the outage",
+        "before the freeze",
+        "for new hires",
+        "across regions",
+        "per compliance request",
+    ],
+    "GRO": [
+        "for self-serve users",
+        "on mobile web",
+        "in the EU",
+        "for returning visitors",
+        "in variant B",
+        "for the Q4 campaign",
+        "on the pricing page",
+        "after signup",
+    ],
+    "WEB": [
+        "in Firefox",
+        "on small screens",
+        "for screen readers",
+        "after login",
+        "in the admin console",
+        "with long names",
+        "on slow networks",
+        "in dark mode",
+    ],
+    "MOB": [
+        "on iOS 17",
+        "on Android 14",
+        "on low-memory devices",
+        "after app update",
+        "on tablets",
+        "in airplane mode",
+        "on first launch",
+        "with VoiceOver",
+    ],
 }
 TITLES = {
-    "bug": ["{s} fails {c}", "{s} returns wrong result {c}", "Intermittent errors in {s} {c}",
-            "{s} times out {c}", "Fix {s} crash {c}"],
-    "feature": ["Add {s} support {c}", "Support configurable {s} {c}", "Expose {s} in the dashboard {c}",
-                "Allow bulk edits to {s} {c}"],
-    "task": ["Update runbook for {s} {c}", "Migrate {s} {c}", "Audit {s} {c}",
-             "Clean up {s} configuration {c}", "Document {s} {c}"],
+    "bug": [
+        "{s} fails {c}",
+        "{s} returns wrong result {c}",
+        "Intermittent errors in {s} {c}",
+        "{s} times out {c}",
+        "Fix {s} crash {c}",
+    ],
+    "feature": [
+        "Add {s} support {c}",
+        "Support configurable {s} {c}",
+        "Expose {s} in the dashboard {c}",
+        "Allow bulk edits to {s} {c}",
+    ],
+    "task": [
+        "Update runbook for {s} {c}",
+        "Migrate {s} {c}",
+        "Audit {s} {c}",
+        "Clean up {s} configuration {c}",
+        "Document {s} {c}",
+    ],
 }
 WHO = ["support", "QA", "on-call", "a customer", "monitoring", "the account team"]
-IMPACT = ["blocks release checks", "low volume but recurring", "needs triage before the next cycle",
-          "a workaround exists", "regression risk is unclear", "affects a handful of accounts"]
+IMPACT = [
+    "blocks release checks",
+    "low volume but recurring",
+    "needs triage before the next cycle",
+    "a workaround exists",
+    "regression risk is unclear",
+    "affects a handful of accounts",
+]
 LABEL_POOL = {
-    "PAY": ["payments", "billing", "api", "security", "compliance", "customer", "performance", "tech-debt"],
-    "INF": ["infra", "observability", "security", "migration", "on-call", "tech-debt", "performance"],
-    "OPS": ["on-call", "compliance", "docs", "observability", "blocked", "tech-debt", "customer"],
+    "PAY": [
+        "payments",
+        "billing",
+        "api",
+        "security",
+        "compliance",
+        "customer",
+        "performance",
+        "tech-debt",
+    ],
+    "INF": [
+        "infra",
+        "observability",
+        "security",
+        "migration",
+        "on-call",
+        "tech-debt",
+        "performance",
+    ],
+    "OPS": [
+        "on-call",
+        "compliance",
+        "docs",
+        "observability",
+        "blocked",
+        "tech-debt",
+        "customer",
+    ],
     "GRO": ["growth", "experiment", "onboarding", "ux", "i18n", "customer", "docs"],
     "WEB": ["web", "ux", "accessibility", "i18n", "performance", "needs-design", "api"],
-    "MOB": ["mobile", "ios", "android", "ux", "performance", "accessibility", "needs-design"],
+    "MOB": [
+        "mobile",
+        "ios",
+        "android",
+        "ux",
+        "performance",
+        "accessibility",
+        "needs-design",
+    ],
 }
-COMMENTS = ["Looking into this now.", "Can we get a repro from support?", "Blocked on the vendor reply.",
-            "Fix is in review, should ship Thursday.", "Seen again in last night's run.",
-            "Moving to next cycle, capacity is tight."]
+COMMENTS = [
+    "Looking into this now.",
+    "Can we get a repro from support?",
+    "Blocked on the vendor reply.",
+    "Fix is in review, should ship Thursday.",
+    "Seen again in last night's run.",
+    "Moving to next cycle, capacity is tight.",
+]
 
 
 def fmt_key(project: str, num: int) -> str:
@@ -144,22 +445,36 @@ def _base(seed: int) -> dict:
     lid = {l["name"]: l["id"] for l in labels}
     cycles = [{"id": f"C{i + 1}", "name": n} for i, n in enumerate(CYCLES)]
     # "team" is the owning team (OPS is staffed by Platform and Growth but owned by Platform)
-    projects = [{"id": k, "key": k, "name": n, "team": t[0]} for k, n, t, _, _ in PROJECTS]
+    projects = [
+        {"id": k, "key": k, "name": n, "team": t[0]} for k, n, t, _, _ in PROJECTS
+    ]
 
     # created_seq interleaves projects; local jitter keeps seq order != key order.
     order = []
     for key, _, _, first, count in PROJECTS:
         for i in range(count):
-            order.append((max(0.0, (i + rng.uniform(-2.5, 2.5)) / count), key, first + i))
+            order.append(
+                (max(0.0, (i + rng.uniform(-2.5, 2.5)) / count), key, first + i)
+            )
     order.sort()
     issues, titles, codes = [], set(), set()
     for seq, (_, proj, num) in enumerate(order, start=1):
-        team_users = [u for u in users if u["team"] in dict((k, t) for k, _, t, _, _ in PROJECTS)[proj]]
+        team_users = [
+            u
+            for u in users
+            if u["team"] in dict((k, t) for k, _, t, _, _ in PROJECTS)[proj]
+        ]
         itype = rng.choices(TYPES, [40, 25, 35])[0]
         title = _title(rng, proj, itype, titles)
         status = rng.choices(STATUSES, [20, 20, 18, 10, 22, 10])[0]
-        assignee = rng.choice([u["id"] for u in team_users if u["role"] != "pm"]) if (
-            status in ("in_progress", "in_review", "done", "closed") or rng.random() < 0.65) else None
+        assignee = (
+            rng.choice([u["id"] for u in team_users if u["role"] != "pm"])
+            if (
+                status in ("in_progress", "in_review", "done", "closed")
+                or rng.random() < 0.65
+            )
+            else None
+        )
         pool = LABEL_POOL[proj]
         names = rng.sample(pool, rng.randint(1, 2))
         if itype == "bug" and rng.random() < 0.7:
@@ -171,18 +486,32 @@ def _base(seed: int) -> dict:
             code = f"AC-{rng.randrange(10000, 99999)}"
         codes.add(code)
         issue = {
-            "key": fmt_key(proj, num), "project": proj, "title": title,
-            "description": _desc(rng, title), "type": itype, "status": status,
+            "key": fmt_key(proj, num),
+            "project": proj,
+            "title": title,
+            "description": _desc(rng, title),
+            "type": itype,
+            "status": status,
             "priority": rng.choices(PRIORITIES, [10, 20, 35, 25, 10])[0],
-            "assignee_id": assignee, "reporter_id": rng.choice(team_users)["id"],
+            "assignee_id": assignee,
+            "reporter_id": rng.choice(team_users)["id"],
             "label_ids": [lid[n] for n in names],
             "cycle_id": rng.choice(["C1", "C2", "C3", "C4", None, None]),
             "created_seq": seq,
-            "due_date": (date(2026, 10, 1) + timedelta(days=rng.randrange(0, 80))).isoformat()
-            if rng.random() < 0.4 else None,
-            "custom_fields": {"customer_impact": rng.choice(IMPACTS)} if rng.random() < 0.3 else {},
-            "resolution": None, "duplicate_of": None, "audit_code": code,
-            "customer_ticket": f"CS-{rng.randrange(1000, 9999)}" if rng.random() < 0.2 else None,
+            "due_date": (
+                date(2026, 10, 1) + timedelta(days=rng.randrange(0, 80))
+            ).isoformat()
+            if rng.random() < 0.4
+            else None,
+            "custom_fields": {"customer_impact": rng.choice(IMPACTS)}
+            if rng.random() < 0.3
+            else {},
+            "resolution": None,
+            "duplicate_of": None,
+            "audit_code": code,
+            "customer_ticket": f"CS-{rng.randrange(1000, 9999)}"
+            if rng.random() < 0.2
+            else None,
         }
         issues.append(issue)
     by_key = {i["key"]: i for i in issues}
@@ -192,7 +521,11 @@ def _base(seed: int) -> dict:
         elif i["status"] == "closed":
             i["resolution"] = rng.choice(RESOLUTIONS)
             if i["resolution"] == "duplicate":
-                others = [o["key"] for o in issues if o["project"] == i["project"] and o["key"] != i["key"]]
+                others = [
+                    o["key"]
+                    for o in issues
+                    if o["project"] == i["project"] and o["key"] != i["key"]
+                ]
                 i["duplicate_of"] = rng.choice(others)
     _static_specials(by_key, users)
     # Labelled-by-hand data never carries the planted labels.
@@ -207,27 +540,51 @@ def _base(seed: int) -> dict:
         if (a, b) in seen or (b, a) in seen:
             continue
         seen.add((a, b))
-        links.append({"id": f"LK{len(links) + 1:03d}", "from_key": a,
-                      "type": rng.choice(["blocks", "relates"]), "to_key": b})
+        links.append(
+            {
+                "id": f"LK{len(links) + 1:03d}",
+                "from_key": a,
+                "type": rng.choice(["blocks", "relates"]),
+                "to_key": b,
+            }
+        )
     comments = []
     for k in rng.sample(keys, 25):
         author = rng.choice(users)["handle"]
-        comments.append({"id": f"CM{len(comments) + 1:03d}", "issue_key": k, "author": author,
-                         "body": rng.choice(COMMENTS)})
-    return {"users": users, "projects": projects, "labels": labels, "cycles": cycles,
-            "issues": issues, "comments": comments, "links": links}
+        comments.append(
+            {
+                "id": f"CM{len(comments) + 1:03d}",
+                "issue_key": k,
+                "author": author,
+                "body": rng.choice(COMMENTS),
+            }
+        )
+    return {
+        "users": users,
+        "projects": projects,
+        "labels": labels,
+        "cycles": cycles,
+        "issues": issues,
+        "comments": comments,
+        "links": links,
+    }
 
 
 def _users(rng: random.Random) -> list[dict]:
     firsts, lasts = FIRST[:], LAST[:]
     rng.shuffle(firsts)
     rng.shuffle(lasts)
-    names = [f"{f} {l}" for f, l in zip(firsts, lasts)]  # 40 unique, none contain alex/priya/chen
+    names = [
+        f"{f} {l}" for f, l in zip(firsts, lasts, strict=True)
+    ]  # 40 unique, none contain alex/priya/chen
     users = []
     for t, team in enumerate(TEAMS):
         for j in range(8):
             if j == 2 and team in ("Platform", "Growth"):
-                name, handle = "Alex Chen", "alex.chen" if team == "Platform" else "a.chen"
+                name, handle = (
+                    "Alex Chen",
+                    "alex.chen" if team == "Platform" else "a.chen",
+                )
             elif j == 2 and team == "Payments":
                 name, handle = "Priya Nair", "priya.nair"
             elif (team, j) in SAMS:
@@ -236,15 +593,25 @@ def _users(rng: random.Random) -> list[dict]:
                 name = names[t * 8 + j]
                 handle = name.lower().replace(" ", ".")
             role = "lead" if j == 0 else "pm" if j == 1 else "engineer"
-            users.append({"id": f"U{t * 8 + j + 1:02d}", "name": name, "handle": handle,
-                          "team": team, "role": role, "active": (team, j) not in INACTIVE,
-                          "on_call": j == 5})
+            users.append(
+                {
+                    "id": f"U{t * 8 + j + 1:02d}",
+                    "name": name,
+                    "handle": handle,
+                    "team": team,
+                    "role": role,
+                    "active": (team, j) not in INACTIVE,
+                    "on_call": j == 5,
+                }
+            )
     return users
 
 
 def _title(rng, proj, itype, used):
     for _ in range(50):
-        t = rng.choice(TITLES[itype]).format(s=rng.choice(SUBJECTS[proj]), c=rng.choice(CONTEXTS[proj]))
+        t = rng.choice(TITLES[itype]).format(
+            s=rng.choice(SUBJECTS[proj]), c=rng.choice(CONTEXTS[proj])
+        )
         t = t[0].upper() + t[1:]
         if t not in used:
             used.add(t)
@@ -259,28 +626,62 @@ def _desc(rng, title):
 
 
 def _static_specials(by_key, users):
-    pay = [u["id"] for u in users if u["team"] == "Payments" and u["role"] == "engineer"]
+    pay = [
+        u["id"] for u in users if u["team"] == "Payments" and u["role"] == "engineer"
+    ]
     inf = by_key["INF-33"]
-    inf.update(title="Rotate staging TLS certificates before expiry", type="task", status="todo",
-               priority="medium", assignee_id=None, resolution=None, duplicate_of=None,
-               description="Staging wildcard cert expires in three weeks. Rotate via Vault and verify ingress.")
+    inf.update(
+        title="Rotate staging TLS certificates before expiry",
+        type="task",
+        status="todo",
+        priority="medium",
+        assignee_id=None,
+        resolution=None,
+        duplicate_of=None,
+        description="Staging wildcard cert expires in three weeks. Rotate via Vault and verify ingress.",
+    )
     a, b = by_key["PAY-149"], by_key["PAY-150"]
-    a.update(title="Card declines spike on 3DS retry", type="bug", status="todo", priority="high",
-             assignee_id=pay[0], resolution=None, duplicate_of=None,
-             description="Issuers decline the second 3DS attempt for the same card within five minutes.")
-    b.update(title="3DS retry causes spurious card declines", type="bug", status="in_progress",
-             priority="high", assignee_id=pay[1], resolution=None, duplicate_of=None,
-             description="Customers retrying 3DS see declines that clear on the third attempt.")
-    by_key["PAY-087"].update(title="Payout reconciliation drifts by one cent on JPY", type="bug")
-    by_key["PAY-201"].update(title="Enterprise refund export is missing tax columns", type="bug",
-                             custom_fields={"customer_impact": "enterprise"})
-    by_key["PAY-142"].update(title="Duplicate settlement lines after partial refund retry", type="bug",
-                             resolution=None, duplicate_of=None)
+    a.update(
+        title="Card declines spike on 3DS retry",
+        type="bug",
+        status="todo",
+        priority="high",
+        assignee_id=pay[0],
+        resolution=None,
+        duplicate_of=None,
+        description="Issuers decline the second 3DS attempt for the same card within five minutes.",
+    )
+    b.update(
+        title="3DS retry causes spurious card declines",
+        type="bug",
+        status="in_progress",
+        priority="high",
+        assignee_id=pay[1],
+        resolution=None,
+        duplicate_of=None,
+        description="Customers retrying 3DS see declines that clear on the third attempt.",
+    )
+    by_key["PAY-087"].update(
+        title="Payout reconciliation drifts by one cent on JPY", type="bug"
+    )
+    by_key["PAY-201"].update(
+        title="Enterprise refund export is missing tax columns",
+        type="bug",
+        custom_fields={"customer_impact": "enterprise"},
+    )
+    by_key["PAY-142"].update(
+        title="Duplicate settlement lines after partial refund retry",
+        type="bug",
+        resolution=None,
+        duplicate_of=None,
+    )
     for k in ("PAY-087", "PAY-201", "PAY-142"):
         by_key[k]["reporter_id"] = pay[2]
     # Specials stay out of closed-state accidents.
     for k in ("PAY-087", "PAY-201"):
-        by_key[k]["status"] = "todo" if by_key[k]["status"] in ("done", "closed") else by_key[k]["status"]
+        by_key[k]["status"] = (
+            "todo" if by_key[k]["status"] in ("done", "closed") else by_key[k]["status"]
+        )
         by_key[k]["resolution"] = None
         by_key[k]["duplicate_of"] = None
 
@@ -307,7 +708,7 @@ def _plant(state: dict, rng: random.Random) -> dict:
     planted: dict = {}
 
     def pool(pred=lambda i: True):
-        return sorted((i["key"] for i in issues if i["key"] not in protected and pred(i)))
+        return sorted(i["key"] for i in issues if i["key"] not in protected and pred(i))
 
     def take(keys, n):
         picked = rng.sample(keys, n)
@@ -322,8 +723,18 @@ def _plant(state: dict, rng: random.Random) -> dict:
     def is_open(i):
         return i["status"] in OPEN
 
-    def setup(i, *, type=None, status=None, assignee=_KEEP, cycle=_KEEP, priority=None, names=(),
-              ticket=_KEEP, reporter=_KEEP):
+    def setup(
+        i,
+        *,
+        type=None,
+        status=None,
+        assignee=_KEEP,
+        cycle=_KEEP,
+        priority=None,
+        names=(),
+        ticket=_KEEP,
+        reporter=_KEEP,
+    ):
         if type:
             i["type"] = type
         if status:
@@ -345,8 +756,11 @@ def _plant(state: dict, rng: random.Random) -> dict:
         return lambda i: i["project"] == p
 
     def uids(teams, roles=("engineer", "lead"), active=True):
-        return [u["id"] for u in users if u["team"] in teams and u["role"] in roles
-                and (u["active"] or not active)]
+        return [
+            u["id"]
+            for u in users
+            if u["team"] in teams and u["role"] in roles and (u["active"] or not active)
+        ]
 
     open_status = lambda: rng.choice(["backlog", "todo", "todo", "in_review"])
     W2, W3 = cid["Oct-W2"], cid["Oct-W3"]
@@ -357,12 +771,20 @@ def _plant(state: dict, rng: random.Random) -> dict:
     plat_eng = [u["id"] for u in plat if u["role"] == "engineer" and u["active"]]
     lead = next(u["id"] for u in plat if u["role"] == "lead")
     pay_users = [u["id"] for u in users if u["team"] == "Payments"]
-    pay_eng = [u["id"] for u in users if u["team"] == "Payments" and u["role"] == "engineer"]
+    pay_eng = [
+        u["id"] for u in users if u["team"] == "Payments" and u["role"] == "engineer"
+    ]
 
     # on-call: one active user per team; Platform's rotates with the nonce
     for u in plat:
         u["on_call"] = False
-    oncall = rng.choice([u for u in plat if u["role"] == "engineer" and u["active"] and u["name"] != "Alex Chen"])
+    oncall = rng.choice(
+        [
+            u
+            for u in plat
+            if u["role"] == "engineer" and u["active"] and u["name"] != "Alex Chen"
+        ]
+    )
     oncall["on_call"] = True
 
     # t01 / t03 / t12 on named issues
@@ -376,7 +798,9 @@ def _plant(state: dict, rng: random.Random) -> dict:
         code = f"AC-{rng.randrange(10000, 99999)}"
     p142["audit_code"] = code
     by_key["PAY-087"]["reporter_id"] = rng.choice(pay_users)
-    by_key["PAY-201"]["customer_ticket"] = f"CS-{rng.randrange(1000, 9999)}" if rng.random() < 0.5 else None
+    by_key["PAY-201"]["customer_ticket"] = (
+        f"CS-{rng.randrange(1000, 9999)}" if rng.random() < 0.5 else None
+    )
 
     # h07 / h10 named issues
     setup(by_key["WEB-12"], status="todo", assignee=None, type="task")
@@ -384,7 +808,9 @@ def _plant(state: dict, rng: random.Random) -> dict:
     setup(by_key["PAY-151"], status=rng.choice(["backlog", "todo"]), assignee=None)
 
     # t06: nonce decides how many of the oldest OPS issues are already closed
-    ops = sorted((i for i in issues if i["project"] == "OPS"), key=lambda i: i["created_seq"])[:8]
+    ops = sorted(
+        (i for i in issues if i["project"] == "OPS"), key=lambda i: i["created_seq"]
+    )[:8]
     k = rng.randint(2, 6)
     for n, i in enumerate(ops):
         protected.add(i["key"])
@@ -396,7 +822,9 @@ def _plant(state: dict, rng: random.Random) -> dict:
 
     # t05 (+ h01's PAY half): open+unassigned+bug+regression in PAY, with decoys
     n5 = rng.randint(4, 9)
-    p1 = rng.randint(2, 3)  # how many of the t05 keys sit in Oct-W2/W3 (the h01 PAY targets)
+    p1 = rng.randint(
+        2, 3
+    )  # how many of the t05 keys sit in Oct-W2/W3 (the h01 PAY targets)
     pay_pool = pool(proj("PAY"))
     chosen = take(pay_pool, n5 + 2 + 2 + 2 + 1)
     targets, rest = chosen[:n5], chosen[n5:]
@@ -454,7 +882,11 @@ def _plant(state: dict, rng: random.Random) -> dict:
 
     # t11: one active Platform engineer with strictly the most open urgent issues
     for i in issues:
-        if i["assignee_id"] in plat_eng_all and is_open(i) and i["priority"] == "urgent":
+        if (
+            i["assignee_id"] in plat_eng_all
+            and is_open(i)
+            and i["priority"] == "urgent"
+        ):
             i["priority"] = "high"
     winner = rng.choice(plat_eng)
     others = [e for e in plat_eng_all if e != winner]
@@ -470,7 +902,7 @@ def _plant(state: dict, rng: random.Random) -> dict:
     t11_keys = set()
     for e in plat_eng_all:
         mine[e] = [by_key[k] for k in open_pool[: counts[e]]]
-        open_pool = open_pool[counts[e]:]
+        open_pool = open_pool[counts[e] :]
         for i in mine[e]:
             i.update(assignee_id=e, priority="urgent")
             protected.add(i["key"])
@@ -479,8 +911,10 @@ def _plant(state: dict, rng: random.Random) -> dict:
         i.update(assignee_id=lead, priority="urgent")
         protected.add(i["key"])
     oldest = min(mine[winner], key=lambda i: i["created_seq"])
-    closed_pool = sorted(pool(lambda i: plat_proj(i) and not is_open(i)),
-                         key=lambda i: by_key[i]["created_seq"])
+    closed_pool = sorted(
+        pool(lambda i: plat_proj(i) and not is_open(i)),
+        key=lambda i: by_key[i]["created_seq"],
+    )
     for e, n in ((winner, 2), (runner, 3)):
         for i in (by_key[k] for k in closed_pool[:n]):
             i.update(assignee_id=e, priority="urgent")
@@ -497,58 +931,132 @@ def _plant(state: dict, rng: random.Random) -> dict:
     web = take(pool(proj("WEB")), w + 2 + 2 + 2 + 2 + 3 + 3)
     web_t, web_rest = web[:w], web[w:]
     for i in web_t:
-        setup(i, type="bug", assignee=None, status=open_status(), cycle=in_w23(), names=("regression", "bug"))
+        setup(
+            i,
+            type="bug",
+            assignee=None,
+            status=open_status(),
+            cycle=in_w23(),
+            names=("regression", "bug"),
+        )
         h01_keys.append(i["key"])
     web_users = uids(("Web",), ("engineer", "lead"))
-    for i in web_rest[0:2]:   # status decoys
-        setup(i, type="bug", assignee=None, status=rng.choice(["done", "closed"]), cycle=in_w23(),
-              names=("regression", "bug"))
-    for i in web_rest[2:4]:   # assignee decoys
-        setup(i, type="bug", assignee=rng.choice(web_users), status="in_progress", cycle=in_w23(),
-              priority="medium", names=("regression", "bug"))
-    for i in web_rest[4:6]:   # type decoys
-        setup(i, type=rng.choice(["feature", "task"]), assignee=None, status=open_status(), cycle=in_w23(),
-              names=("regression",))
-    for i in web_rest[6:8]:   # label decoys
-        setup(i, type="bug", assignee=None, status=open_status(), cycle=in_w23(),
-              names=("regressions-old", "bug"))
+    for i in web_rest[0:2]:  # status decoys
+        setup(
+            i,
+            type="bug",
+            assignee=None,
+            status=rng.choice(["done", "closed"]),
+            cycle=in_w23(),
+            names=("regression", "bug"),
+        )
+    for i in web_rest[2:4]:  # assignee decoys
+        setup(
+            i,
+            type="bug",
+            assignee=rng.choice(web_users),
+            status="in_progress",
+            cycle=in_w23(),
+            priority="medium",
+            names=("regression", "bug"),
+        )
+    for i in web_rest[4:6]:  # type decoys
+        setup(
+            i,
+            type=rng.choice(["feature", "task"]),
+            assignee=None,
+            status=open_status(),
+            cycle=in_w23(),
+            names=("regression",),
+        )
+    for i in web_rest[6:8]:  # label decoys
+        setup(
+            i,
+            type="bug",
+            assignee=None,
+            status=open_status(),
+            cycle=in_w23(),
+            names=("regressions-old", "bug"),
+        )
     for i in web_rest[8:11]:  # cycle decoys
-        setup(i, type="bug", assignee=None, status=open_status(), cycle=off_cycle(),
-              names=("regression", "bug"))
+        setup(
+            i,
+            type="bug",
+            assignee=None,
+            status=open_status(),
+            cycle=off_cycle(),
+            names=("regression", "bug"),
+        )
     for i in web_rest[11:14]:  # wontfix-candidate decoys
-        setup(i, type="bug", assignee=None, status=open_status(), cycle=in_w23(),
-              names=("regression", "bug", "wontfix-candidate"))
+        setup(
+            i,
+            type="bug",
+            assignee=None,
+            status=open_status(),
+            cycle=in_w23(),
+            names=("regression", "bug", "wontfix-candidate"),
+        )
     for p_ in ("GRO", "MOB"):  # project decoys (INF one comes from t05)
         i = take(pool(proj(p_)), 1)[0]
-        setup(i, type="bug", assignee=None, status=open_status(), cycle=in_w23(), names=("regression", "bug"))
+        setup(
+            i,
+            type="bug",
+            assignee=None,
+            status=open_status(),
+            cycle=in_w23(),
+            names=("regression", "bug"),
+        )
     planted["h01_keys"] = sorted(h01_keys)
 
     # h03: open OPS flaky issues, unassigned vs assigned (never Oct-W2: t10 counts those)
     n3 = rng.randint(9, 13)
     nu = rng.randint(3, n3 - 3)
-    ops_users = [u["id"] for u in users if u["team"] in ("Platform", "Growth") and u["role"] != "pm" and u["active"]]
+    ops_users = [
+        u["id"]
+        for u in users
+        if u["team"] in ("Platform", "Growth") and u["role"] != "pm" and u["active"]
+    ]
     ops_pick = take(pool(proj("OPS")), n3 + 3)
     un, asg = [], []
     for n, i in enumerate(ops_pick[:n3]):
-        setup(i, status=rng.choice(["backlog", "todo", "in_progress", "in_review"]),
-              cycle=rng.choice([cid["Oct-W1"], cid["Oct-W3"], cid["Oct-W4"], None]),
-              assignee=None if n < nu else rng.choice(ops_users), names=("flaky",))
+        setup(
+            i,
+            status=rng.choice(["backlog", "todo", "in_progress", "in_review"]),
+            cycle=rng.choice([cid["Oct-W1"], cid["Oct-W3"], cid["Oct-W4"], None]),
+            assignee=None if n < nu else rng.choice(ops_users),
+            names=("flaky",),
+        )
         (un if n < nu else asg).append(i["key"])
     for n, i in enumerate(ops_pick[n3:]):  # closed flaky OPS decoys
-        setup(i, status=rng.choice(["done", "closed"]), assignee=None if n == 0 else rng.choice(ops_users),
-              names=("flaky",))
+        setup(
+            i,
+            status=rng.choice(["done", "closed"]),
+            assignee=None if n == 0 else rng.choice(ops_users),
+            names=("flaky",),
+        )
     for p_ in ("INF", "GRO"):  # open flaky outside OPS, unassigned
         i = take(pool(proj(p_)), 1)[0]
         setup(i, status="todo", assignee=None, cycle=cid["Oct-W1"], names=("flaky",))
-    planted["h03_unassigned_keys"], planted["h03_assigned_keys"] = sorted(un), sorted(asg)
+    planted["h03_unassigned_keys"], planted["h03_assigned_keys"] = (
+        sorted(un),
+        sorted(asg),
+    )
     planted["h03_oncall_id"] = oncall["id"]
 
     # h04: urgent open issues filed by PAY-142's reporter in Oct-W3 (reporter = a non-lead, any team)
     rep = rng.choice([u for u in users if u["active"] and u["role"] != "lead"])
     p142["reporter_id"] = rep["id"]
-    rep_lead = next(u["id"] for u in users if u["team"] == rep["team"] and u["role"] == "lead")
-    h04_assignees = [u["id"] for u in users if u["active"] and u["role"] != "pm" and u["id"] != rep_lead
-                     and not (u["team"] == "Platform" and u["role"] == "engineer")]
+    rep_lead = next(
+        u["id"] for u in users if u["team"] == rep["team"] and u["role"] == "lead"
+    )
+    h04_assignees = [
+        u["id"]
+        for u in users
+        if u["active"]
+        and u["role"] != "pm"
+        and u["id"] != rep_lead
+        and not (u["team"] == "Platform" and u["role"] == "engineer")
+    ]
     pick_assignee = lambda: None if rng.random() < 0.25 else rng.choice(h04_assignees)
     n4 = rng.randint(4, 7)
     projs = rng.sample(["PAY", "INF", "OPS", "WEB", "MOB"], 2)
@@ -556,57 +1064,112 @@ def _plant(state: dict, rng: random.Random) -> dict:
     h04 = []
     for p_ in projs:
         i = take(pool(proj(p_)), 1)[0]
-        setup(i, status=open_status(), priority="urgent", cycle=W3, reporter=rep["id"], assignee=pick_assignee())
+        setup(
+            i,
+            status=open_status(),
+            priority="urgent",
+            cycle=W3,
+            reporter=rep["id"],
+            assignee=pick_assignee(),
+        )
         h04.append(i["key"])
-    for i in take(pool(), 3):   # cycle decoys
-        setup(i, status=open_status(), priority="urgent", cycle=rng.choice([cid["Oct-W1"], W2, cid["Oct-W4"]]),
-              reporter=rep["id"], assignee=pick_assignee())
-    for i in take(pool(), 3):   # priority decoys
-        setup(i, status=open_status(), priority=rng.choice(["high", "medium"]), cycle=W3, reporter=rep["id"],
-              assignee=pick_assignee())
-    for i in take(pool(), 3):   # status decoys
-        setup(i, status=rng.choice(["done", "closed"]), priority="urgent", cycle=W3, reporter=rep["id"],
-              assignee=pick_assignee())
-    mates = [u["id"] for u in users if u["team"] == rep["team"] and u["id"] != rep["id"]]
-    for i in take(pool(), 3):   # other-reporter decoys (teammates of the reporter)
-        setup(i, status=open_status(), priority="urgent", cycle=W3, reporter=rng.choice(mates),
-              assignee=pick_assignee())
+    for i in take(pool(), 3):  # cycle decoys
+        setup(
+            i,
+            status=open_status(),
+            priority="urgent",
+            cycle=rng.choice([cid["Oct-W1"], W2, cid["Oct-W4"]]),
+            reporter=rep["id"],
+            assignee=pick_assignee(),
+        )
+    for i in take(pool(), 3):  # priority decoys
+        setup(
+            i,
+            status=open_status(),
+            priority=rng.choice(["high", "medium"]),
+            cycle=W3,
+            reporter=rep["id"],
+            assignee=pick_assignee(),
+        )
+    for i in take(pool(), 3):  # status decoys
+        setup(
+            i,
+            status=rng.choice(["done", "closed"]),
+            priority="urgent",
+            cycle=W3,
+            reporter=rep["id"],
+            assignee=pick_assignee(),
+        )
+    mates = [
+        u["id"] for u in users if u["team"] == rep["team"] and u["id"] != rep["id"]
+    ]
+    for i in take(pool(), 3):  # other-reporter decoys (teammates of the reporter)
+        setup(
+            i,
+            status=open_status(),
+            priority="urgent",
+            cycle=W3,
+            reporter=rng.choice(mates),
+            assignee=pick_assignee(),
+        )
     planted["h04_reporter_id"], planted["h04_lead_id"] = rep["id"], rep_lead
     planted["h04_keys"] = sorted(h04)
 
     # h06: GRO duplicate-candidates that name their original in the description
     n6 = rng.randint(4, 6)
     gro = take(pool(proj("GRO")), n6 + (n6 - 1) + 2 + 2)
-    dups, origs, closed_d, unlabeled = (gro[:n6], gro[n6:2 * n6 - 1], gro[2 * n6 - 1:2 * n6 + 1],
-                                        gro[2 * n6 + 1:2 * n6 + 3])
+    dups, origs, closed_d, unlabeled = (
+        gro[:n6],
+        gro[n6 : 2 * n6 - 1],
+        gro[2 * n6 - 1 : 2 * n6 + 1],
+        gro[2 * n6 + 1 : 2 * n6 + 3],
+    )
     wrong_proj = take(pool(proj("WEB")), 1)[0]
     pay_orig = take(pool(lambda i: proj("PAY")(i) and is_open(i)), 1)[0]
     orig_keys = [pay_orig["key"]] + [i["key"] for i in origs]
     for i in origs:
         if not is_open(i):
             _set_status(i, "todo", rng)
-    texts = ["{t}. Duplicate of {o}; same symptom was already reported.",
-             "Duplicate of {o}. {t}. Raised by support.",
-             "{t}. This is a Duplicate of {o} (same repro steps)."]
+    texts = [
+        "{t}. Duplicate of {o}; same symptom was already reported.",
+        "Duplicate of {o}. {t}. Raised by support.",
+        "{t}. This is a Duplicate of {o} (same repro steps).",
+    ]
     pairs = {}
     for n, i in enumerate(dups):
         o = orig_keys[n]
         _set_status(i, open_status(), rng)
         i["priority"] = rng.choice(["none", "low", "medium"])
-        i["description"] = rng.choice(texts).format(t=i["title"][:70].rstrip(". "), o=o)[:160]
+        i["description"] = rng.choice(texts).format(
+            t=i["title"][:70].rstrip(". "), o=o
+        )[:160]
         if n % 2 == 1:
-            i["description"] = (i["description"] + f" See also {rng.choice(orig_keys)}.")[:160]
+            i["description"] = (
+                i["description"] + f" See also {rng.choice(orig_keys)}."
+            )[:160]
         label(i, "duplicate-candidate")
         pairs[i["key"]] = o
-    for n, i in enumerate(closed_d):
+    for i in closed_d:
         _set_status(i, rng.choice(["done", "closed"]), rng)
-        i["description"] = f"{i['title'][:70].rstrip('. ')}. Duplicate of {rng.choice(orig_keys)}; already handled."[:160]
+        i["description"] = (
+            f"{i['title'][:70].rstrip('. ')}. Duplicate of {rng.choice(orig_keys)}; already handled."[
+                :160
+            ]
+        )
         label(i, "duplicate-candidate")
     for i in unlabeled:
         _set_status(i, open_status(), rng)
-        i["description"] = f"{i['title'][:70].rstrip('. ')}. Similar to {rng.choice(orig_keys)}, but a different flow."[:160]
+        i["description"] = (
+            f"{i['title'][:70].rstrip('. ')}. Similar to {rng.choice(orig_keys)}, but a different flow."[
+                :160
+            ]
+        )
     _set_status(wrong_proj, open_status(), rng)
-    wrong_proj["description"] = f"{wrong_proj['title'][:70].rstrip('. ')}. Duplicate of {rng.choice(orig_keys)}."[:160]
+    wrong_proj["description"] = (
+        f"{wrong_proj['title'][:70].rstrip('. ')}. Duplicate of {rng.choice(orig_keys)}."[
+            :160
+        ]
+    )
     label(wrong_proj, "duplicate-candidate")
     planted["h06_pairs"] = dict(sorted(pairs.items()))
 
@@ -616,17 +1179,33 @@ def _plant(state: dict, rng: random.Random) -> dict:
     tick = lambda: f"CS-{rng.randrange(1000, 9999)}"
     mob_t = mob[:n8]
     for i in mob_t:
-        setup(i, type="bug", status=open_status(), priority=rng.choice(["none", "low", "medium"]), ticket=tick())
-    for i in mob[n8:n8 + 3]:
+        setup(
+            i,
+            type="bug",
+            status=open_status(),
+            priority=rng.choice(["none", "low", "medium"]),
+            ticket=tick(),
+        )
+    for i in mob[n8 : n8 + 3]:
         setup(i, type="bug", status=open_status(), priority="urgent", ticket=tick())
-    for i in mob[n8 + 3:n8 + 6]:
-        setup(i, type=rng.choice(["feature", "task"]), status=open_status(),
-              priority=rng.choice(["low", "medium", "high"]), ticket=tick())
-    for i in mob[n8 + 6:]:
+    for i in mob[n8 + 3 : n8 + 6]:
+        setup(
+            i,
+            type=rng.choice(["feature", "task"]),
+            status=open_status(),
+            priority=rng.choice(["low", "medium", "high"]),
+            ticket=tick(),
+        )
+    for i in mob[n8 + 6 :]:
         setup(i, type="bug", status=rng.choice(["done", "closed"]), ticket=tick())
     mob_keys = {i["key"] for i in mob}
     for i in issues:  # no other open MOB bug carries a ticket
-        if i["project"] == "MOB" and i["key"] not in mob_keys and is_open(i) and i["type"] == "bug":
+        if (
+            i["project"] == "MOB"
+            and i["key"] not in mob_keys
+            and is_open(i)
+            and i["type"] == "bug"
+        ):
             i["customer_ticket"] = None
     planted["h08_keys"] = sorted(i["key"] for i in mob_t)
 
@@ -635,14 +1214,43 @@ def _plant(state: dict, rng: random.Random) -> dict:
     p9 = take(pool(proj("PAY")), n9 + 2 + 2 + 1 + 1)
     plat_users = [u["id"] for u in plat if u["role"] != "pm"]
     for i in p9[:n9]:
-        setup(i, type="bug", status=open_status(), assignee=rng.choice(plat_users), names=("regression", "bug"))
-    for i in p9[n9:n9 + 2]:   # closed
-        setup(i, type="bug", status=rng.choice(["done", "closed"]), assignee=rng.choice(plat_users),
-              names=("regression", "bug"))
-    for i in p9[n9 + 2:n9 + 4]:   # no regression label
-        setup(i, type="bug", status=open_status(), assignee=rng.choice(plat_users), names=("bug",))
-    setup(p9[n9 + 4], type="feature", status=open_status(), assignee=rng.choice(plat_users), names=("regression",))
-    setup(p9[n9 + 5], type="bug", status=open_status(), assignee=rng.choice(pay_eng), names=("regression", "bug"))
+        setup(
+            i,
+            type="bug",
+            status=open_status(),
+            assignee=rng.choice(plat_users),
+            names=("regression", "bug"),
+        )
+    for i in p9[n9 : n9 + 2]:  # closed
+        setup(
+            i,
+            type="bug",
+            status=rng.choice(["done", "closed"]),
+            assignee=rng.choice(plat_users),
+            names=("regression", "bug"),
+        )
+    for i in p9[n9 + 2 : n9 + 4]:  # no regression label
+        setup(
+            i,
+            type="bug",
+            status=open_status(),
+            assignee=rng.choice(plat_users),
+            names=("bug",),
+        )
+    setup(
+        p9[n9 + 4],
+        type="feature",
+        status=open_status(),
+        assignee=rng.choice(plat_users),
+        names=("regression",),
+    )
+    setup(
+        p9[n9 + 5],
+        type="bug",
+        status=open_status(),
+        assignee=rng.choice(pay_eng),
+        names=("regression", "bug"),
+    )
     planted["h09_sources"] = sorted(i["key"] for i in p9[:n9])
 
     # sweep: Platform engineers' urgent/in_progress counts are fully owned by t11 and h05; the Platform lead/PM
@@ -671,22 +1279,37 @@ def _plant(state: dict, rng: random.Random) -> dict:
     e0 = rng.randint(1, min(3, spare - 2))
     e1 = rng.randint(1, min(3, spare - 1 - e0))
     want = {donors[0]: 3 + e0, donors[1]: 3 + e1}
-    want.update(dict(zip(recv, rc)))
+    want.update(dict(zip(recv, rc, strict=True)))
     ip_pool = pool(lambda i: i["project"] in ("INF", "OPS"))
     for e in order:
         for i in take(ip_pool, want[e]):
-            setup(i, status="in_progress", assignee=e, priority="high" if i["priority"] == "urgent" else None)
+            setup(
+                i,
+                status="in_progress",
+                assignee=e,
+                priority="high" if i["priority"] == "urgent" else None,
+            )
             ip_pool.remove(i["key"])
     planted["h05_initial_counts"] = {e: want[e] for e in sorted(want)}
 
     for i in issues:  # nothing else may accidentally match h04
-        if i["key"] not in h04 and (i["reporter_id"] == rep["id"] and is_open(i) and i["priority"] == "urgent"
-                and i["cycle_id"] == W3):
+        if i["key"] not in h04 and (
+            i["reporter_id"] == rep["id"]
+            and is_open(i)
+            and i["priority"] == "urgent"
+            and i["cycle_id"] == W3
+        ):
             if i["key"] in SPECIAL:
                 i["priority"] = "high"
             else:
-                i["reporter_id"] = rng.choice([u["id"] for u in users
-                                               if u["team"] == rep["team"] and u["id"] != rep["id"]])
+                i["reporter_id"] = rng.choice(
+                    [
+                        u["id"]
+                        for u in users
+                        if u["team"] == rep["team"] and u["id"] != rep["id"]
+                    ]
+                )
+
     # h02: team with the most open urgent issues assigned to its members (all projects)
     def team_counts():
         c = dict.fromkeys(TEAMS, 0)
@@ -694,8 +1317,14 @@ def _plant(state: dict, rng: random.Random) -> dict:
             if is_open(i) and i["priority"] == "urgent" and i["assignee_id"]:
                 c[by_user[i["assignee_id"]]["team"]] += 1
         return c
+
     for i in issues:
-        if i["key"] not in protected and is_open(i) and i["priority"] == "urgent" and i["assignee_id"]:
+        if (
+            i["key"] not in protected
+            and is_open(i)
+            and i["priority"] == "urgent"
+            and i["assignee_id"]
+        ):
             i["priority"] = "high"
     fc = team_counts()
     T = rng.choice(TEAMS)
@@ -715,9 +1344,20 @@ def _plant(state: dict, rng: random.Random) -> dict:
         need = goal[team] - fc[team]
         if need <= 0:
             continue
-        owners = uids((team,), ("lead",) if team == "Platform" else ("engineer", "lead"))
-        for i in take(pool(lambda i: is_open(i) and i["assignee_id"] and i["priority"] != "urgent"
-                                  and not (i["reporter_id"] == rep["id"] and i["cycle_id"] == W3)), need):
+        owners = uids(
+            (team,), ("lead",) if team == "Platform" else ("engineer", "lead")
+        )
+        for i in take(
+            pool(
+                lambda i: (
+                    is_open(i)
+                    and i["assignee_id"]
+                    and i["priority"] != "urgent"
+                    and not (i["reporter_id"] == rep["id"] and i["cycle_id"] == W3)
+                )
+            ),
+            need,
+        ):
             i["priority"] = "urgent"
             i["assignee_id"] = rng.choice(owners)
     planted["h02_team"], planted["h02_count"] = T, tc
@@ -730,9 +1370,16 @@ def _plant(state: dict, rng: random.Random) -> dict:
     lead_pm = {}
     for u in plat_other:
         n_u = rng.randint(1, 2) if u == lead else rng.randint(0, 2)
-        ip2 = pool(lambda i: i["project"] in ("INF", "OPS") and i["status"] != "in_progress")
+        ip2 = pool(
+            lambda i: i["project"] in ("INF", "OPS") and i["status"] != "in_progress"
+        )
         for i in take(ip2, n_u):
-            setup(i, status="in_progress", assignee=u, priority="high" if i["priority"] == "urgent" else None)
+            setup(
+                i,
+                status="in_progress",
+                assignee=u,
+                priority="high" if i["priority"] == "urgent" else None,
+            )
         lead_pm[u] = n_u
     planted["h05_other_counts"] = dict(sorted(lead_pm.items()))
 
@@ -751,4 +1398,11 @@ def _finish(state: dict) -> None:
             t = (i["key"], "duplicates", i["duplicate_of"])
             if t not in have:
                 have.add(t)
-                links.append({"id": f"LK{len(links) + 1:03d}", "from_key": t[0], "type": t[1], "to_key": t[2]})
+                links.append(
+                    {
+                        "id": f"LK{len(links) + 1:03d}",
+                        "from_key": t[0],
+                        "type": t[1],
+                        "to_key": t[2],
+                    }
+                )
