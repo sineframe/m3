@@ -5,6 +5,7 @@ import errno
 import json
 import os
 import pickle
+import shutil
 import socket
 import stat
 import subprocess
@@ -238,6 +239,98 @@ def test_remove_accepts_already_removed_owned_root() -> None:
     provider.remove(resource, deadline=time.monotonic() + 2)
     provider.close(deadline=time.monotonic() + 2)
     assert provider.cleanup_complete
+
+
+def test_expired_close_retains_owner_until_run_cleanup() -> None:
+    provider = OwnedBootstrapOperations()
+    resource = provider.create_capsule(
+        PrivateBytes(b"retained"), deadline=time.monotonic() + 5
+    )
+    owner_id = id(provider)
+    provider.close(deadline=time.monotonic() - 1)
+    assert operations._closed_owners[owner_id] is provider
+    assert resource.path.exists() and not provider.cleanup_complete
+    operations.drain_closed_bootstrap_operations(time.monotonic() + 2)
+    assert provider.cleanup_complete and not resource.root.exists()
+    assert owner_id not in operations._closed_owners
+
+
+def test_constructor_failure_after_endpoint_deadline_still_owns_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warm = OwnedBootstrapOperations()
+    warm.create_capsule(PrivateBytes(b"warm"), deadline=time.monotonic() + 5)
+    warm.close(deadline=time.monotonic() + 2)
+    observed: list[tuple[Any, float]] = []
+    original_create = OwnedBootstrapOperations.create_endpoint
+
+    def create(self: Any, *args: Any, **kwargs: Any) -> Any:
+        endpoint = original_create(self, *args, **kwargs)
+        observed.append((endpoint.resource, kwargs["deadline"]))
+        return endpoint
+
+    def fail_start(thread: threading.Thread) -> None:
+        assert thread.name != "m3-preparation-ipc"
+        time.sleep(max(0, observed[-1][1] - time.monotonic()) + 0.01)
+        raise RuntimeError("listener thread failure")
+
+    monkeypatch.setattr(OwnedBootstrapOperations, "create_endpoint", create)
+    monkeypatch.setattr(threading.Thread, "start", fail_start)
+    with pytest.raises(LiteralTransferError, match="listener unavailable"):
+        LiteralBootstrapBroker(
+            RunLiteralStore("expired-constructor"), timeout_seconds=0.3
+        )
+    assert time.monotonic() > observed[0][1]
+    assert not observed[0][0].root.exists()
+
+
+def test_released_capsules_do_not_exhaust_active_job_slots() -> None:
+    provider = OwnedBootstrapOperations()
+    deadline = time.monotonic() + 10
+    try:
+        resources = [
+            provider.create_capsule(PrivateBytes(b"slot"), deadline=deadline)
+            for _ in range(65)
+        ]
+        assert all(resource.path.exists() for resource in resources)
+    finally:
+        provider.close(deadline=time.monotonic() + 5)
+    assert provider.cleanup_complete
+
+
+def test_submission_eof_reclaims_capsules_and_quarantines_native_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = PreparationWorker(64)
+    monkeypatch.setattr(operations, "worker_preparation", lambda: worker)
+    provider = OwnedBootstrapOperations()
+    capsule = provider.create_capsule(
+        PrivateBytes(b"capsule"), deadline=time.monotonic() + 5
+    )
+    endpoint = provider.create_endpoint(deadline=time.monotonic() + 2)
+    auth = provider.stage_native_auth(
+        PrivateBytes(b"auth"), deadline=time.monotonic() + 2
+    )
+    endpoint.channel.close()
+    # A completed subsequent request ensures the previous forget frames were
+    # processed before closing submissions; the ownership ACK channel stays live.
+    assert provider.read_native_auth(auth.path, deadline=time.monotonic() + 2)
+    wait_for(lambda: not provider._jobs)
+    assert worker._process is not None and worker._process.stdin is not None
+    worker._process.stdin.close()
+    try:
+        wait_for(lambda: not capsule.root.exists())
+        wait_for(lambda: not endpoint.resource.root.exists())
+        assert auth.path.exists()
+    finally:
+        worker.close(3)
+        assert worker._process.poll() is not None
+        # No native harness was launched in this fixture. All helper processes
+        # are dead, so its deliberately quarantined auth lease is safe to remove.
+        if auth.root.exists():
+            shutil.rmtree(auth.root)
+        if worker.root.exists():
+            worker.root.rmdir()
 
 
 def test_close_does_not_start_second_removal_before_writer_death(
