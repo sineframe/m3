@@ -881,6 +881,11 @@ def _check_trials(config: _Any, items: list[_Any]) -> None:
 
 
 def pytest_unconfigure(config: _Any) -> None:
+    from ._preparation_owner import shutdown_worker_preparation
+
+    # A run/worker owns the reusable helper; individual trial kits only fence
+    # their own jobs. No settings or profiles are reread during teardown.
+    shutdown_worker_preparation()
     timing_plugin = getattr(config, "_m3_timing_plugin", None)
     if timing_plugin is not None:
         timing_plugin.close(config)
