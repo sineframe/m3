@@ -10,6 +10,8 @@ description: "InMemoryExecutionStore is the default direct-SDK execution store. 
 turns, evaluations, profiles, and test-run records when the storage extra is
 installed.
 
+`m3 test` and pytest results integration inherit `ResultsSettings.busy_timeout_seconds` from the invocation configuration. Toolkit overrides affect the toolkit's default SQLite store; omitted settings retain the five-second wait. Direct `SQLiteExecutionStore(..., busy_timeout_ms=...)` callers and explicitly supplied stores keep their constructor budgets. Artifact and managed-input connections inherit the owning SQLite store's budget.
+
 Read executions with `get_snapshot`, `get_execution_spec`, `get_trace`,
 `get_trace_view`, `get_report`, and paged `list_executions`. Evaluation records
 support direct lookup and aggregate queries. Test-run methods keep pytest

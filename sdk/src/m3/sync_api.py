@@ -1554,7 +1554,7 @@ class MCPTestKit:
         self._literal_registry = configuration.literal_registry
         self._owns_store = False
         if store is None:
-            scoped_store = _make_default_store()
+            scoped_store = _make_default_store(self.config)
             if scoped_store is not None:
                 store = scoped_store
                 self._owns_store = True
