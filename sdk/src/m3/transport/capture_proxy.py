@@ -298,11 +298,15 @@ def write_stdio_handoff(
     *,
     configured_keys: frozenset[str] = frozenset(),
     observer: Mapping[str, str] | None = None,
+    command: tuple[str, ...] | None = None,
+    cwd: str | None = None,
     resolved: bool = False,
     launch_secrets: frozenset[str] = frozenset(),
     complete_environment: bool = False,
 ) -> set[str]:
-    """Resolve selected stdio environment into a one-shot protected handoff."""
+    """Resolve launch data into a one-shot protected handoff."""
+
+    from ._stdio_handoff import StdioHandoff
 
     resolved_secrets: set[str] = set(launch_secrets)
     # Match the official stdio client baseline (PATH/HOME/etc.) while keeping
@@ -327,24 +331,24 @@ def write_stdio_handoff(
             secrets=resolved_secrets,
             configured=configured_keys,
         )
+    if command is not None:
+        resolved_secrets.update(part for part in command if part)
+    payload = StdioHandoff.model_validate(
+        {
+            "environment": resolved_environment,
+            "canaries": tuple(sorted(resolved_secrets)),
+            "command": command,
+            "cwd": cwd,
+            "observer": observer,
+        }
+    )
     handoff = Path(path)
     created = False
     try:
         descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created = True
-        handoff_payload: dict[str, Any] = {
-            "environment": resolved_environment,
-            "canaries": sorted(resolved_secrets),
-        }
-        if observer is not None:
-            handoff_payload["observer"] = dict(observer)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
-            output_file.write(
-                json.dumps(
-                    handoff_payload,
-                    separators=(",", ":"),
-                )
-            )
+            output_file.write(payload.model_dump_json(exclude_none=True))
     except BaseException:
         if created:
             try:
@@ -1046,6 +1050,8 @@ class McpCaptureManager:
             write_stdio_handoff(
                 path,
                 credentials.stdio_environment(key),
+                command=credentials.server_command(key),
+                cwd=credentials.server_cwd(key),
                 observer=observer,
                 resolved=True,
                 complete_environment=True,
@@ -1195,6 +1201,16 @@ class McpCaptureManager:
                         environment,
                         configured_keys=configured_keys,
                         observer=observer_handoff,
+                        command=(
+                            self._launch_credentials.server_command(key)
+                            if self._launch_credentials is not None
+                            else (command, *tuple(getattr(configuration, "args", ())))
+                        ),
+                        cwd=(
+                            self._launch_credentials.server_cwd(key)
+                            if self._launch_credentials is not None
+                            else getattr(configuration, "cwd", None) or None
+                        ),
                         resolved=self._launch_credentials is not None,
                         launch_secrets=self._launch_redaction_literals,
                         complete_environment=self._launch_credentials is not None,
@@ -1219,14 +1235,11 @@ class McpCaptureManager:
                     )
                     args += ("--policy-file", str(policy_path))
                     self._policy_enforced.add(key)
-                cwd = getattr(configuration, "cwd", None)
-                if isinstance(cwd, str) and cwd:
-                    args = (*args, "--cwd", cwd)
-                args += ("--", command, *tuple(getattr(configuration, "args", ())))
                 self._instrumented[key] = replace(
                     configuration,
                     command=sys.executable,
                     args=args,
+                    cwd=None,
                     # Codex must still see an explicit protocol choice when it
                     # validates the server. Other child env stays in handoff.
                     environment={

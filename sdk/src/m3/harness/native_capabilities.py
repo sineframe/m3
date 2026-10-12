@@ -98,9 +98,46 @@ _CACHE: dict[
 ] = {}
 
 
-def _identity(executable: str) -> tuple[Path, str, bool]:
+@dataclass(frozen=True)
+class _ExecutableStamp:
+    device: int
+    inode: int
+    size: int
+    modified_ns: int
+    changed_ns: int
+    mode: int
+
+    @classmethod
+    def read(cls, path: Path) -> _ExecutableStamp:
+        try:
+            status = path.stat()
+        except OSError:
+            raise UnsupportedFeature(
+                "native capability executable is unavailable"
+            ) from None
+        return cls(
+            status.st_dev,
+            status.st_ino,
+            status.st_size,
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+            status.st_mode,
+        )
+
+
+_ARTIFACT_CACHE: dict[
+    tuple[str, Path, str, NativeRuntimeIdentity | None],
+    tuple[_ExecutableStamp, NativeSupport],
+] = {}
+
+
+def _executable_path(executable: str) -> Path:
     found = shutil.which(executable)
-    path = Path(found if found is not None else executable).resolve()
+    return Path(found if found is not None else executable).resolve()
+
+
+def _identity(executable: str) -> tuple[Path, str, bool]:
+    path = _executable_path(executable)
     digest = hashlib.sha256()
     try:
         with path.open("rb") as stream:
@@ -240,8 +277,14 @@ async def discover_native_support(
     Callers validate every final request against the returned facts. A cache
     entry never records authorization or a previously accepted request.
     """
-    path, digest, native_binary = await asyncio.to_thread(_identity, executable)
+    path = _executable_path(executable)
     host = f"{platform.system().lower()}-{platform.machine().lower()}"
+    artifact_key = (kind, path, host, runtime_identity)
+    stamp = _ExecutableStamp.read(path)
+    cached = _ARTIFACT_CACHE.get(artifact_key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    path, digest, native_binary = await asyncio.to_thread(_identity, str(path))
     with tempfile.TemporaryDirectory(prefix="m3-native-capabilities-") as directory:
         root = Path(directory)
         reported = await _query(path, ("--version",), root)
@@ -265,7 +308,10 @@ async def discover_native_support(
         key = (kind, version, digest, dialect, host, runtime_identity)
         cacheable = native_binary or runtime_identity is not None
         if cacheable and key in _CACHE:
-            return _CACHE[key]
+            support = _CACHE[key]
+            if _ExecutableStamp.read(path) == stamp:
+                _ARTIFACT_CACHE[artifact_key] = (stamp, support)
+            return support
         source = _RELEASE_SOURCES.get((kind, version))
         if (
             kind == "claude_code"
@@ -342,4 +388,7 @@ async def discover_native_support(
         )
         if cacheable:
             _CACHE[key] = support
+            # Never publish a fast entry for a file changed during discovery.
+            if _ExecutableStamp.read(path) == stamp:
+                _ARTIFACT_CACHE[artifact_key] = (stamp, support)
         return support
