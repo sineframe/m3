@@ -762,8 +762,12 @@ def test_native_pytest_setup_and_teardown_errors_remain_in_summary(
     assert "errors" in result.stdout
 
 
-def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
+def test_progress_counts_setup_and_teardown_without_double_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from m3.pytest_plugin import _Progress
+
+    monkeypatch.setenv("TERM", "xterm-256color")
 
     reporter = SimpleNamespace(
         isatty=True,
@@ -801,8 +805,12 @@ def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
     )
 
 
-def test_progress_counts_xfail_apart_from_skips() -> None:
+def test_progress_counts_xfail_apart_from_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from m3.pytest_plugin import _Progress
+
+    monkeypatch.setenv("TERM", "xterm-256color")
 
     reporter = SimpleNamespace(
         isatty=True,
@@ -830,8 +838,12 @@ def test_progress_counts_xfail_apart_from_skips() -> None:
     assert progress.xfailed == 1
 
 
-def test_progress_counts_setup_phase_xfail_as_xfailed() -> None:
+def test_progress_counts_setup_phase_xfail_as_xfailed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from m3.pytest_plugin import _Progress
+
+    monkeypatch.setenv("TERM", "xterm-256color")
 
     reporter = SimpleNamespace(
         isatty=True,
@@ -856,8 +868,12 @@ def test_progress_counts_setup_phase_xfail_as_xfailed() -> None:
     assert progress.xfailed == 1
 
 
-def test_progress_moves_teardown_xfail_from_passed_to_xfailed_once() -> None:
+def test_progress_moves_teardown_xfail_from_passed_to_xfailed_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from m3.pytest_plugin import _Progress
+
+    monkeypatch.setenv("TERM", "xterm-256color")
 
     reporter = SimpleNamespace(
         isatty=True,
