@@ -337,7 +337,10 @@ class _CompatConnection:
 
     @property
     def in_transaction(self) -> bool:
-        return bool(self._connection.in_transaction())
+        # SQLAlchemy autobegins even when SQLite rejects BEGIN IMMEDIATE.
+        # Literal ROLLBACK must follow the actual SQLite transaction state.
+        connection = self._dbapi_connection()
+        return connection is not None and bool(connection.in_transaction)
 
     def mark_settings_dirty(self) -> None:
         """Flag the pooled connection so its settings are restored on return."""

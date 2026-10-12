@@ -5,9 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .configuration import Config
 
 StoreFactory = Callable[[], Any]
+ConfiguredStoreFactory = Callable[["Config"], Any]
 
 
 @dataclass(frozen=True)
@@ -15,37 +19,48 @@ class StoreFactoryToken:
     identifier: int
     previous_factory: StoreFactory | None
     previous_token: StoreFactoryToken | None = None
+    previous_configured_factory: ConfiguredStoreFactory | None = None
 
 
 _lock = RLock()
 _counter = 0
 _factory: StoreFactory | None = None
+_configured_factory: ConfiguredStoreFactory | None = None
 _token: StoreFactoryToken | None = None
 _run_id_factory: Callable[[], Any] | None = None
 _judge_limit_factory: Callable[[], int | None] | None = None
 
 
-def install_default_store_factory(factory: StoreFactory) -> StoreFactoryToken:
+def install_default_store_factory(
+    factory: StoreFactory, *, configured_factory: ConfiguredStoreFactory | None = None
+) -> StoreFactoryToken:
     if not callable(factory):
         raise TypeError("store factory must be callable")
-    global _counter, _factory, _token
+    if configured_factory is not None and not callable(configured_factory):
+        raise TypeError("configured store factory must be callable")
+    global _counter, _factory, _configured_factory, _token
     with _lock:
         _counter += 1
-        token = StoreFactoryToken(_counter, _factory, _token)
-        _factory, _token = factory, token
+        token = StoreFactoryToken(_counter, _factory, _token, _configured_factory)
+        _factory, _configured_factory, _token = factory, configured_factory, token
         return token
 
 
 def restore_default_store_factory(token: StoreFactoryToken) -> None:
-    global _factory, _token
+    global _factory, _configured_factory, _token
     with _lock:
         if _token == token:
-            _factory, _token = token.previous_factory, token.previous_token
+            _factory = token.previous_factory
+            _configured_factory = token.previous_configured_factory
+            _token = token.previous_token
 
 
-def make_default_store() -> Any | None:
+def make_default_store(configuration: Config | None = None) -> Any | None:
     with _lock:
         factory = _factory
+        configured_factory = _configured_factory
+    if configuration is not None and configured_factory is not None:
+        return configured_factory(configuration)
     return factory() if factory is not None else None
 
 

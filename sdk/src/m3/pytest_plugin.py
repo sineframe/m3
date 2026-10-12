@@ -306,8 +306,14 @@ def _configure(config: _Any) -> None:
     raw = config.getoption("--results-db")
     if not raw:
         return
+    from ._configuration_context import current_configuration
+    from ._results_settings import sqlite_busy_timeout_ms
     from .storage import SQLiteExecutionStore
 
+    context = current_configuration()
+    if context is None:
+        raise RuntimeError("pytest invocation configuration is unavailable")
+    busy_timeout_ms = sqlite_busy_timeout_ms(context.config.results)
     path = str(_Path(raw).expanduser().resolve())
     from .types import RunId
 
@@ -369,7 +375,9 @@ def _configure(config: _Any) -> None:
             ) from exc
 
     with _timing.span("configure.store_open"):
-        config._m3_manifest_store = SQLiteExecutionStore(path)
+        config._m3_manifest_store = SQLiteExecutionStore(
+            path, busy_timeout_ms=busy_timeout_ms
+        )
         if config._m3_project_id is not None:
             config._m3_manifest_store.ensure_project(
                 config._m3_project_id.root, config._m3_project_name
@@ -383,7 +391,16 @@ def _configure(config: _Any) -> None:
         lambda: config._m3_judge_max_requests
     )
     config._m3_store_token = _install_default_store_factory(
-        lambda: SQLiteExecutionStore(path, execution_queue=f"pytest-{_uuid4().hex}")
+        lambda: SQLiteExecutionStore(
+            path,
+            execution_queue=f"pytest-{_uuid4().hex}",
+            busy_timeout_ms=busy_timeout_ms,
+        ),
+        configured_factory=lambda effective: SQLiteExecutionStore(
+            path,
+            execution_queue=f"pytest-{_uuid4().hex}",
+            busy_timeout_ms=sqlite_busy_timeout_ms(effective.results),
+        ),
     )
     config._m3_progress = _Progress(config)
     config._m3_progress.reporter = config.pluginmanager.getplugin("terminalreporter")
@@ -1765,7 +1782,9 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         from .feedback import build_feedback, export_feedback, load_run_entries
         from .storage import SQLiteExecutionStore
 
-        export_store = SQLiteExecutionStore(path)
+        export_store = SQLiteExecutionStore(
+            path, busy_timeout_ms=config._m3_manifest_store.busy_timeout_ms
+        )
         try:
             with _timing.span("finish.timeout_scan"):
                 timed_out_snapshots = []
