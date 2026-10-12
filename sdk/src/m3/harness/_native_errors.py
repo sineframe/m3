@@ -42,11 +42,9 @@ def launch_error_redaction(
 ) -> RedactionConfig:
     """Pin known child inputs without rereading the ambient environment.
 
-    Every explicit env/header literal may be a credential regardless of its
-    key. The launch resolver supplies resolved references/login values. This
-    seam must receive the authoritative launch-bundle registry when that
-    resolver is introduced; it cannot discover credentials a native harness
-    loads independently from files or plugins.
+    Every explicit env/header literal is registered regardless of its key.
+    The caller supplies resolved references and login values. Credentials a
+    native harness independently loads from files or plugins are absent.
     """
 
     values = set(resolved_secrets)
