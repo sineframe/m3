@@ -837,7 +837,7 @@ class AsyncAgentSession:
         # it must complete (or be cancelled) before server startup, probes, or
         # provider open can produce side effects.
         await self._prepare_managed_runtime()
-        from ._native_settings import requested_native_settings
+        from ._native_settings import native_literal_inputs, requested_native_settings
 
         configuration_reader = getattr(self._server_manager, "configurations", None)
         native_configurations = (
@@ -972,6 +972,7 @@ class AsyncAgentSession:
                     _literal_registry=self._literal_registry,
                     _credential_deadline=self._credential_deadline,
                     _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
                 )
                 launch = await self._preflight_launch(launch)
                 if callable(credential_activation):
@@ -993,6 +994,7 @@ class AsyncAgentSession:
                         _literal_registry=self._literal_registry,
                         _credential_deadline=self._credential_deadline,
                         _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -1019,6 +1021,7 @@ class AsyncAgentSession:
                     _literal_registry=self._literal_registry,
                     _credential_deadline=self._credential_deadline,
                     _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
                 )
                 launch = await self._preflight_launch(launch)
                 result = opener(launch)
@@ -1038,6 +1041,7 @@ class AsyncAgentSession:
                         _literal_registry=self._literal_registry,
                         _credential_deadline=self._credential_deadline,
                         _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():

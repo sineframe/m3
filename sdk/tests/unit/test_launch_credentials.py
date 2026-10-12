@@ -605,3 +605,77 @@ async def test_eager_capture_is_adopted_without_resolving_its_refs_again(
     finally:
         await adapter.close()
         await capture.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_registry_and_native_permission_inputs_reach_session_launch(
+    tmp_path: Path,
+) -> None:
+    from m3._configuration_context import (
+        ConfigurationContext,
+        install_configuration,
+        restore_configuration,
+    )
+    from m3._types.specs import AgentSpec
+    from m3.async_api import AsyncMCPTestKit
+    from m3.configuration import Config
+    from m3.errors import UnsupportedFeature
+    from m3.harness.codex import CodexHarnessAdapter
+    from m3.harness.contracts import HarnessLaunch
+    from m3.types import (
+        Codex,
+        CodexPermissionProfile,
+        CodexPermissions,
+        NativeFilesystemPermissions,
+        Readiness,
+        ServerBinding,
+        StdioServer,
+    )
+
+    registry = RunLiteralStore("worker")
+    handle = registry.freeze("worker-frozen-value")
+    profile = CodexPermissionProfile(
+        name="private-profile",
+        filesystem=NativeFilesystemPermissions(rules={"/private-path": "read"}),
+    )
+    spec = AgentSpec(
+        harness=Codex(model="fixture", permissions=CodexPermissions(profile=profile)),
+        servers=(ServerBinding(server=StdioServer(name="source", command="fixture")),),
+    )
+    launches: list[tuple[bool, frozenset[str]]] = []
+
+    class InspectLaunch(CodexHarnessAdapter):
+        async def validate_native_settings(
+            self, *args: object, **kwargs: object
+        ) -> None:
+            pass
+
+        async def preflight(self, launch: HarnessLaunch) -> Readiness:
+            return Readiness(ready=True)
+
+        async def open(self, launch: HarnessLaunch) -> object:
+            bundle = launch._credentials
+            assert bundle is not None
+            launches.append(
+                (launch._literal_registry is registry, bundle.redaction().secrets)
+            )
+            raise UnsupportedFeature("inspection complete")
+
+    token = install_configuration(ConfigurationContext(Config(), registry))
+    try:
+        for _ in range(2):
+            async with AsyncMCPTestKit(env={}, cwd=tmp_path) as kit:
+                session = kit.agent_session(
+                    spec, adapter=InspectLaunch(executable="fixture")
+                )
+                with pytest.raises(UnsupportedFeature, match="inspection complete"):
+                    async with session:
+                        pass
+            assert registry.resolve(handle) == "worker-frozen-value"
+        assert len(launches) == 2
+        for same_registry, secrets in launches:
+            assert same_registry
+            assert {"private-profile", "/private-path"} <= secrets
+    finally:
+        restore_configuration(token)
+        registry.close()

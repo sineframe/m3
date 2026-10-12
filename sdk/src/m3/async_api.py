@@ -1663,6 +1663,7 @@ class AsyncMCPTestKit:
             runtime_project_root=self._runtime_project_root,
             managed_input_runtime=_managed_input_runtime,
             preparation_supervisor=self._preparation_supervisor,
+            _literal_registry=self._literal_registry,
         )
         if self._record_checks:
             _bind_execution(
