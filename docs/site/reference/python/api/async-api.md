@@ -31,9 +31,6 @@ m3.async_api.AsyncAgentSession(
     runtime_project_root: str | Path | None = None,
     managed_input_runtime: ManagedInputRuntime | None = None,
     preparation_supervisor: PreparationSupervisor | None = None,
-    _literal_registry: RunLiteralStore | None = None,
-    _credential_deadline: float | None = None,
-    _native_auth_operations: NativeAuthOperations | None = None,
 ) -> None
 ```
 
