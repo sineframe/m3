@@ -55,11 +55,12 @@ from .contracts import (
 )
 from .native import (
     MAX_FRAME_BYTES,
+    LaunchSecrets,
     NativeSessionBase,
     ProcessOwner,
     _executable,
     _isolated_environment,
-    configuration_secrets,
+    launch_secrets,
     read_bounded_line,
     workspace_for_launch,
 )
@@ -260,9 +261,9 @@ class NativeRPCAdapter:
         self._process_observed = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
         self._startup_evidence: TurnEvidence | None = None
-        # Credentials written into the launch's MCP configurations; the child
-        # can echo them (an endpoint URL with its query) on stderr.
-        self._configuration_secrets: set[str] = set()
+        # Credentials the launch handed to the child (resolved and literal MCP
+        # configuration values); the child can echo them on stderr.
+        self._launch_secrets = LaunchSecrets()
 
     @property
     def name(self) -> str:
@@ -351,7 +352,7 @@ class NativeRPCAdapter:
         # Evidence belongs to this open attempt only; never hand over an
         # earlier failure's stderr for a later, unrelated startup failure.
         self._startup_evidence = None
-        self._configuration_secrets = configuration_secrets(launch.configurations)
+        self._launch_secrets = launch_secrets(launch)
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
@@ -404,7 +405,8 @@ class NativeRPCAdapter:
             text = redact_native_text(
                 task.result().decode("utf-8", errors="replace"),
                 native_text_redaction(
-                    self._runtime_secrets | self._configuration_secrets
+                    self._runtime_secrets | self._launch_secrets.known,
+                    guessed=self._launch_secrets.guessed,
                 ),
             )
         except Exception:
@@ -757,5 +759,5 @@ class NativeRPCAdapter:
         self._session = None
         self._process = None
         self._runtime_secrets.clear()
-        self._configuration_secrets.clear()
+        self._launch_secrets = LaunchSecrets()
         self._process_observed = False

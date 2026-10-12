@@ -29,41 +29,55 @@ from m3.trace.redaction import (
 )
 
 
-def test_native_text_redacts_credentials_inside_embedded_urls() -> None:
-    config = native_text_redaction({"plain-query-secret"})
+def test_native_text_reduces_embedded_urls_to_their_origin() -> None:
+    # Paths (Zapier-style keys), queries, percent-encoded values and userinfo
+    # can all carry credentials that M3 never resolved itself.
     text = (
         "remote: error sending request for url "
-        "(http://127.0.0.1:5555/mcp?api_key=SECRET-QUERY-KEY&k=plain-query-secret), "
-        "and https://user:pass-word@example.com/x failed"
+        "(http://127.0.0.1:5555/api/mcp/s/ZapPathSecret/mcp?zap=s%C3%A9cret), "
+        "then https://user:pass-word@example.com, and https://example.com/."
     )
+    assert redact_native_text(text, native_text_redaction()) == (
+        "remote: error sending request for url (http://127.0.0.1:5555/…), "
+        "then https://example.com/…, and https://example.com."
+    )
+
+
+def test_native_text_keeps_urls_visible_when_a_known_value_matches_the_scheme() -> None:
+    config = native_text_redaction({"https"})
+    text = "failed: https://example.com/mcp?access_token=UNKNOWN-TOKEN"
     redacted = redact_native_text(text, config)
-    for secret in ("SECRET-QUERY-KEY", "plain-query-secret", "pass-word"):
-        assert secret not in redacted
-    assert redacted.startswith(
-        "remote: error sending request for url (http://127.0.0.1:5555/mcp?"
-    )
-    assert redacted.endswith("failed")
+    assert "UNKNOWN-TOKEN" not in redacted
+    assert redacted == f"failed: {REDACTED}://example.com/…"
 
 
 def test_native_text_matches_secrets_with_whitespace_before_normalizing() -> None:
     pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----"
-    config = native_text_redaction({pem, "Bearer  XYZ-double"}, explicit={"tok-abc\n"})
+    config = native_text_redaction({pem, "Bearer  XYZ-double", "tok-abc\n"})
     text = f"bad key {pem}; header Bearer  XYZ-double; token tok-abc rejected"
     assert redact_native_text(text, config) == (
         f"bad key {REDACTED}; header {REDACTED}; token {REDACTED} rejected"
     )
 
 
-def test_native_text_skips_values_that_cannot_be_credentials(
+def test_native_text_redacts_known_values_always_and_guessed_values_plausibly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TOKEN_LIMIT", "1")
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTH_TOKEN", "ambient-auth-secret")
-    config = native_text_redaction({"no", "42"}, explicit={"7"})
-    text = "expected id 1, carried 0; auth true; no 42; pin 7; ambient-auth-secret"
+    # Known credentials are redacted however short or numeric; guessed ones
+    # (and the ambient environment) only when they could be credentials.
+    config = native_text_redaction(
+        {"4821", "20240117"}, guessed={"stream", "12345678", "ghp_guessed_pat"}
+    )
+    text = (
+        "expected id 1; auth true; stream closed; pin 4821 on 20240117; "
+        "seq 12345678; ghp_guessed_pat; ambient-auth-secret"
+    )
     assert redact_native_text(text, config) == (
-        f"expected id 1, carried 0; auth true; no 42; pin {REDACTED}; {REDACTED}"
+        f"expected id 1; auth true; stream closed; pin {REDACTED} on {REDACTED}; "
+        f"seq 12345678; {REDACTED}; {REDACTED}"
     )
 
 

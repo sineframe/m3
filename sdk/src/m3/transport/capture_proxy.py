@@ -563,6 +563,9 @@ class McpCaptureManager:
         self._observer_writers: set[asyncio.StreamWriter] = set()
         self._closing_observer = False
         self._observation_start_failures: dict[str, str] = {}
+        # Credentials resolved while instrumenting (``${VAR}`` values in URLs,
+        # headers and environments); harness adapters redact their text too.
+        self._resolved_secrets: set[str] = set()
 
     def _target(self, connection_id: str, transport: str) -> _CaptureTarget:
         target = self._targets.get(connection_id)
@@ -950,6 +953,7 @@ class McpCaptureManager:
                 )
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
+                    self._resolved_secrets.update(resolved_secrets)
                 args: tuple[str, ...] = (
                     "-m",
                     "m3.transport.stdio_proxy",
@@ -1033,6 +1037,7 @@ class McpCaptureManager:
                 )
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
+                    self._resolved_secrets.update(resolved_secrets)
 
                 def proxy_observation_failed(
                     reason: str, connection_id: str = key
@@ -1077,6 +1082,11 @@ class McpCaptureManager:
                 self._instrumented[key] = configuration
             output.append(self._instrumented[key])
         return tuple(output)
+
+    def resolved_secrets(self) -> frozenset[str]:
+        """Return the credentials resolved for the instrumented servers."""
+
+        return frozenset(self._resolved_secrets)
 
     def writer_for(self, connection_id: str, transport: str = "stdio") -> CaptureWriter:
         """Return the redacting writer for a configured connection."""

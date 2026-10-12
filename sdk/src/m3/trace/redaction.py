@@ -75,10 +75,15 @@ _URL_PREFIX: Final[tuple[str, ...]] = ("http://", "https://")
 _URL_IN_TEXT: Final[re.Pattern[str]] = re.compile(
     r"https?://[^\s\"'<>(){}]+", re.IGNORECASE
 )
+# Sentence punctuation that ends a URL quoted in prose.
+_URL_TRAILING_PUNCTUATION: Final[str] = ".,;:!?"
 # Values a sensitive-looking name can hold without being a credential.
 _NON_SECRET_WORDS: Final[frozenset[str]] = frozenset(
     {"true", "false", "yes", "no", "on", "off", "null", "none"}
 )
+# Guessed values shorter than this are too likely to be ordinary words or
+# numbers (``TOKEN_LIMIT=1``, ``MODE=stream``) to replace everywhere.
+_GUESSED_SECRET_MIN_LENGTH: Final[int] = 8
 _MAX_NESTING_DEPTH: Final[int] = 64
 _SAFE_PATH_COMPONENTS: Final[frozenset[str]] = frozenset(
     {
@@ -730,54 +735,80 @@ def redact_for_api(
 def _plausible_secret(value: str) -> bool:
     stripped = value.strip()
     return (
-        len(stripped) >= 4
+        len(stripped) >= _GUESSED_SECRET_MIN_LENGTH
         and not stripped.isdigit()
         and stripped.lower() not in _NON_SECRET_WORDS
     )
 
 
 def native_text_redaction(
-    secrets: Iterable[str] = (), *, explicit: Iterable[str] = ()
+    known: Iterable[str] = (), *, guessed: Iterable[str] = ()
 ) -> RedactionConfig:
     """Build redaction for harness-authored free text (errors, stderr).
 
-    ``secrets`` and the ambient environment are found by sensitive-looking
-    names, so values that cannot be credentials (short, numeric or boolean,
-    such as ``TOKEN_LIMIT=1``) are skipped: replacing them everywhere would
-    garble the text being kept. ``explicit`` values are known credentials and
-    are always redacted. Each value also matches without surrounding
-    whitespace, because harnesses echo trimmed values.
+    ``known`` values are credentials M3 resolved or was given as such; they
+    are always redacted, however short or numeric. ``guessed`` values, and the
+    ambient environment, are only suspected from their names or position, so
+    values that are unlikely to be credentials (short, numeric or boolean)
+    are skipped: replacing them everywhere would garble the text being kept.
+    Each value also matches without surrounding whitespace, because harnesses
+    echo trimmed values.
     """
 
     values: set[str] = set()
-    for value in (*secrets, *known_secret_values()):
+    for value in known:
+        if isinstance(value, str):
+            values.update(item for item in (value, value.strip()) if item)
+    for value in (*guessed, *known_secret_values()):
         if isinstance(value, str):
             values.update(
                 item for item in (value, value.strip()) if _plausible_secret(item)
             )
-    for value in explicit:
-        if isinstance(value, str):
-            values.update(item for item in (value, value.strip()) if item)
     return RedactionConfig(secrets=frozenset(values), include_environment=False)
 
 
-def redact_native_text(text: str, config: RedactionConfig) -> str:
-    """Redact free text, including credentials in URLs embedded in it.
+def _url_origin(url: str) -> str:
+    """Keep a URL's scheme, host and port; mark anything after them.
 
-    Known values are replaced first, as they appear (a URL parser would
-    re-encode them); then each embedded URL loses its userinfo and its
-    sensitive query values. A URL that cannot be parsed is replaced whole.
-    Whitespace is preserved: callers normalize only afterwards, otherwise a
-    secret containing a newline or a double space would no longer match.
+    Paths, queries, fragments and userinfo can all carry credentials (a
+    Zapier-style ``/s/<key>/mcp`` path, an ``?api_key=`` query), and the
+    harness may print them percent-encoded, so none of them is kept.
     """
 
-    def redact_url(match: re.Match[str]) -> str:
-        try:
-            return _redact_url(match.group(0), config, "$", [])
-        except RedactionError:
-            return REDACTED
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return REDACTED
+    if not host:
+        return REDACTED
+    netloc = f"[{host}]" if ":" in host else host
+    if port is not None:
+        netloc += f":{port}"
+    elided = (
+        parts.path not in ("", "/")
+        or bool(parts.query or parts.fragment)
+        or "@" in parts.netloc
+    )
+    return f"{parts.scheme}://{netloc}" + ("/…" if elided else "")
 
-    return _URL_IN_TEXT.sub(redact_url, _replace_secrets(text, config, "$", []))
+
+def redact_native_text(text: str, config: RedactionConfig) -> str:
+    """Redact free text, reducing every embedded URL to its origin.
+
+    URLs are reduced first, so a known value replaced afterwards cannot hide
+    a URL (for example a value equal to ``https``). Then every known value is
+    replaced as it appears. Whitespace is preserved: callers normalize only
+    afterwards, otherwise a secret containing a newline or a double space
+    would no longer match.
+    """
+
+    def reduce(match: re.Match[str]) -> str:
+        url = match.group(0)
+        trimmed = url.rstrip(_URL_TRAILING_PUNCTUATION)
+        return _url_origin(trimmed) + url[len(trimmed) :]
+
+    return _replace_secrets(_URL_IN_TEXT.sub(reduce, text), config, "$", [])
 
 
 def redact_for_ui(

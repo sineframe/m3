@@ -16,10 +16,11 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from urllib.parse import unquote_plus, urlsplit
+from typing import Any
+from urllib.parse import urlsplit
 
 from .. import _timing
 from ..errors import CleanupError
@@ -32,9 +33,6 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnResult,
 )
-
-if TYPE_CHECKING:
-    from ..server_group import HarnessServerConfig
 
 MAX_FRAME_BYTES = 1024 * 1024
 MAX_STDERR_BYTES = 256 * 1024
@@ -367,33 +365,47 @@ def _exception_kind(error: BaseException) -> str:
     return kind if symbol is None else f"{kind} ({symbol})"
 
 
-def configuration_secrets(configurations: Iterable[HarnessServerConfig]) -> set[str]:
-    """Return credentials written literally into MCP server configurations.
+@dataclass(frozen=True, slots=True)
+class LaunchSecrets:
+    """Credentials a launch handed to its harness, for redacting its text.
 
-    These are sensitive-named environment and header values, and the
-    endpoint's userinfo and query values: the capture proxy copies the
-    upstream query into the URL a harness receives, so a harness can echo it
-    in an error. Query values are kept both as written and decoded.
+    ``known`` values are credentials and are always redacted; ``guessed``
+    values only might be (see ``native_text_redaction``).
     """
 
-    values: set[str] = set()
-    for configuration in configurations:
+    known: frozenset[str] = frozenset()
+    guessed: frozenset[str] = frozenset()
+
+
+def launch_secrets(launch: HarnessLaunch) -> LaunchSecrets:
+    """Collect what a harness can echo back from its MCP configurations.
+
+    Known: values the capture manager resolved (``${VAR}`` in endpoint URLs,
+    headers and environments), literal env/header values under sensitive
+    names, and endpoint passwords. Guessed: every other literal env/header
+    value, because names such as ``GITHUB_PAT`` or ``DB_PASS`` escape the
+    sensitive-name pattern. Endpoint paths and queries are not collected:
+    ``redact_native_text`` reduces embedded URLs to their origin instead.
+    """
+
+    known: set[str] = set()
+    guessed: set[str] = set()
+    resolved = getattr(launch.capture, "resolved_secrets", None)
+    if callable(resolved):
+        known.update(value for value in resolved() if isinstance(value, str))
+    for configuration in launch.configurations:
         for mapping in (configuration.environment, configuration.headers):
             for key, value in mapping.items():
-                if isinstance(value, str) and value and is_sensitive_key(key):
-                    values.add(value)
-        if not configuration.endpoint:
-            continue
-        try:
-            parts = urlsplit(configuration.endpoint)
-            userinfo = (parts.username, parts.password)
-        except ValueError:
-            continue
-        values.update(item for item in userinfo if item)
-        for pair in parts.query.split("&"):
-            value = pair.partition("=")[2]
-            values.update(item for item in (value, unquote_plus(value)) if item)
-    return values
+                if isinstance(value, str) and value:
+                    (known if is_sensitive_key(key) else guessed).add(value)
+        if configuration.endpoint:
+            try:
+                password = urlsplit(configuration.endpoint).password
+            except ValueError:
+                password = None
+            if password:
+                known.add(password)
+    return LaunchSecrets(frozenset(known), frozenset(guessed))
 
 
 class ProcessOwner:
@@ -669,6 +681,7 @@ __all__ = [
     "MAX_FRAME_BYTES",
     "MAX_QUEUE_ITEMS",
     "MAX_STDERR_BYTES",
+    "LaunchSecrets",
     "NativeSessionBase",
     "ProcessOwner",
     "_executable",
@@ -677,9 +690,9 @@ __all__ = [
     "_resolved_config_values",
     "_server_configuration",
     "_text",
-    "configuration_secrets",
     "discard_bounded",
     "drain_bounded",
+    "launch_secrets",
     "probe_help",
     "read_bounded_line",
     "result_from_output",

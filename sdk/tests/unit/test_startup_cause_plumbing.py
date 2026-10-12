@@ -23,6 +23,7 @@ from m3.harness._rpc_native import NativeRPCAdapter
 from m3.harness.contracts import HarnessLaunch, HarnessStartupError
 from m3.harness.native import ProcessOwner
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
+from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
     ACPAgent,
     ErrorCode,
@@ -184,38 +185,52 @@ async def test_unclaimed_startup_evidence_is_not_reused_by_a_later_open() -> Non
 
 
 @pytest.mark.asyncio
-async def test_startup_stderr_evidence_redacts_configured_endpoint_credentials() -> (
-    None
-):
-    # The capture proxy copies the upstream query into the URL the harness
-    # receives; a non-sensitive name still carries a resolved credential.
-    endpoint = (
-        "http://127.0.0.1:5555/mcp?k=resolved-query-secret&api_key=SECRET-QUERY-KEY"
-    )
-    adapter = _FailingHandshake(
-        "import sys; sys.stderr.write("
-        f"'error sending request for url ({endpoint})\\n'); sys.exit(3)"
-    )
-    spec = _spec()
-    configuration = HarnessServerConfig(
-        key="remote",
-        transport=TransportKind.STREAMABLE_HTTP,
-        required=True,
-        available=True,
-        connection_id="remote-connection",
-        endpoint=endpoint,
-    )
-    launch = HarnessLaunch(
-        spec, ServerGroupSnapshot(), (configuration,), spec.tool_policy
-    )
-    with pytest.raises(HarnessStartupError):
-        await adapter.open(launch)
+async def test_startup_stderr_evidence_redacts_resolved_and_url_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Zapier-style URL: the key is a path segment under a non-sensitive name.
+    # The capture proxy resolves it and copies the path into the URL the
+    # harness receives, which the harness quotes and may repeat on its own.
+    monkeypatch.setenv("ZAPIER_MCP_KEY_TEST", "84736251")
+    manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote"})
+    try:
+        (instrumented,) = await manager.instrument(
+            (
+                HarnessServerConfig(
+                    key="remote",
+                    transport=TransportKind.STREAMABLE_HTTP,
+                    required=True,
+                    available=True,
+                    connection_id="remote",
+                    endpoint="http://127.0.0.1:1/api/mcp/s/${ZAPIER_MCP_KEY_TEST}/mcp",
+                ),
+            )
+        )
+        assert "84736251" in instrumented.endpoint
+        adapter = _FailingHandshake(
+            "import sys; sys.stderr.write("
+            f"'error sending request for url ({instrumented.endpoint}); "
+            "key 84736251 rejected\\n'); sys.exit(3)"
+        )
+        spec = _spec()
+        launch = HarnessLaunch(
+            spec,
+            ServerGroupSnapshot(),
+            (instrumented,),
+            spec.tool_policy,
+            capture=manager,
+        )
+        with pytest.raises(HarnessStartupError):
+            await adapter.open(launch)
+    finally:
+        await manager.close()
     evidence = adapter.take_startup_evidence()
     assert evidence is not None
     stderr = evidence.observations[0].stderr
-    assert stderr is not None and "error sending request for url" in stderr
-    assert "resolved-query-secret" not in stderr
-    assert "SECRET-QUERY-KEY" not in stderr
+    assert stderr is not None
+    assert "84736251" not in stderr
+    assert "error sending request for url (http://127.0.0.1:" in stderr
+    assert "key [REDACTED] rejected" in stderr
 
 
 @pytest.mark.asyncio
