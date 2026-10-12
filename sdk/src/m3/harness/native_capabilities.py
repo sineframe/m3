@@ -182,7 +182,12 @@ def _environment(root: Path) -> dict[str, str]:
 
 
 async def _query(
-    executable: Path, args: tuple[str, ...], root: Path, *, owned_group: bool = False
+    executable: Path,
+    args: tuple[str, ...],
+    root: Path,
+    *,
+    owned_group: bool = False,
+    include_stderr: bool = False,
 ) -> str:
     if owned_group:
         # Only an owned preparation child selects this path. Query descendants
@@ -197,11 +202,13 @@ async def _query(
             stderr=asyncio.subprocess.PIPE,
         )
         assert process.stdout is not None and process.stderr is not None
-        output, _errors = await asyncio.gather(
+        output, errors = await asyncio.gather(
             drain_bounded(process.stdout, maximum=_MAXIMUM_BYTES + 1),
             drain_bounded(process.stderr, maximum=_MAXIMUM_BYTES + 1),
         )
         await process.wait()
+        if include_stderr and errors:
+            output += b"\n" + errors
         if process.returncode != 0 or len(output) > _MAXIMUM_BYTES:
             raise UnsupportedFeature("native capability query failed")
         return output.decode("utf-8")

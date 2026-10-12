@@ -37,7 +37,11 @@ def probe_native(root: Path, request: dict[str, Any]) -> str:
 
     path = _executable_path(request["executable"])
     opened = path.stat()
-    output = asyncio.run(_query(path, tuple(request["args"]), root, owned_group=True))
+    output = asyncio.run(
+        _query(
+            path, tuple(request["args"]), root, owned_group=True, include_stderr=True
+        )
+    )
     raw = json.dumps(
         {
             "output": output,
