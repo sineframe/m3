@@ -6,26 +6,226 @@ isolated Python import settings. The slot descriptor never enters vendor code.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
 import resource
+import runpy
 import selectors
 import signal
 import socket
+import stat
 import struct
-import subprocess
 import sys
 import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast
 
 _MAX_FRAME = 1024 * 1024
 
 
-def _read_exact(channel: socket.socket, size: int, deadline: float) -> bytes:
+def _lock(descriptor: int) -> bool:
+    import fcntl
+
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _open(path: Path) -> int:
+    descriptor = os.open(
+        path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+    )
+    status = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_uid != os.getuid()
+        or stat.S_IMODE(status.st_mode) != 0o600
+        or status.st_nlink != 1
+    ):
+        os.close(descriptor)
+        raise ValueError("startup admission storage is not private")
+    return descriptor
+
+
+def _directory(path: Path) -> None:
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    status = path.lstat()
+    if (
+        not stat.S_ISDIR(status.st_mode)
+        or status.st_uid != os.getuid()
+        or stat.S_IMODE(status.st_mode) != 0o700
+    ):
+        raise ValueError("startup admission storage is not private")
+
+
+class _KernelQueue:
+    @staticmethod
+    def acquire(
+        root: Path,
+        slots_limit: int,
+        threshold: float | None,
+        deadline: float,
+        channel: socket.socket,
+    ) -> int:
+        selector = selectors.DefaultSelector()
+        selector.register(channel, selectors.EVENT_READ)
+
+        def checkpoint() -> None:
+            if time.monotonic() >= deadline:
+                raise TimeoutError
+            if selector.select(0):
+                raise EOFError
+
+        checkpoint()
+        _directory(root)
+        checkpoint()
+        tickets, slots = root / "queue", root / "slots"
+        _directory(tickets)
+        checkpoint()
+        _directory(slots)
+        checkpoint()
+        guard = _open(root / "guard")
+        ticket = -1
+        ticket_path: Path | None = None
+        try:
+            while True:
+                checkpoint()
+                if _lock(guard):
+                    try:
+                        checkpoint()
+                        if ticket_path is None:
+                            ticket_path, ticket = _KernelQueue._enqueue(guard, tickets)
+                        checkpoint()
+                        first = _KernelQueue._first_waiter(tickets)
+                        checkpoint()
+                        if first == ticket_path and _KernelQueue._load_ready(threshold):
+                            descriptor = _KernelQueue._claim_slot(slots, slots_limit)
+                            if descriptor is not None:
+                                try:
+                                    checkpoint()
+                                    ticket_path.unlink()
+                                    return descriptor
+                                except BaseException:
+                                    os.close(descriptor)
+                                    raise
+                    finally:
+                        fcntl.flock(guard, fcntl.LOCK_UN)
+                selector.select(min(0.025, max(0, deadline - time.monotonic())))
+        finally:
+            if ticket >= 0:
+                os.close(ticket)
+            os.close(guard)
+            selector.close()
+
+    @staticmethod
+    def _enqueue(guard: int, tickets: Path) -> tuple[Path, int]:
+        os.lseek(guard, 0, os.SEEK_SET)
+        value = os.read(guard, 32)
+        try:
+            sequence = int(value or b"0") + 1
+        except ValueError:
+            raise ValueError("startup admission sequence is invalid") from None
+        if not 0 < sequence < 10**20:
+            raise ValueError("startup admission sequence is exhausted")
+        os.lseek(guard, 0, os.SEEK_SET)
+        os.write(guard, str(sequence).encode("ascii"))
+        os.ftruncate(guard, len(str(sequence)))
+        path = tickets / f"{sequence:020d}"
+        descriptor = _open(path)
+        if not _lock(descriptor):
+            os.close(descriptor)
+            raise ValueError("startup admission sequence collided")
+        return path, descriptor
+
+    @staticmethod
+    def _first_waiter(tickets: Path) -> Path | None:
+        for path in sorted(tickets.iterdir()):
+            if (
+                len(path.name) != 20
+                or not path.name.isascii()
+                or not path.name.isdigit()
+            ):
+                raise ValueError("startup admission queue is invalid")
+            descriptor = _open(path)
+            try:
+                if not _lock(descriptor):
+                    return path
+                path.unlink()
+            finally:
+                os.close(descriptor)
+        return None
+
+    @staticmethod
+    def _claim_slot(slots: Path, limit: int) -> int | None:
+        available: list[int] = []
+        occupied = 0
+        effective_limit = limit
+        try:
+            for path in slots.iterdir():
+                descriptor = _open(path)
+                if _lock(descriptor):
+                    available.append(descriptor)
+                else:
+                    occupied += 1
+                    try:
+                        recorded = os.read(descriptor, 4097)
+                        held_limit = int(recorded)
+                        if len(recorded) > 4096 or held_limit <= 0:
+                            raise ValueError
+                        effective_limit = min(effective_limit, held_limit)
+                    except ValueError:
+                        raise ValueError(
+                            "startup admission slot policy is invalid"
+                        ) from None
+                    finally:
+                        os.close(descriptor)
+            if occupied >= effective_limit:
+                return None
+            if available:
+                descriptor = available.pop()
+            else:
+                path = slots / f"{occupied:020d}"
+                descriptor = _open(path)
+                if not _lock(descriptor):
+                    os.close(descriptor)
+                    raise ValueError("startup admission slot collided")
+            encoded = str(limit).encode("ascii")
+            try:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                os.write(descriptor, encoded)
+                os.ftruncate(descriptor, len(encoded))
+            except BaseException:
+                os.close(descriptor)
+                raise
+            return descriptor
+        finally:
+            for descriptor in available:
+                os.close(descriptor)
+
+    @staticmethod
+    def _load_ready(threshold: object) -> bool:
+        if threshold is None:
+            return True
+        assert isinstance(threshold, float)
+        try:
+            return os.getloadavg()[0] / max(1, os.cpu_count() or 1) <= threshold
+        except OSError:
+            raise ValueError("normalized host load is unavailable") from None
+
+
+def _read_exact(channel: socket.socket, size: int, deadline: float | None) -> bytes:
     data = bytearray()
     while len(data) < size:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
             raise TimeoutError
         channel.settimeout(remaining)
         block = channel.recv(size - len(data))
@@ -38,13 +238,12 @@ def _read_exact(channel: socket.socket, size: int, deadline: float) -> bytes:
 def _receive(
     channel: socket.socket, startup_deadline: float | None = None
 ) -> dict[str, object]:
-    deadline = time.monotonic() + 15
-    if startup_deadline is not None:
-        deadline = min(deadline, startup_deadline)
-    size = struct.unpack("!I", _read_exact(channel, 4, deadline))[0]
+    # Before native custody the controller owns the bounded wait; EOF fences
+    # a delayed helper without imposing a second startup budget.
+    size = struct.unpack("!I", _read_exact(channel, 4, startup_deadline))[0]
     if size > _MAX_FRAME:
         raise ValueError
-    value = json.loads(_read_exact(channel, size, deadline))
+    value = json.loads(_read_exact(channel, size, startup_deadline))
     if not isinstance(value, dict):
         raise ValueError
     return value
@@ -55,28 +254,12 @@ def _send(channel: socket.socket, **value: object) -> None:
     channel.sendall(struct.pack("!I", len(data)) + data)
 
 
-def _members_alive(pid: int) -> bool:
-    """The unreaped leader reserves PID/PGID while descendants are checked."""
-    try:
-        completed = subprocess.run(
-            ["/bin/ps", "-axo", "pid=,pgid=,stat="],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=1,
-            check=False,
-        )
-        if completed.returncode:
-            return True
-        for line in completed.stdout.splitlines():
-            fields = line.split()
-            if len(fields) != 3:
-                return True
-            member, group, state = fields
-            if int(group) == pid and int(member) != pid and not state.startswith(b"Z"):
-                return True
-        return False
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return True
+# The isolated helper loads only this fixed, stdlib-only framework source.
+_custody = runpy.run_path(str(Path(__file__).parents[1] / "_process_group_custody.py"))
+_members_alive = cast(Callable[[int], bool], _custody["members_alive"])
+_group_snapshot = cast(Callable[[int], tuple[bool, bool]], _custody["group_snapshot"])
+_has_unreaped_status = cast(Callable[[], bool], _custody["has_unreaped_status"])
+_exited_status = cast(Callable[[int], int | None], _custody["exited_status"])
 
 
 def _signal(pid: int, sig: int) -> None:
@@ -87,10 +270,10 @@ def _signal(pid: int, sig: int) -> None:
 
 
 def _leader_exited(pid: int) -> bool:
-    waitid = getattr(os, "waitid", None)
-    if waitid is None:
-        raise RuntimeError("native ownership requires unreaped child status")
-    return waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    if _has_unreaped_status():
+        return _exited_status(pid) is not None
+    # The leader must be a zombie before an empty group proves no later fork.
+    return _group_snapshot(pid)[0]
 
 
 def _fork(
@@ -135,10 +318,56 @@ def _fork(
     return pid, gate_write
 
 
-def main(channel_fd: int, slot_fd: int) -> int:
+def main(channel_fd: int, slot_fd: int, death_fd: int) -> int:
     channel = socket.socket(fileno=channel_fd)
     channel.settimeout(15)
     request = _receive(channel)
+    if request.get("action") == "admit":
+        root, slots, threshold, queue_deadline = (
+            request.get("root"),
+            request.get("slots"),
+            request.get("threshold"),
+            request.get("deadline"),
+        )
+        if (
+            not isinstance(root, str)
+            or "\x00" in root
+            or not isinstance(slots, int)
+            or isinstance(slots, bool)
+            or slots <= 0
+            or not isinstance(queue_deadline, (float, int))
+            or isinstance(queue_deadline, bool)
+            or not math.isfinite(queue_deadline)
+            or (
+                threshold is not None
+                and (
+                    not isinstance(threshold, (int, float))
+                    or isinstance(threshold, bool)
+                    or not math.isfinite(threshold)
+                    or threshold <= 0
+                )
+            )
+        ):
+            raise ValueError
+        try:
+            slot_fd = _KernelQueue.acquire(
+                Path(root),
+                slots,
+                float(threshold) if threshold is not None else None,
+                float(queue_deadline),
+                channel,
+            )
+        except TimeoutError:
+            _send(channel, event="queue_timeout")
+            raise
+        _send(channel, event="admitted")
+        # Credential preparation follows admission. No native child exists
+        # here; controller EOF fences a queued or admitted helper immediately.
+        selector = selectors.DefaultSelector()
+        selector.register(channel, selectors.EVENT_READ)
+        selector.select()
+        selector.close()
+        request = _receive(channel)
     argv = request.get("argv")
     environment = request.get("environment")
     cwd = request.get("cwd")
@@ -241,6 +470,8 @@ def main(channel_fd: int, slot_fd: int) -> int:
                 reaped = True
                 break
             time.sleep(0.05)
+        os.write(death_fd, b"D")
+        os.close(death_fd)
         channel.close()
         if slot_fd >= 0:
             os.close(slot_fd)
@@ -248,7 +479,7 @@ def main(channel_fd: int, slot_fd: int) -> int:
 
 if __name__ == "__main__":
     try:
-        result = main(int(sys.argv[1]), int(sys.argv[2]))
+        result = main(int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]))
     except BaseException:
         result = 127
     os._exit(result if result >= 0 else 128 - result)

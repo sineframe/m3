@@ -33,6 +33,7 @@ from .contracts import (
 MAX_FRAME_BYTES = 1024 * 1024
 
 if TYPE_CHECKING:
+    from ._native_preparation import NativePreparation
     from .admission import StartupLease
     from .guardian import NativeGuardian
 
@@ -77,7 +78,7 @@ def _executable(value: str | None, default: str) -> str:
 
 
 def _isolated_environment(
-    root: Path, explicit: Mapping[str, str] | None
+    root: Path, explicit: Mapping[str, str] | None, *, prepared: bool = False
 ) -> dict[str, str]:
     """Build an isolated deterministic environment with explicit overrides."""
 
@@ -98,8 +99,9 @@ def _isolated_environment(
             if not isinstance(key, str) or not key or "\x00" in key or "\x00" in value:
                 raise ValueError("harness environment is invalid")
             environment[key] = value
-    for directory in ("home", "config", "data", "state", "cache"):
-        (root / directory).mkdir(mode=0o700, exist_ok=True)
+    if not prepared:
+        for directory in ("home", "config", "data", "state", "cache"):
+            (root / directory).mkdir(mode=0o700, exist_ok=True)
     return environment
 
 
@@ -401,6 +403,7 @@ class ProcessOwner:
         self.stderr_task: asyncio.Task[bytes] | None = None
         self.pgid: int | None = None
         self._guardian: NativeGuardian | None = None
+        self._owned_preparation: NativePreparation | None = None
         self._closed = False
 
     @_timing.timed("harness.spawn")
@@ -469,7 +472,7 @@ class ProcessOwner:
 
     def _attach_guardian(self, guardian: NativeGuardian) -> None:
         self._guardian = guardian
-        self.process = guardian.process
+        self.process = guardian.process_if_started
 
     async def startup_ready(self) -> None:
         if self._guardian is not None:
@@ -548,7 +551,10 @@ class ProcessOwner:
                     # after safe group cleanup refuses to signal it.
                     self.stderr_task.cancel()
                     await asyncio.gather(self.stderr_task, return_exceptions=True)
-            shutil.rmtree(self.root, ignore_errors=False)
+            if self._owned_preparation is not None:
+                await self._owned_preparation.close()
+            else:
+                shutil.rmtree(self.root, ignore_errors=False)
         except (OSError, asyncio.CancelledError):
             failure = True
         if failure:
@@ -663,6 +669,12 @@ def workspace_for_launch(launch: HarnessLaunch, control_root: Path) -> Path:
     candidate = (
         control_root if launch.workspace_root is None else Path(launch.workspace_root)
     )
+    from ._native_preparation import owned_native_preparation
+
+    if owned_native_preparation(launch):
+        # The owned preparation job validated the selected workspace; native
+        # cwd activation occurs in the gated child under the same deadline.
+        return candidate
     try:
         resolved = candidate.resolve(strict=True)
     except OSError:
@@ -710,3 +722,26 @@ __all__ = [
     "workspace_for_launch",
     "write_config",
 ]
+
+
+async def probe_help_for_launch(
+    launch: HarnessLaunch, executable: str, args: tuple[str, ...]
+) -> str | None:
+    from ._native_preparation import owned_native_preparation
+
+    if not owned_native_preparation(launch):
+        return await asyncio.to_thread(probe_help, executable, args)
+    from .._bootstrap_operations import PrivateOperationError
+    from .._startup_deadlines import earliest
+    from .native_capabilities import probe_native_owned
+
+    parent = (
+        launch._startup_clock.deadline if launch._startup_clock is not None else None
+    )
+    deadline = earliest(parent, time.monotonic() + 15.0)
+    assert deadline is not None
+    try:
+        result = await probe_native_owned(executable, args, deadline=deadline)
+        return result.output
+    except PrivateOperationError:
+        return None

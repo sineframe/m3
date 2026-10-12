@@ -44,9 +44,19 @@ class StartupBudget:
         self._active_deadline: float | None = None
         self._caller_deadline: float | None = None
         self._native_deadline: float | None = None
+        self._preparation_deadline: float | None = None
         self._active = False
         self._native = False
         self._finished = False
+        self.cleanup_deadline: float | None = None
+
+    @property
+    def requires_ownership(self) -> bool:
+        return any(value is not None for value in self.settings.model_dump().values())
+
+    @property
+    def finished(self) -> bool:
+        return self._finished
 
     @property
     def bounded_preparation(self) -> bool:
@@ -57,7 +67,10 @@ class StartupBudget:
         if self._finished:
             return None
         return earliest(
-            self._active_deadline, self._caller_deadline, self._native_deadline
+            self._active_deadline,
+            self._caller_deadline,
+            self._native_deadline,
+            self._preparation_deadline,
         )
 
     def resume(self, *, caller_deadline: float | None = None) -> None:
@@ -79,6 +92,26 @@ class StartupBudget:
                 raise StartupDeadlineExceeded("preparation")
         self._active_deadline = None
         self._active = False
+
+    def begin_cleanup(self) -> float:
+        if self.cleanup_deadline is None:
+            self.cleanup_deadline = time.monotonic() + 10.0
+        return self.cleanup_deadline
+
+    def begin_owned_preparation(self, default_seconds: float = 30.0) -> float:
+        """Share one configuration preparation ceiling across owned IO jobs."""
+        self.resume()
+        if self._preparation_deadline is None:
+            value = self.settings.startup_seconds
+            seconds = default_seconds if value is UNSET else value
+            self._preparation_deadline = time.monotonic() + seconds
+        deadline = self.deadline
+        assert deadline is not None
+        PhaseDeadline("configuration preparation", deadline).remaining()
+        return deadline
+
+    def clear_owned_preparation(self) -> None:
+        self._preparation_deadline = None
 
     def begin_native(self) -> None:
         if self._native:
