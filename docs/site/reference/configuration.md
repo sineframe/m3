@@ -45,6 +45,21 @@ For each setting the highest-precedence source that provides a value wins:
 
 Passing a ready-made `Config` object to `MCPTestKit` uses it as is, without reading the environment or `pyproject.toml`. A setting that is present but invalid is an error, not a fallback to the next source, and so is an unknown key in `[tool.m3]`. The resolved `Config` records where each value came from in `config.sources` (`explicit`, `environment`, `project`, or `default`).
 
+During a test invocation, m3 resolves configuration once. Pytest workers and kits constructed inside them inherit that configuration, even if the file is subsequently changed or deleted, or a worker changes an `M3_*` variable. Explicit Python overrides still apply afterward, field by field. For example, passing only `HarnessTimeouts(initialize_seconds=15)` preserves an inherited `startup_seconds=90`.
+
+Use `--m3-config PATH` to select a TOML file containing the same `[tool.m3]` tables. You create this file; m3 does not generate an additional settings file. The option is available on `m3 test`, `m3 ci test`, `m3 doctor`, and direct pytest with the m3 plugin:
+
+```sh
+m3 test --m3-config run.toml -- tests/
+m3 ci test --m3-config run.toml -- tests/
+m3 doctor --m3-config run.toml --require config --json
+pytest -p m3.pytest_plugin --m3-config run.toml tests/
+```
+
+Configuration syntax and values are validated before the CLI probes project Python. Configuration does not bind servers: entries under `[tool.m3.servers]` affect only servers already selected or bound by the test.
+
+Configured values and server selections travel to local workers through a private, single-use bootstrap. Later sessions use the worker's retained copy. Literal values stay frozen for the invocation; credential references remain references for the session's credential resolver. Remote workers are rejected when private configuration would need to be transferred.
+
 ```toml
 # pyproject.toml
 [tool.m3]
@@ -59,7 +74,7 @@ protocol_revision = "auto"
 M3_ARTIFACT_POLICY=never m3 doctor --require config --json
 ```
 
-The report's `configuration.settings` object has this shape; `origin` for a `pyproject.toml` value is `pyproject:` followed by the absolute file path:
+The report's `configuration.settings` object has this shape; `origin` for a `pyproject.toml` value is `pyproject:` followed by the absolute file path. Its separate `configuration.digest` identifies the nonsecret settings projection; private values and their file paths do not affect this digest:
 
 ```json
 {
