@@ -21,7 +21,7 @@ from m3.errors import MCPError, TransportError, UnsupportedFeature
 from m3.execution_runtime import _error_info
 from m3.harness._rpc_native import NativeRPCAdapter
 from m3.harness.contracts import HarnessLaunch, HarnessStartupError
-from m3.harness.native import ProcessOwner
+from m3.harness.native import ProcessOwner, launch_secrets
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
@@ -182,6 +182,34 @@ async def test_unclaimed_startup_evidence_is_not_reused_by_a_later_open() -> Non
     with pytest.raises(HarnessStartupError):
         await adapter.open(launch)
     assert adapter.take_startup_evidence() is None
+
+
+def test_launch_secrets_keep_ordinary_settings_readable() -> None:
+    spec = _spec()
+    configuration = HarnessServerConfig(
+        key="fs",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="fs",
+        command="server",
+        environment={
+            "API_TOKEN": "4821",
+            "GITHUB_PAT": "ghp_patvalue",
+            "DB_PASS": "hunter-two",
+            "CONNECTION": "zx81Kq0vT3mN7pLw",
+            "NODE_ENV": "production",
+            "PYTHONPATH": "/srv/app/lib",
+            "RELEASE": "2025-06-18",
+        },
+    )
+    secrets = launch_secrets(
+        HarnessLaunch(spec, ServerGroupSnapshot(), (configuration,), spec.tool_policy)
+    )
+    assert secrets.known == {"4821"}
+    # Credential-like names and token-shaped values only; ordinary settings
+    # are not collected, so they stay readable in a kept reason.
+    assert secrets.guessed == {"ghp_patvalue", "hunter-two", "zx81Kq0vT3mN7pLw"}
 
 
 @pytest.mark.asyncio

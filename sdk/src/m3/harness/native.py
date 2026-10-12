@@ -12,6 +12,7 @@ import asyncio
 import errno
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -365,6 +366,17 @@ def _exception_kind(error: BaseException) -> str:
     return kind if symbol is None else f"{kind} ({symbol})"
 
 
+# Name parts that suggest a credential but escape ``is_sensitive_key``
+# (``GITHUB_PAT``, ``STRIPE_KEY``, ``DB_PASS``).
+_CREDENTIAL_NAME_PART = re.compile(
+    r"(?:^|[_-])(?:key|pat|pass|passwd|pwd|secret|token|auth|creds?|credentials?|"
+    r"sig|signature|cookie|session|private)(?:[_-]|$)",
+    re.IGNORECASE,
+)
+# A value shaped like a generated token: long, unbroken, letters and digits.
+_TOKEN_SHAPED = re.compile(r"(?=[^\s]*[A-Za-z])(?=[^\s]*\d)\S{16,}")
+
+
 @dataclass(frozen=True, slots=True)
 class LaunchSecrets:
     """Credentials a launch handed to its harness, for redacting its text.
@@ -382,9 +394,11 @@ def launch_secrets(launch: HarnessLaunch) -> LaunchSecrets:
 
     Known: values the capture manager resolved (``${VAR}`` in endpoint URLs,
     headers and environments), literal env/header values under sensitive
-    names, and endpoint passwords. Guessed: every other literal env/header
-    value, because names such as ``GITHUB_PAT`` or ``DB_PASS`` escape the
-    sensitive-name pattern. Endpoint paths and queries are not collected:
+    names, and endpoint passwords. Guessed: other literal env/header values
+    whose name still suggests a credential (``GITHUB_PAT``, ``DB_PASS``) or
+    whose value is shaped like a token. Ordinary settings such as
+    ``NODE_ENV=production`` are not collected, so they stay readable.
+    Endpoint paths and queries are not collected either:
     ``redact_native_text`` reduces embedded URLs to their origin instead.
     """
 
@@ -396,8 +410,14 @@ def launch_secrets(launch: HarnessLaunch) -> LaunchSecrets:
     for configuration in launch.configurations:
         for mapping in (configuration.environment, configuration.headers):
             for key, value in mapping.items():
-                if isinstance(value, str) and value:
-                    (known if is_sensitive_key(key) else guessed).add(value)
+                if not isinstance(value, str) or not value:
+                    continue
+                if is_sensitive_key(key):
+                    known.add(value)
+                elif _CREDENTIAL_NAME_PART.search(key) or _TOKEN_SHAPED.fullmatch(
+                    value
+                ):
+                    guessed.add(value)
         if configuration.endpoint:
             try:
                 password = urlsplit(configuration.endpoint).password
