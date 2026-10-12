@@ -107,8 +107,8 @@ def test_defaulted_override_does_not_reset_requested_settings() -> None:
         StartupAdmission(queue_timeout_seconds=60),
     )
     assert admission.enabled is True and admission.slots == 8
-    with pytest.raises(ValidationError):
-        merge_settings(cache, CachePolicy(mode="isolated"))
+    isolated = merge_settings(cache, CachePolicy(mode="isolated"))
+    assert isolated.mode == "isolated" and isolated.root is UNSET
 
 
 def test_permissions_are_typed_and_frozen() -> None:
