@@ -22,8 +22,10 @@ import sys
 import tempfile
 import time
 from contextlib import ExitStack
+from dataclasses import asdict, dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 TABLES = (
     "v2_test_runs",
@@ -81,6 +83,119 @@ def refresh_feedback(path: Path) -> int:
         store.close()
 
 
+@dataclass(frozen=True)
+class DatabaseBaseline:
+    counts: dict[str, int]
+    run_ids: frozenset[str]
+
+
+class PeerRole(str, Enum):
+    CONTROLLER = "controller"
+    WORKER = "worker"
+
+
+@dataclass(frozen=True)
+class PeerIdentity:
+    invocation: int
+    role: PeerRole
+    worker: str
+    pid: int
+    group: int
+
+    @classmethod
+    def parse(cls, message: dict[str, object]) -> PeerIdentity:
+        assert set(message) == {
+            "version",
+            "kind",
+            "invocation",
+            "role",
+            "worker",
+            "pid",
+            "group",
+        }
+        assert type(message["version"]) is int and message["version"] == 1
+        assert message["kind"] == "hello"
+        index, pid, group = message["invocation"], message["pid"], message["group"]
+        assert type(index) is int and type(pid) is int and type(group) is int
+        role, worker = message["role"], message["worker"]
+        assert isinstance(role, str) and isinstance(worker, str)
+        assert pid > 1 and group > 1
+        return cls(index, PeerRole(role), worker, pid, group)
+
+
+@dataclass(frozen=True)
+class SessionCheckpoint:
+    trial: int
+    execution_id: str
+    session_id: str
+    turn_ids: tuple[str, str]
+    kind: Literal["unfinished"] = "unfinished"
+
+    @classmethod
+    def parse(cls, message: dict[str, object]) -> SessionCheckpoint:
+        assert set(message) == {
+            "kind",
+            "trial",
+            "execution_id",
+            "session_id",
+            "turn_ids",
+        }
+        assert message["kind"] == "unfinished" and type(message["trial"]) is int
+        assert message["trial"] == 0
+        execution, session, turns = (
+            message["execution_id"],
+            message["session_id"],
+            message["turn_ids"],
+        )
+        assert isinstance(execution, str) and isinstance(session, str)
+        assert isinstance(turns, list) and len(turns) == 2
+        assert isinstance(turns[0], str) and isinstance(turns[1], str)
+        return cls(0, execution, session, (turns[0], turns[1]))
+
+
+@dataclass
+class VerifiedSession:
+    checkpoint: SessionCheckpoint
+    run_id: str
+    session_state: str
+    completed_test_results: int
+    final_records: dict[str, int] | None = None
+
+    def report(self) -> dict[str, object]:
+        value: dict[str, object] = asdict(self.checkpoint)
+        value.update(
+            run_id=self.run_id,
+            session_state=self.session_state,
+            completed_test_results=self.completed_test_results,
+        )
+        if self.final_records is not None:
+            value["final_records"] = self.final_records
+        return value
+
+
+@dataclass
+class PeerLease:
+    identity: PeerIdentity | None = None
+    buffer: bytes = b""
+    eof: bool = False
+
+
+@dataclass(frozen=True)
+class CleanupEvidence:
+    registered_workers: int
+    peer_eof: bool
+    group_dead: bool
+    cli_reaped: bool
+
+
+@dataclass
+class Invocation:
+    process: subprocess.Popen[bytes] | None = None
+    group: int | None = None
+    checkpoint: SessionCheckpoint | None = None
+    lifecycle: CleanupEvidence | None = None
+
+
 class CheckpointOwner:
     """Fixture-only live socket leases; no descendant discovery or stale kills."""
 
@@ -94,8 +209,8 @@ class CheckpointOwner:
         self.listener.setblocking(False)
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.listener, selectors.EVENT_READ)
-        self.peers: dict[socket.socket, dict[str, Any]] = {}
-        self.invocations: dict[int, dict[str, Any]] = {}
+        self.peers: dict[socket.socket, PeerLease] = {}
+        self.invocations: dict[int, Invocation] = {}
 
     def register(self, index: int, directory: Path, *, victim: bool = False) -> Path:
         directory.mkdir(mode=0o700)
@@ -109,72 +224,54 @@ class CheckpointOwner:
                 }
             )
         )
-        self.invocations[index] = {
-            "process": None,
-            "group": None,
-            "checkpoint": None,
-            "lifecycle": None,
-        }
+        self.invocations[index] = Invocation()
         return directory / "pytest-temp"
 
     def bind(self, index: int, process: subprocess.Popen[bytes]) -> None:
-        self.invocations[index]["process"] = process
+        self.invocations[index].process = process
 
-    def _message(self, channel: socket.socket, message: dict[str, Any]) -> None:
+    def _message(self, channel: socket.socket, message: dict[str, object]) -> None:
         peer = self.peers[channel]
-        if peer.get("hello") is None:
-            assert set(message) == {
-                "version",
-                "kind",
-                "invocation",
-                "role",
-                "worker",
-                "pid",
-                "group",
-            }, message
-            assert message["version"] == 1 and message["kind"] == "hello"
-            index, pid, group = message["invocation"], message["pid"], message["group"]
-            assert type(index) is int and index in self.invocations
-            assert type(pid) is int and type(group) is int and pid > 1 and group > 1
-            assert group != os.getpgrp() and os.getpgid(pid) == group
-            role = message["role"]
-            assert role in ("controller", "worker")
-            invocation = self.invocations[index]
-            if role == "controller":
-                assert pid == group and os.getsid(pid) == group
-                assert invocation["group"] is None
-                invocation["group"] = group
+        if peer.identity is None:
+            identity = PeerIdentity.parse(message)
+            assert identity.invocation in self.invocations
+            assert identity.group != os.getpgrp()
+            assert os.getpgid(identity.pid) == identity.group
+            invocation = self.invocations[identity.invocation]
+            if identity.role is PeerRole.CONTROLLER:
+                assert identity.pid == identity.group
+                assert os.getsid(identity.pid) == identity.group
+                assert invocation.group is None
+                invocation.group = identity.group
             else:
-                assert isinstance(message["worker"], str)
-                assert invocation["group"] == group
+                assert invocation.group == identity.group
                 assert not any(
-                    other.get("hello", {}).get("invocation") == index
-                    and other.get("hello", {}).get("worker") == message["worker"]
-                    and other.get("hello", {}).get("role") == "worker"
+                    other.identity is not None
+                    and other.identity.invocation == identity.invocation
+                    and other.identity.worker == identity.worker
+                    and other.identity.role is PeerRole.WORKER
                     for other in self.peers.values()
                 )
-            peer["hello"] = message
-            if role == "controller":
+            peer.identity = identity
+            if identity.role is PeerRole.CONTROLLER:
                 channel.sendall(b'{"action":"begin"}\n')
-            workers = self.live(index, role="worker")
+            workers = self.live(identity.invocation, role=PeerRole.WORKER)
             if len(workers) == 4:
                 for worker in workers:
                     worker.sendall(b'{"action":"begin"}\n')
             return
-        hello = peer["hello"]
-        assert message["kind"] == "unfinished" and hello["role"] == "worker"
-        assert hello["invocation"] == 0 and message["trial"] == 0
-        assert len(message["turn_ids"]) == 2
-        assert self.invocations[0]["checkpoint"] is None
-        self.invocations[0]["checkpoint"] = message
+        assert peer.identity.role is PeerRole.WORKER and peer.identity.invocation == 0
+        assert self.invocations[0].checkpoint is None
+        self.invocations[0].checkpoint = SessionCheckpoint.parse(message)
 
-    def live(self, index: int, *, role: str | None = None) -> list[socket.socket]:
+    def live(self, index: int, *, role: PeerRole | None = None) -> list[socket.socket]:
         return [
             channel
             for channel, peer in self.peers.items()
-            if not peer["eof"]
-            and peer.get("hello", {}).get("invocation") == index
-            and (role is None or peer["hello"]["role"] == role)
+            if not peer.eof
+            and peer.identity is not None
+            and peer.identity.invocation == index
+            and (role is None or peer.identity.role is role)
         ]
 
     def pump(self, timeout: float) -> None:
@@ -183,7 +280,7 @@ class CheckpointOwner:
             if channel is self.listener:
                 connection, _ = self.listener.accept()
                 connection.setblocking(False)
-                self.peers[connection] = {"buffer": b"", "eof": False}
+                self.peers[connection] = PeerLease()
                 self.selector.register(connection, selectors.EVENT_READ)
                 continue
             assert isinstance(channel, socket.socket)
@@ -193,33 +290,36 @@ class CheckpointOwner:
             except ConnectionResetError:
                 data = b""
             if not data:
-                peer["eof"] = True
+                peer.eof = True
                 self.selector.unregister(channel)
                 channel.close()
                 continue
-            peer["buffer"] += data
-            assert len(peer["buffer"]) <= 4096, "fixture checkpoint exceeds bound"
-            while b"\n" in peer["buffer"]:
-                frame, peer["buffer"] = peer["buffer"].split(b"\n", 1)
-                self._message(channel, json.loads(frame))
+            peer.buffer += data
+            assert len(peer.buffer) <= 4096, "fixture checkpoint exceeds bound"
+            while b"\n" in peer.buffer:
+                frame, peer.buffer = peer.buffer.split(b"\n", 1)
+                message = json.loads(frame)
+                assert isinstance(message, dict)
+                self._message(channel, message)
 
     def signal_groups(self, indices: list[int], sig: signal.Signals) -> None:
         for index in indices:
             # Every kill target is anchored by a retained live lease and a
             # fresh OS identity check; EOF removes that lease's authority.
             for channel in self.live(index):
-                hello = self.peers[channel]["hello"]
+                identity = self.peers[channel].identity
+                assert identity is not None
                 try:
-                    if os.getpgid(hello["pid"]) != hello["group"]:
+                    if os.getpgid(identity.pid) != identity.group:
                         raise RuntimeError("fixture worker changed owned process group")
-                    os.killpg(hello["group"], sig)
+                    os.killpg(identity.group, sig)
                     break
                 except ProcessLookupError:
                     continue
 
     def groups_dead(self, indices: list[int]) -> bool:
         for index in indices:
-            group = self.invocations[index]["group"]
+            group = self.invocations[index].group
             if group is None:
                 continue
             try:
@@ -252,7 +352,7 @@ def stop(
         else [
             index
             for index, invocation in owner.invocations.items()
-            if invocation["process"] in processes
+            if invocation.process in processes
         ]
     )
     for process in processes:
@@ -265,8 +365,11 @@ def stop(
             process.wait(timeout=max(0, end - time.monotonic()))
         except subprocess.TimeoutExpired:
             survivors.append(process)
-    if owner is not None and survivors:
+    if owner is not None:
         owner.pump(0)
+    if owner is not None and (survivors or any(owner.live(index) for index in indices)):
+        # A reaped CLI can still leave live separately sessioned pytest peers.
+        # Their retained leases, not the CLI's poll status, own these groups.
         owner.signal_groups(indices, signal.SIGTERM)
         # The CLI must run its pending handler to reap its own pytest child.
         # We never claim to reap grandchildren from this driver process.
@@ -296,19 +399,22 @@ def stop(
             ):
                 break
         for index in indices:
+            invocation = owner.invocations[index]
             peers = [
                 peer
                 for peer in owner.peers.values()
-                if peer.get("hello", {}).get("invocation") == index
+                if peer.identity is not None and peer.identity.invocation == index
             ]
-            owner.invocations[index]["lifecycle"] = {
-                "registered_workers": sum(
-                    peer["hello"]["role"] == "worker" for peer in peers
+            assert invocation.process is not None
+            invocation.lifecycle = CleanupEvidence(
+                registered_workers=sum(
+                    peer.identity is not None and peer.identity.role is PeerRole.WORKER
+                    for peer in peers
                 ),
-                "peer_eof": all(peer["eof"] for peer in peers),
-                "group_dead": owner.groups_dead([index]),
-                "cli_reaped": owner.invocations[index]["process"].poll() is not None,
-            }
+                peer_eof=all(peer.eof for peer in peers),
+                group_dead=owner.groups_dead([index]),
+                cli_reaped=invocation.process.poll() is not None,
+            )
         if any(owner.live(index) for index in indices) or not owner.groups_dead(
             indices
         ):
@@ -317,23 +423,26 @@ def stop(
         raise RuntimeError("CLI did not complete termination cleanup")
 
 
-def unfinished_session(database: Path, checkpoint: dict[str, Any]) -> dict[str, Any]:
+def unfinished_session(
+    database: Path, checkpoint: SessionCheckpoint
+) -> VerifiedSession:
     with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
         row = connection.execute(
             "SELECT s.state,s.closed_at,e.snapshot_json,e.run_id FROM v2_sessions s "
             "JOIN v2_executions e ON s.execution_id=e.id WHERE s.id=? AND e.id=?",
-            (checkpoint["session_id"], checkpoint["execution_id"]),
+            (checkpoint.session_id, checkpoint.execution_id),
         ).fetchone()
         assert row is not None
         state, closed, snapshot_json, run_id = row
+        assert isinstance(state, str) and isinstance(run_id, str)
         snapshot = json.loads(snapshot_json)
         assert closed is None and state not in ("closed", "finished"), row
         assert snapshot["finished_at"] is None and snapshot["run_id"] == run_id
         turns = connection.execute(
             "SELECT id FROM v2_turns WHERE session_id=? ORDER BY number",
-            (checkpoint["session_id"],),
+            (checkpoint.session_id,),
         ).fetchall()
-        assert [turn[0] for turn in turns] == checkpoint["turn_ids"]
+        assert [turn[0] for turn in turns] == list(checkpoint.turn_ids)
         assert len(turns) == 2
         results = connection.execute(
             "SELECT COUNT(*) FROM v2_test_results WHERE run_id=?", (run_id,)
@@ -345,12 +454,7 @@ def unfinished_session(database: Path, checkpoint: dict[str, Any]) -> dict[str, 
             ).fetchone()[0]
         )
         assert record["status"] == "running" and record.get("exit_status") is None
-    return {
-        **checkpoint,
-        "run_id": run_id,
-        "session_state": state,
-        "completed_test_results": results,
-    }
+    return VerifiedSession(checkpoint, run_id, state, results)
 
 
 def counts_for_run(database: Path, run_id: str) -> dict[str, int]:
@@ -398,17 +502,18 @@ def run_case(
     refresh_passes = 0
     errors: list[str] = []
     terminated: int | None = None
-    interrupted: dict[str, Any] | None = None
+    interrupted: VerifiedSession | None = None
     next_refresh = started
-    before = {
-        path.name: inspect_database(path)
-        if path.exists()
-        else {
-            "counts": dict.fromkeys(TABLES, 0),
-            "runs": [],
-        }
-        for path in set(databases)
-    }
+    before: dict[str, DatabaseBaseline] = {}
+    for path in set(databases):
+        if path.exists():
+            previous = inspect_database(path)
+            before[path.name] = DatabaseBaseline(
+                counts=previous["counts"],
+                run_ids=frozenset(run["run_id"] for run in previous["runs"]),
+            )
+        else:
+            before[path.name] = DatabaseBaseline(dict.fromkeys(TABLES, 0), frozenset())
     with ExitStack() as stack:
         owner = CheckpointOwner()
         stack.callback(owner.close)
@@ -449,9 +554,9 @@ def run_case(
                 owner.bind(index, processes[-1])
             while any(process.poll() is None for process in processes):
                 owner.pump(0.1)
-                checkpoint = owner.invocations[0]["checkpoint"]
+                checkpoint = owner.invocations[0].checkpoint
                 if terminate_one and terminated is None and checkpoint is not None:
-                    assert len(owner.live(0, role="worker")) == 4
+                    assert len(owner.live(0, role=PeerRole.WORKER)) == 4
                     interrupted = unfinished_session(databases[0], checkpoint)
                     processes[0].terminate()
                     terminated = 0
@@ -503,7 +608,7 @@ def run_case(
         assert not report["sequence_gaps"]
     changes = {
         name: {
-            table: report["counts"][table] - before[name]["counts"][table]
+            table: report["counts"][table] - before[name].counts[table]
             for table in TABLES
         }
         for name, report in reports.items()
@@ -519,7 +624,7 @@ def run_case(
         for table, count in expected.items():
             assert sum(change[table] for change in changes.values()) == count, changes
         for database_name, report in reports.items():
-            old_runs = {run["run_id"] for run in before[database_name]["runs"]}
+            old_runs = before[database_name].run_ids
             assert all(
                 run["status"] == "finished" and run["exit_status"] == 0
                 for run in report["runs"]
@@ -528,14 +633,14 @@ def run_case(
     survivor_counts = {}
     for database_name, report in reports.items():
         database = next(path for path in set(databases) if path.name == database_name)
-        old_runs = {run["run_id"] for run in before[database_name]["runs"]}
+        old_runs = before[database_name].run_ids
         for run in report["runs"]:
             if run["run_id"] in old_runs:
                 continue
-            if interrupted is not None and run["run_id"] == interrupted["run_id"]:
+            if interrupted is not None and run["run_id"] == interrupted.run_id:
                 victim_counts = counts_for_run(database, run["run_id"])
                 assert victim_counts["turns"] == 2 and victim_counts["results"] < 12
-                interrupted["final_records"] = victim_counts
+                interrupted.final_records = victim_counts
                 continue
             assert run["status"] == "finished" and run["exit_status"] == 0
             survivor_counts[run["run_id"]] = counts_for_run(database, run["run_id"])
@@ -546,14 +651,19 @@ def run_case(
                 "turns": 96,
             }
     assert len(survivor_counts) == (5 if terminate_one else 6)
-    lifecycle = {index: item["lifecycle"] for index, item in owner.invocations.items()}
-    assert all(item["registered_workers"] == 4 for item in lifecycle.values())
+    lifecycle = {}
+    for index, invocation in owner.invocations.items():
+        assert invocation.lifecycle is not None
+        assert invocation.lifecycle.registered_workers == 4
+        lifecycle[index] = asdict(invocation.lifecycle)
     result = {
         "case": name,
         "seconds": time.monotonic() - started,
         "exit_codes": codes,
         "terminated_process": terminated,
-        "interrupted_session": interrupted,
+        "interrupted_session": interrupted.report()
+        if interrupted is not None
+        else None,
         "completed_survivors": survivor_counts,
         "lifecycle": lifecycle,
         "reader_passes": read_passes,

@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ def test_cleanup_escalates_all_stalled_cli_processes_before_raising() -> None:
     spec = importlib.util.spec_from_file_location("large_run_storage_repro", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     calls = []
 
@@ -51,8 +53,10 @@ def test_cleanup_escalates_all_stalled_cli_processes_before_raising() -> None:
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
 @pytest.mark.timeout(45)
-def test_real_four_workers_die_when_cli_is_suspended_at_unfinished_session(
+@pytest.mark.parametrize("leader_state", ["suspended", "exited"])
+def test_real_four_workers_die_when_cli_stalls_or_exits_at_unfinished_session(
     tmp_path: Path,
+    leader_state: str,
 ) -> None:
     import json
     import signal
@@ -65,6 +69,7 @@ def test_real_four_workers_die_when_cli_is_suspended_at_unfinished_session(
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     owner = module.CheckpointOwner()
     base = owner.register(0, tmp_path / "bootstrap", victim=True)
@@ -101,7 +106,7 @@ def test_real_four_workers_die_when_cli_is_suspended_at_unfinished_session(
         owner.bind(0, process)
         try:
             deadline = time.monotonic() + 20
-            while owner.invocations[0]["checkpoint"] is None:
+            while owner.invocations[0].checkpoint is None:
                 assert process.poll() is None, (tmp_path / "cli.log").read_text(
                     errors="replace"
                 )
@@ -109,32 +114,36 @@ def test_real_four_workers_die_when_cli_is_suspended_at_unfinished_session(
                     errors="replace"
                 )
                 owner.pump(min(0.1, deadline - time.monotonic()))
-            assert len(owner.live(0, role="worker")) == 4
-            point = module.unfinished_session(
-                database, owner.invocations[0]["checkpoint"]
-            )
-            assert point["completed_test_results"] == 0
-            assert len(point["turn_ids"]) == 2
-            os.kill(process.pid, signal.SIGSTOP)
-            with pytest.raises(
-                RuntimeError, match="CLI did not complete termination cleanup"
-            ):
+            assert len(owner.live(0, role=module.PeerRole.WORKER)) == 4
+            point = module.unfinished_session(database, owner.invocations[0].checkpoint)
+            assert point.completed_test_results == 0
+            assert len(point.checkpoint.turn_ids) == 2
+            if leader_state == "suspended":
+                os.kill(process.pid, signal.SIGSTOP)
+                with pytest.raises(
+                    RuntimeError, match="CLI did not complete termination cleanup"
+                ):
+                    module.stop([process], owner, grace_seconds=0.2)
+            else:
+                process.kill()
+                process.wait(timeout=5)
+                assert len(owner.live(0, role=module.PeerRole.WORKER)) == 4
                 module.stop([process], owner, grace_seconds=0.2)
             assert process.poll() is not None
             assert not owner.live(0)
             assert owner.groups_dead([0])
-            lifecycle = owner.invocations[0]["lifecycle"]
-            assert lifecycle == {
-                "registered_workers": 4,
-                "peer_eof": True,
-                "group_dead": True,
-                "cli_reaped": True,
-            }
+            lifecycle = owner.invocations[0].lifecycle
+            assert lifecycle == module.CleanupEvidence(
+                registered_workers=4,
+                peer_eof=True,
+                group_dead=True,
+                cli_reaped=True,
+            )
             (tmp_path / "lifecycle.json").write_text(
                 json.dumps(
                     {
-                        "checkpoint": point,
-                        "lifecycle": lifecycle,
+                        "checkpoint": point.report(),
+                        "lifecycle": module.asdict(lifecycle),
                         "cli_exit": process.returncode,
                     }
                 )

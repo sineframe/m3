@@ -37,8 +37,9 @@ groups anchored by retained live leases and fresh group-identity checks. The
 driver resumes a suspended CLI after signalling its pytest group so the CLI
 can reap its own child, then kills/reaps remaining CLI children. Cleanup verifies
 peer EOF and group disappearance; a timeout remains a failure. The driver does
-not claim to reap grandchildren. A real four-worker fault test suspends the CLI
-at the unfinished-session checkpoint and verifies this escalation.
+not claim to reap grandchildren. Real four-worker fault tests suspend the CLI
+or kill and reap it at the unfinished-session checkpoint, then verify cleanup
+of its remaining worker group.
 
 Each case writes process logs and a JSON report beneath the output directory.
 The report includes new record counts so a warm or recovery case cannot pass
