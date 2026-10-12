@@ -1043,13 +1043,12 @@ async def test_codex_thread_start_error_keeps_mcp_reason_without_credentials(
 
 
 @pytest.mark.asyncio
-async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials() -> (
+    None
+):
     # The capture proxy copies the upstream path and query into the URL Codex
     # receives (a Zapier-style key is a path segment); Codex quotes that URL
     # mid-sentence when the transport fails.
-    monkeypatch.setenv("TOKEN_LIMIT", "1")
     pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
     endpoint = "http://127.0.0.1:5555/api/mcp/s/ZapPathCanary/mcp?k=QUERY-CANARY"
     remote = HarnessServerConfig(
@@ -1091,8 +1090,8 @@ async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials
         "ghp_literal_canary",
     ):
         assert canary not in message
-    # Non-credentials (TOKEN_LIMIT=1, MODE=stream) leave the reason readable;
-    # credential-shaped text (token=...) is scrubbed.
+    # MODE=stream leaves the reason readable; credential-shaped text
+    # (token=...) is scrubbed.
     assert message.endswith(
         "remote: error sending request for url (http://127.0.0.1:5555/…), "
         "expected id 1; fs: bad key [REDACTED], pat [REDACTED], "

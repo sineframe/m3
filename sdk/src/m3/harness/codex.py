@@ -19,8 +19,8 @@ from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
 from ..trace.redaction import (
+    RedactionConfig,
     is_sensitive_key,
-    native_text_secrets,
     redact_native_text,
 )
 from ..types import (
@@ -875,7 +875,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     summary += f" (JSON-RPC {code})"
                 message = error.get("message") if isinstance(error, Mapping) else None
                 reason = (
-                    self._redacted_reason(message, launch, (api_key,))
+                    self._redacted_reason(message, launch, (api_key, api_key.strip()))
                     if isinstance(message, str)
                     else None
                 )
@@ -943,10 +943,13 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         a secret.
         """
 
-        secrets = native_text_secrets(
-            (*self._runtime_secrets, *launch_secrets(launch), *known)
+        config = RedactionConfig.from_environment(
+            secrets=(*self._runtime_secrets, *launch_secrets(launch), *known)
         )
-        redacted = redact_native_text(text, secrets)[:_REASON_SCAN_LIMIT]
+        try:
+            redacted = redact_native_text(text, config)[:_REASON_SCAN_LIMIT]
+        except Exception:
+            return None
         reason = _collapse_repeated_chain(" ".join(redacted.split()))
         if not reason:
             return None
