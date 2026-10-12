@@ -29,7 +29,6 @@ from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..trace.redaction import (
     RedactionConfig,
     is_sensitive_key,
-    native_text_secrets,
     redact_for_api,
     redact_native_text,
 )
@@ -1914,9 +1913,13 @@ class OpenCodeHarnessAdapter:
         data = error.get("data")
         text = data.get("message") if isinstance(data, Mapping) else None
         if isinstance(text, str):
-            redacted = redact_native_text(
-                text, native_text_secrets(self._runtime_secrets | self._launch_secrets)
+            config = RedactionConfig.from_environment(
+                secrets=self._runtime_secrets | self._launch_secrets
             )
+            try:
+                redacted = redact_native_text(text, config)
+            except Exception:
+                redacted = ""
             reason = " ".join(redacted[: 4 * _NATIVE_ERROR_REASON_LIMIT].split())
             if reason:
                 # Truncate only after redaction so a cut cannot split a secret.

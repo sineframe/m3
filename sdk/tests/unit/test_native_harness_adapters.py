@@ -2837,10 +2837,7 @@ async def test_opencode_turn_error_keeps_native_name_and_redacted_reason() -> No
 
 
 @pytest.mark.asyncio
-async def test_opencode_turn_reason_redacts_urls_and_launch_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("TOKEN_LIMIT", "1")
+async def test_opencode_turn_reason_redacts_urls_and_launch_credentials() -> None:
     pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
     endpoint = "http://127.0.0.1:5555/api/mcp/s/ZapPathCanary/mcp?k=QUERY-CANARY"
     base = _launch()
