@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 from . import _timing
+from ._cache_settings import launch_cache
 from ._types.agent_identity import project_agent_identity
 from ._types.specs import AgentSpec
 from .elicitation import ElicitationPlan
@@ -423,6 +424,7 @@ class AsyncAgentSession:
         _native_auth_operations: NativeAuthOperations | None = None,
     ) -> None:
         self.spec = spec
+        self._cache_policy = launch_cache(spec)
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
         self._literal_registry = _literal_registry
@@ -973,6 +975,8 @@ class AsyncAgentSession:
                     _credential_deadline=self._credential_deadline,
                     _native_auth_operations=self._native_auth_operations,
                     _native_secret_inputs=native_literal_inputs(self.spec),
+                    _cache_policy=self._cache_policy,
+                    _preparation=self._preparation_supervisor,
                 )
                 launch = await self._preflight_launch(launch)
                 if callable(credential_activation):
@@ -995,6 +999,8 @@ class AsyncAgentSession:
                         _credential_deadline=self._credential_deadline,
                         _native_auth_operations=self._native_auth_operations,
                         _native_secret_inputs=native_literal_inputs(self.spec),
+                        _cache_policy=self._cache_policy,
+                        _preparation=self._preparation_supervisor,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -1022,6 +1028,8 @@ class AsyncAgentSession:
                     _credential_deadline=self._credential_deadline,
                     _native_auth_operations=self._native_auth_operations,
                     _native_secret_inputs=native_literal_inputs(self.spec),
+                    _cache_policy=self._cache_policy,
+                    _preparation=self._preparation_supervisor,
                 )
                 launch = await self._preflight_launch(launch)
                 result = opener(launch)
@@ -1042,6 +1050,8 @@ class AsyncAgentSession:
                         _credential_deadline=self._credential_deadline,
                         _native_auth_operations=self._native_auth_operations,
                         _native_secret_inputs=native_literal_inputs(self.spec),
+                        _cache_policy=self._cache_policy,
+                        _preparation=self._preparation_supervisor,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():

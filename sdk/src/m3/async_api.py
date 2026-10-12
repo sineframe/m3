@@ -36,6 +36,8 @@ from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 from . import _timing
 from ._admission_settings import override_admission_config as _override_admission_config
 from ._admission_settings import resolve_admission as _resolve_admission
+from ._cache_settings import cache_override as _cache_override
+from ._cache_settings import resolve_cache as _resolve_cache
 from ._check_recording import (
     bind_execution as _bind_execution,
 )
@@ -62,6 +64,7 @@ from ._native_settings import resolve_runtime_settings as _resolve_runtime_setti
 from ._native_settings import timeout_override as _timeout_override
 from ._native_settings import validate_bound_settings as _validate_bound_settings
 from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import CachePolicy as _CachePolicy
 from ._types.settings import HarnessTimeouts as _HarnessTimeouts
 from ._types.settings import StartupAdmission as _StartupAdmission
 from ._types.settings import Unset as _Unset
@@ -1554,6 +1557,7 @@ class AsyncMCPTestKit:
         harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
         admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
         harness_timeouts: _HarnessTimeouts | _Unset = _NATIVE_UNSET,
+        cache: _CachePolicy | _Unset = _NATIVE_UNSET,
     ) -> AsyncAgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
@@ -1579,6 +1583,7 @@ class AsyncMCPTestKit:
             kit_timeouts=self._harness_timeouts,
         )
         spec = _resolve_admission(spec, self.config, admission)
+        spec = _resolve_cache(_cache_override(spec, cache), self.config)
         server_profile_by_ordinal = {
             item.get("_ordinal"): item
             for item in session_profile_provenance

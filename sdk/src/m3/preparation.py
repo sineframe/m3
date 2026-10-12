@@ -75,6 +75,10 @@ class PreparationSupervisor:
         return self._worker.helper_pid if self._worker is not None else None
 
     async def _start(self) -> None:
+        self._private_worker()
+
+    def _private_worker(self) -> PreparationWorker:
+        """Share the same owned helper with private launch operations."""
         if self._closed:
             raise PreparationError("preparation supervisor is closed")
         if self._worker is None:
@@ -82,6 +86,7 @@ class PreparationSupervisor:
                 self._worker = worker_preparation(self._max_jobs)
             except RuntimeError:
                 raise PreparationError("owned preparation is unavailable") from None
+        return self._worker
 
     def _send(self, action: str, ident: str, **values: Any) -> None:
         if self._worker is None:

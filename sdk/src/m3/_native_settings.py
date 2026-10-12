@@ -204,6 +204,8 @@ def native_literal_inputs(spec: AgentSpec) -> tuple[str, ...]:
     are never treated as credentials.
     """
     values: set[str] = set()
+    if spec.cache.mode == "immutable-seed" and isinstance(spec.cache.root, str):
+        values.add(spec.cache.root)
     harness = spec.harness
     if isinstance(harness, Codex):
         permissions = harness.permissions

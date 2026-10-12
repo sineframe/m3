@@ -46,7 +46,6 @@ class PreparationWorker:
         self._private_sent: dict[str, socket.socket] = {}
         self._routes: dict[str, tuple[asyncio.AbstractEventLoop | None, Callback]] = {}
         self._groups: dict[str, int] = {}
-        self._cache_guard_groups: set[str] = set()
         self._abandoned: set[str] = set()
         self._closing = False
         self._failed = False
@@ -105,7 +104,6 @@ class PreparationWorker:
             self._abandoned.discard(ident)
             if published:
                 self._groups.pop(ident, None)
-                self._cache_guard_groups.discard(ident)
 
     def send(self, action: str, ident: str, **values: Any) -> None:
         frame = (
@@ -138,13 +136,8 @@ class PreparationWorker:
                     transferred.close()
             if frame["event"] in {"started", "cleanup_started"}:
                 self._groups[ident] = frame["pid"]
-                if frame.get("cache_guard") is True:
-                    self._cache_guard_groups.add(ident)
-                else:
-                    self._cache_guard_groups.discard(ident)
             elif frame["event"] in {"removed", "rejected"}:
                 self._groups.pop(ident, None)
-                self._cache_guard_groups.discard(ident)
         if frame["event"] in {"started", "cleanup_started"}:
             # No job may touch staging until its owning process group is
             # recorded here. Helper death before this gate causes child EOF.
@@ -333,16 +326,7 @@ class PreparationWorker:
             # Retain this owner/thread while a KILL-resistant kernel IO wait
             # survives. Roots remain quarantined; never delete them here.
             with self._lock:
-                guards = tuple(
-                    group
-                    for ident, group in self._groups.items()
-                    if ident in self._cache_guard_groups
-                )
-                groups = tuple(
-                    group
-                    for ident, group in self._groups.items()
-                    if ident not in self._cache_guard_groups
-                )
+                groups = tuple(self._groups.values())
             # The helper's session also contains any child not yet through
             # setsid. A child that races into a new session without its ACK
             # reaching us has a closed start gate and cannot materialize.
@@ -356,7 +340,7 @@ class PreparationWorker:
                     # helper still answers killpg(0); waiting on that without
                     # poll would keep the ownership thread alive indefinitely.
                     process.poll()
-                if not any(_group_alive(group) for group in (*groups, *guards)):
+                if not any(_group_alive(group) for group in groups):
                     break
                 time.sleep(0.02)
 

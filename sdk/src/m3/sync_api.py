@@ -49,6 +49,7 @@ from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 from . import _timing
 from ._admission_settings import admission_override as _admission_override
 from ._admission_settings import override_admission_config as _override_admission_config
+from ._cache_settings import cache_override as _cache_override
 from ._check_recording import (
     bind_subject as _bind_subject,
 )
@@ -69,6 +70,7 @@ from ._native_settings import NativePermissions as _NativePermissions
 from ._native_settings import permission_override as _permission_override
 from ._native_settings import timeout_override as _timeout_override
 from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import CachePolicy as _CachePolicy
 from ._types.settings import HarnessTimeouts as _HarnessTimeouts
 from ._types.settings import StartupAdmission as _StartupAdmission
 from ._types.settings import Unset as _Unset
@@ -2124,6 +2126,7 @@ class MCPTestKit:
         harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
         admission: _StartupAdmission | _Unset = _NATIVE_UNSET,
         harness_timeouts: _HarnessTimeouts | _Unset = _NATIVE_UNSET,
+        cache: _CachePolicy | _Unset = _NATIVE_UNSET,
     ) -> AgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
@@ -2133,6 +2136,7 @@ class MCPTestKit:
             _permission_override(spec, harness_permissions), harness_timeouts
         )
         spec = _admission_override(spec, admission)
+        spec = _cache_override(spec, cache)
         with self._state_lock:
             if self._closed:
                 raise _KitClosed("MCPTestKit is closed")

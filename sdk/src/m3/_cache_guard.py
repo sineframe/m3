@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import select
 import shutil
@@ -71,7 +72,18 @@ def _acquire(descriptor: int, channel: socket.socket, deadline: float) -> None:
 def _valid_seed(seed: Path) -> bool:
     try:
         _private(seed.stat(follow_symlinks=False), directory=True)
-    except (OSError, PrivateOperationError):
+        descriptor = os.open(
+            seed / "accepted", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        )
+        try:
+            _private(os.fstat(descriptor), directory=False)
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                metadata = json.loads(stream.read(1025))
+            if metadata != {"version": 1, "artifact": RIPGREP.key}:
+                return False
+        finally:
+            os.close(descriptor)
+    except (OSError, ValueError, PrivateOperationError):
         return False
     return verified_binary(seed / "rg")
 
@@ -151,7 +163,7 @@ def execute_cache_guard(channel: socket.socket, root: Path, deadline: float) -> 
                 materialize_binary(seed / "rg", destination)
             _remaining(deadline)
 
-        writer = _ForkJob(materialize, output=False, gated=True)
+        writer = _ForkJob(materialize, output=False, gated=True, keep_fds=(lock,))
         # setsid receipt precedes the start gate. No PID guessing or discovery.
         readable, _, _ = select.select(
             [writer.ready, channel], [], [], _remaining(deadline)
@@ -176,6 +188,17 @@ def execute_cache_guard(channel: socket.socket, root: Path, deadline: float) -> 
         if channel.recv(1) != b"c":
             raise PrivateOperationError("immutable cache acceptance ended")
         _remaining(deadline)
+        if cold:
+            descriptor = os.open(
+                seed / "accepted",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o400,
+            )
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(
+                    json.dumps({"version": 1, "artifact": RIPGREP.key}).encode("ascii")
+                )
+            _remaining(deadline)
         committed = True
     finally:
         if writer is not None:

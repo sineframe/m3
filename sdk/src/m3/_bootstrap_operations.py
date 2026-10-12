@@ -26,6 +26,7 @@ from ._preparation_owner import PreparationWorker, worker_preparation
 
 if TYPE_CHECKING:
     from ._immutable_cache import CacheRequest
+    from .preparation import PreparationSupervisor
 
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_FRAME = 12 * 1024 * 1024
@@ -442,8 +443,9 @@ def execute_private_operation(
 class OwnedBootstrapOperations:
     """Synchronous facade; only IPC waiting happens on the caller thread."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, preparation: PreparationSupervisor | None = None) -> None:
         self._worker: PreparationWorker | None = None
+        self._preparation = preparation
         self._condition = threading.Condition()
         self._jobs: dict[str, _PrivateJob] = {}
         self._resources: list[OwnedResource] = []
@@ -511,7 +513,11 @@ class OwnedBootstrapOperations:
                 raise PrivateOperationError("private bootstrap provider closed")
             if self._worker is None:
                 try:
-                    self._worker = worker_preparation()
+                    self._worker = (
+                        self._preparation._private_worker()
+                        if self._preparation is not None
+                        else worker_preparation()
+                    )
                 except (OSError, RuntimeError, ValueError):
                     raise PrivateOperationError(
                         "private bootstrap owner unavailable"

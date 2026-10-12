@@ -13,7 +13,9 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from .._cache_settings import launch_cache, pinned_cache_root
 from .._literal_store import LiteralHandle, RunLiteralStore
+from .._types.settings import CachePolicy
 from ..server_group import HarnessServerConfig
 from ..trace.redaction import RedactionConfig
 from ..types import SecretReference
@@ -172,6 +174,7 @@ class LaunchCredentialBundle:
         login_bytes: bytes | None = None,
         trimmed_credential_targets: frozenset[str] = frozenset(),
         login_registry_available: bool = True,
+        _cache_policy: CachePolicy | None = None,
     ) -> None:
         self._store = RunLiteralStore("launch-" + uuid4().hex)
         self._registered: set[LiteralHandle] = set()
@@ -186,6 +189,8 @@ class LaunchCredentialBundle:
         self._selected_harness = selected_harness
         self._captured_credentials = captured_credentials
         self._native_selection: tuple[_ExpectedValue, ...] = ()
+        self._cache_policy = _cache_policy
+        self._cache_root: LiteralHandle | None = None
         # Snapshot once, before resolving any reference. Explicit values win
         # even when empty; an empty selected credential fails rather than
         # silently substituting an unrelated ambient credential.
@@ -200,6 +205,12 @@ class LaunchCredentialBundle:
         references = inputs.references
 
         try:
+            if _cache_policy is not None:
+                cache_root = pinned_cache_root(_cache_policy, source)
+                if cache_root is not None:
+                    if isinstance(_cache_policy.root, str):
+                        pin(_cache_policy.root)
+                    self._cache_root = pin(cache_root)
             self._source_inputs = self._snapshot_inputs(configurations)
             self._native_selection = tuple(
                 _ExpectedValue(literal=self._store.freeze(value))
@@ -401,6 +412,10 @@ class LaunchCredentialBundle:
     def validate_selection(self, launch: HarnessLaunch) -> None:
         if self._selected_harness != launch.spec.harness:
             raise CredentialResolutionError("pinned harness inputs changed")
+        if (self._cache_policy or CachePolicy()) != (
+            launch._cache_policy or launch_cache(launch.spec)
+        ):
+            raise CredentialResolutionError("pinned cache inputs changed")
         current = launch._native_secret_inputs
         if len(current) != len(self._native_selection) or not all(
             (isinstance(value, str) and value == self._store.resolve(expected.literal))
@@ -476,6 +491,10 @@ class LaunchCredentialBundle:
     def child_environment(self) -> dict[str, str]:
         return self._values(self._child_environment)
 
+    def cache_root(self) -> str | None:
+        handle = self._cache_root
+        return self._store.resolve(handle) if handle is not None else None
+
     def login_bytes(self) -> bytes | None:
         handle = self._login_bytes
         return (
@@ -534,6 +553,8 @@ class LaunchCredentialBundle:
         self._selected_harness = None
         self._captured_credentials = None
         self._native_selection = ()
+        self._cache_root = None
+        self._cache_policy = None
 
 
 def check_credential_deadline(launch: HarnessLaunch) -> None:
@@ -638,6 +659,7 @@ def collect_native_credentials(
             if isinstance(launch.capture, McpCaptureManager)
             else None,
             login_registry_available=material.registry_available,
+            _cache_policy=launch._cache_policy or launch_cache(launch.spec),
         )
         if bundle._captured_credentials is not None:
             bundle.bind_effective_inputs(launch.configurations)

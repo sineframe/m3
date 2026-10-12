@@ -24,6 +24,9 @@ from typing import Any, Literal, NamedTuple, cast
 
 import httpx
 
+from .._bootstrap_operations import OwnedBootstrapOperations, PrivateOperationError
+from .._cache_settings import launch_cache
+from .._immutable_cache import CacheRequest
 from .._types.specs import AgentSpec
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
@@ -60,12 +63,14 @@ from ._native_errors import (
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessAdapterError,
+    HarnessCleanupError,
     HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessSession,
     HarnessStartupError,
     HarnessTurnRequest,
     HarnessTurnResult,
+    UnsupportedHarnessFeature,
 )
 from .native import (
     MAX_FRAME_BYTES,
@@ -372,6 +377,7 @@ class OpenCodeHarnessAdapter:
         self._launch: HarnessLaunch | None = None
         self._session: OpenCodeSession | None = None
         self._root: Path | None = None
+        self._cache_owner: OwnedBootstrapOperations | None = None
         self._detected_dialect: str | None = None
         # Runtime-only values resolved from explicit SecretReferences.  They
         # are used to protect adapter results before they reach the public
@@ -406,6 +412,16 @@ class OpenCodeHarnessAdapter:
         )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
+        cache = launch._cache_policy or launch_cache(launch.spec)
+        if cache.mode == "immutable-seed":
+            if launch._startup_clock is None or launch._startup_clock.deadline is None:
+                raise UnsupportedHarnessFeature(
+                    "immutable cache requires the original startup deadline"
+                )
+            if not Path(self.executable).is_absolute():
+                raise UnsupportedHarnessFeature(
+                    "immutable cache requires a resolved managed executable"
+                )
         if (
             shutil.which(self.executable) is None
             and not Path(self.executable).is_file()
@@ -564,6 +580,26 @@ class OpenCodeHarnessAdapter:
             credentials = launch._credentials
             assert credentials is not None
             environment = _isolated_environment(root, credentials.child_environment())
+            cache_root = credentials.cache_root()
+            if cache_root is not None:
+                clock = launch._startup_clock
+                assert clock is not None and clock.deadline is not None
+                assert isinstance(harness, OpenCode) and harness.version is not None
+                cache_owner = OwnedBootstrapOperations(preparation=launch._preparation)
+                self._cache_owner = cache_owner
+                try:
+                    resource = await asyncio.to_thread(
+                        cache_owner.materialize_immutable_cache,
+                        CacheRequest(
+                            Path(cache_root), Path(self.executable), harness.version
+                        ),
+                        deadline=clock.deadline,
+                    )
+                except PrivateOperationError:
+                    raise HarnessStartupError(
+                        "immutable cache preparation failed"
+                    ) from None
+                environment["XDG_CACHE_HOME"] = str(resource.root / "cache")
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             if isinstance(harness, OpenCode) and harness.runtime == "managed":
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
@@ -700,6 +736,11 @@ class OpenCodeHarnessAdapter:
                 await client.aclose()
             try:
                 await owner.close()
+                await self._close_immutable_cache(
+                    deadline=launch._startup_clock.deadline
+                    if launch._startup_clock is not None
+                    else None
+                )
             except BaseException:
                 pass
             raise
@@ -744,6 +785,7 @@ class OpenCodeHarnessAdapter:
             await session.close()
         elif self._owner is not None:
             await self._owner.close()
+        await self._close_immutable_cache()
         if self._client is not None:
             await self._client.aclose()
         self._client = None
@@ -756,6 +798,20 @@ class OpenCodeHarnessAdapter:
         self._root = None
         self._runtime_secrets.clear()
         self._native_error_redaction = None
+
+    async def _close_immutable_cache(self, *, deadline: float | None = None) -> None:
+        owner = self._cache_owner
+        if owner is None:
+            return
+        # This is the existing preparation teardown ceiling, independent of a
+        # completed session's lifetime. Failed startup retains its parent bound.
+        end = time.monotonic() + 3.0
+        if deadline is not None:
+            end = min(end, deadline)
+        await asyncio.to_thread(owner.close, deadline=end)
+        if not owner.cleanup_complete:
+            raise HarnessCleanupError("immutable cache cleanup is still owned")
+        self._cache_owner = None
 
     async def cancel(self) -> None:
         if self._session is not None:
@@ -2045,6 +2101,7 @@ class OpenCodeSession(NativeSessionBase):
 
     async def close(self) -> None:
         if self._closed:
+            await self._adapter._close_immutable_cache()
             return
         try:
             await self._client.delete(f"/session/{self.session_id}")
@@ -2053,6 +2110,7 @@ class OpenCodeSession(NativeSessionBase):
             # is recorded as an incomplete server-side session cleanup.
             pass
         await super().close()
+        await self._adapter._close_immutable_cache()
 
 
 __all__ = ["OpenCodeHarnessAdapter", "OpenCodeSession"]

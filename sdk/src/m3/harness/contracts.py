@@ -39,6 +39,7 @@ from ..types import (
 if TYPE_CHECKING:
     from .._literal_store import LiteralHandle, RunLiteralStore
     from .._startup_deadlines import StartupBudget
+    from .._types.settings import CachePolicy
     from ..managed_runtime import ManagedInputRuntime
     from ..preparation import PreparationSupervisor
     from ..server_group import HarnessServerConfig, ServerGroupSnapshot
@@ -287,6 +288,15 @@ class HarnessLaunch:
     _preparation: PreparationSupervisor | None = field(
         default=None, repr=False, compare=False
     )
+    _cache_policy: CachePolicy | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        from .._cache_settings import launch_cache, validate_cache
+
+        if self._cache_policy is not None:
+            validate_cache(self.spec, self._cache_policy)
+        else:
+            launch_cache(self.spec)
 
     def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""
