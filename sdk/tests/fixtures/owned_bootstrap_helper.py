@@ -20,6 +20,7 @@ original_open = os.open
 original_resource = operations._resource
 original_unlink = Path.unlink
 original_workspace_cleanup = WorkspaceManager._cleanup
+original_workspace_capture = WorkspaceManager.capture
 
 
 def block_filesystem(target: Path) -> None:
@@ -60,9 +61,16 @@ def blocked_workspace_cleanup(manager: WorkspaceManager, *, bounded: bool) -> No
     original_workspace_cleanup(manager, bounded=bounded)
 
 
+def blocked_workspace_capture(manager: WorkspaceManager, outcome: object) -> object:
+    if mode == "workspace_capture" and arm.exists():
+        block_filesystem(manager.root / "capture")
+    return original_workspace_capture(manager, outcome)
+
+
 operations.os.open = blocked_open
 operations._resource = record_resource
 Path.unlink = blocked_unlink
 WorkspaceManager._cleanup = blocked_workspace_cleanup
+WorkspaceManager.capture = blocked_workspace_capture
 sys.argv = [sys.argv[0], *sys.argv[6:]]
 runpy.run_module("m3._preparation_worker", run_name="__main__")

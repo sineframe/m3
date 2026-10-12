@@ -511,6 +511,7 @@ def _supervise(
                 "private_native_auth",
                 "private_read_auth",
                 "private_workspace_cleanup",
+                "private_workspace_capture",
             }
             short_endpoint = request[
                 "operation"
