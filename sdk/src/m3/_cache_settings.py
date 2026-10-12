@@ -19,7 +19,14 @@ def cache_override(spec: AgentSpec, value: CachePolicy | Unset) -> AgentSpec:
         return spec
     if not isinstance(value, CachePolicy):
         raise ModelValidationError("cache requires a typed cache policy")
-    return spec.model_copy(update={"cache": merge_settings(spec.cache, value)})
+    # A session root-only override is sparse: the effective seed mode may
+    # come from the file/harness layer, which is merged by resolve_cache.
+    values = spec.cache.model_dump()
+    explicit = value.model_dump()
+    if explicit.get("mode") == "isolated":
+        values.pop("root", None)
+    values.update(explicit)
+    return spec.model_copy(update={"cache": CachePolicy.model_validate(values)})
 
 
 def resolve_cache(spec: AgentSpec, config: Config) -> AgentSpec:

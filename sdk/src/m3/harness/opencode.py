@@ -414,10 +414,6 @@ class OpenCodeHarnessAdapter:
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
         cache = launch._cache_policy or launch_cache(launch.spec)
         if cache.mode == "immutable-seed":
-            if launch._startup_clock is None or launch._startup_clock.deadline is None:
-                raise UnsupportedHarnessFeature(
-                    "immutable cache requires the original startup deadline"
-                )
             if not Path(self.executable).is_absolute():
                 raise UnsupportedHarnessFeature(
                     "immutable cache requires a resolved managed executable"
@@ -566,6 +562,13 @@ class OpenCodeHarnessAdapter:
         )
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
+        cache = launch._cache_policy or launch_cache(launch.spec)
+        if cache.mode == "immutable-seed" and (
+            launch._startup_clock is None or launch._startup_clock.deadline is None
+        ):
+            raise UnsupportedHarnessFeature(
+                "immutable cache requires the original startup deadline"
+            )
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("OpenCode server is unavailable")

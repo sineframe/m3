@@ -137,6 +137,7 @@ def execute_cache_guard(channel: socket.socket, root: Path, deadline: float) -> 
     writer: _ForkJob | None = None
     cold = False
     committed = False
+    death_reported = False
     try:
         _private(os.fstat(lock), directory=False)
         _acquire(lock, channel, deadline)
@@ -176,6 +177,8 @@ def execute_cache_guard(channel: socket.socket, root: Path, deadline: float) -> 
         writer.group_established = True
         writer.begin()
         _wait_writer(writer, channel, deadline)
+        os.write(1, b'{"cache_writers_dead":true}\n')
+        death_reported = True
         _send_private(
             channel,
             {"version": 1, "resource": _resource(root, destination, native_home=True)},
@@ -207,6 +210,8 @@ def execute_cache_guard(channel: socket.socket, root: Path, deadline: float) -> 
                 while writer.poll() is None or writer.alive():
                     select.select([], [], [], 0.01)
             writer.ready.close()
+        if not death_reported:
+            os.write(1, b'{"cache_writers_dead":true}\n')
         # The lock is deliberately retained if filesystem cleanup stalls.
         # A late rename cannot become eligible to another reader meanwhile.
         if not committed:

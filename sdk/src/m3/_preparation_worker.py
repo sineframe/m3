@@ -418,6 +418,7 @@ class Job:
     stream_open: bool = True
     private_kind: str | None = None
     cache_guard: bool = False
+    cache_writers_dead: bool = False
     cleanup_identity: tuple[int, int] | None = None
 
 
@@ -732,11 +733,20 @@ def _supervise(
         raw = os.read(key.fd, 65536)
         if raw:
             job.output.extend(raw)
-            if job.cache_guard and job.output.startswith(b'{"cache_ready":true}\n'):
-                del job.output[: len(b'{"cache_ready":true}\n')]
-                if job.state == "running":
-                    job.state = "ready"
-                    emit(job.ident, "ready", data={})
+            if job.cache_guard:
+                dead = b'{"cache_writers_dead":true}\n'
+                ready = b'{"cache_ready":true}\n'
+                while True:
+                    if job.output.startswith(dead):
+                        del job.output[: len(dead)]
+                        job.cache_writers_dead = True
+                    elif job.output.startswith(ready):
+                        del job.output[: len(ready)]
+                        if job.state == "running" and job.cache_writers_dead:
+                            job.state = "ready"
+                            emit(job.ident, "ready", data={})
+                    else:
+                        break
             if len(job.output) > MAX_FRAME:
                 stop(job)
         else:
@@ -830,6 +840,13 @@ def _supervise(
                         job.process.signal(signal.SIGKILL)
                         job.killed = True
                 elif not job.stream_open:
+                    if job.cache_guard and not job.cache_writers_dead:
+                        # Guardian death alone says nothing about its separate
+                        # writer group. Lost custody permanently quarantines
+                        # this private generation; never signal guessed PGIDs.
+                        emit(ident, "cleanup_failed")
+                        del jobs[ident]
+                        continue
                     if ownership_open:
                         spawn_cleanup(job)
                     else:
