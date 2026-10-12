@@ -43,6 +43,7 @@ from ._check_recording import (
 from ._check_recording import (
     record_checks_enabled as _record_checks_enabled,
 )
+from ._configuration_context import resolve_configuration as _resolve_configuration
 from ._default_store import (
     make_default_judge_limit as _make_default_judge_limit,
 )
@@ -983,11 +984,9 @@ class AsyncMCPTestKit:
             )
         )
         self._record_checks = _record_checks_enabled(record_checks)
-        self.config = (
-            config
-            if isinstance(config, Config)
-            else load_config(config, env=env, cwd=cwd)
-        )
+        configuration = _resolve_configuration(config, env=env, cwd=cwd)
+        self.config = configuration.config
+        self._literal_registry = configuration.literal_registry
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()
