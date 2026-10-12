@@ -325,7 +325,15 @@ def _signature(value: Any) -> inspect.Signature | None:
 def _parameter_lines(
     signature: inspect.Signature, model_fields: Any = None
 ) -> list[str]:
-    parameters = list(signature.parameters.values())
+    parameters = [
+        parameter
+        for parameter in signature.parameters.values()
+        if not (
+            parameter.name.startswith("_")
+            and parameter.kind is inspect.Parameter.KEYWORD_ONLY
+            and parameter.default is not inspect.Parameter.empty
+        )
+    ]
     lines: list[str] = []
     has_var_positional = any(
         p.kind is inspect.Parameter.VAR_POSITIONAL for p in parameters

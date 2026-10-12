@@ -76,10 +76,13 @@ from .types import (
 from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 
 if TYPE_CHECKING:
+    from ._literal_store import RunLiteralStore
+    from .harness._native_auth import NativeAuthOperations
     from .harness._private_policy import PrivateToolCalls
     from .harness.contracts import HarnessLaunch, HarnessSession
     from .harness.observations import TurnEvidence
     from .managed_runtime import ManagedInputRuntime
+    from .preparation import PreparationSupervisor
 
 
 class HarnessAdapter(Protocol):
@@ -414,10 +417,17 @@ class AsyncAgentSession:
         runtime_models_dir: str | Path | None = None,
         runtime_project_root: str | Path | None = None,
         managed_input_runtime: ManagedInputRuntime | None = None,
+        preparation_supervisor: PreparationSupervisor | None = None,
+        _literal_registry: RunLiteralStore | None = None,
+        _credential_deadline: float | None = None,
+        _native_auth_operations: NativeAuthOperations | None = None,
     ) -> None:
         self.spec = spec
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
+        self._literal_registry = _literal_registry
+        self._credential_deadline = _credential_deadline
+        self._native_auth_operations = _native_auth_operations
         needs_elicitation = (
             managed_input_runtime is not None or spec.elicitation is not None
         )
@@ -434,6 +444,7 @@ class AsyncAgentSession:
             _require_elicitation_capability(adapter)
         self._harness_cache_dir = harness_cache_dir
         self._runtime_manager = runtime_manager
+        self._preparation_supervisor = preparation_supervisor
         self._runtime_invocation_dir = runtime_invocation_dir
         self._runtime_models_dir = runtime_models_dir
         self._runtime_project_root = (
@@ -645,7 +656,7 @@ class AsyncAgentSession:
             return self
         startup_error: MCPError | None = None
         try:
-            await asyncio.to_thread(self._workspace.create)
+            await self._workspace.create_async(self._preparation_supervisor)
             with _timing.span("session.start", key=self._policy_harness_name):
                 await self._start_adapter()
             async with self._state_lock:
@@ -826,6 +837,33 @@ class AsyncAgentSession:
         # it must complete (or be cancelled) before server startup, probes, or
         # provider open can produce side effects.
         await self._prepare_managed_runtime()
+        from ._native_settings import native_literal_inputs, requested_native_settings
+
+        configuration_reader = getattr(self._server_manager, "configurations", None)
+        native_configurations = (
+            tuple(configuration_reader()) if callable(configuration_reader) else ()
+        )
+        if requested_native_settings(self.spec) or any(
+            config.timeouts.model_dump() for config in native_configurations
+        ):
+            validate_settings = getattr(self.adapter, "validate_native_settings", None)
+            if not callable(validate_settings):
+                raise UnsupportedFeature(
+                    "adapter cannot validate requested native settings"
+                )
+            from .harness.native_capabilities import NativeRuntimeIdentity
+
+            runtime_identity = None
+            if self._runtime_lease is not None:
+                provenance = getattr(self._runtime_lease, "provenance", None)
+                if not isinstance(provenance, Mapping):
+                    raise UnsupportedFeature(
+                        "managed native capability identity is unavailable"
+                    )
+                runtime_identity = NativeRuntimeIdentity.from_provenance(provenance)
+            await validate_settings(
+                self.spec, native_configurations, runtime_identity=runtime_identity
+            )
         if self._deferred_elicitation_capability_check:
             await _prepare_capabilities(self.adapter)
             _require_elicitation_capability(self.adapter)
@@ -834,20 +872,25 @@ class AsyncAgentSession:
             # Import lazily: the contract module aliases this core adapter
             # protocol, so importing it at module load would create a cycle.
             start = self._server_manager.start
+            credential_activation = getattr(
+                self.adapter, "prepare_launch_credentials", None
+            )
             defaults_provider = getattr(
                 self.adapter, "stdio_environment_defaults", None
             )
             stdio_environment_defaults = (
                 defaults_provider(self.spec) if callable(defaults_provider) else {}
             )
-            if stdio_environment_defaults and self._supports_stdio_environment_defaults(
-                self._server_manager, start
+            options: dict[str, Any] = {}
+            if stdio_environment_defaults and self._supports_start_option(
+                self._server_manager, start, "stdio_environment_defaults"
             ):
-                started_snapshot = await start(
-                    stdio_environment_defaults=stdio_environment_defaults
-                )
-            else:
-                started_snapshot = await start()
+                options["stdio_environment_defaults"] = stdio_environment_defaults
+            if callable(credential_activation) and self._supports_start_option(
+                self._server_manager, start, "defer_capture"
+            ):
+                options["defer_capture"] = True
+            started_snapshot = await start(**options)
             # Transport evidence is emitted only after the server group has
             # successfully started and before the harness is opened. The
             # snapshot is the configured source; manager configurations are
@@ -926,8 +969,14 @@ class AsyncAgentSession:
                     self._interactions,
                     str(self._workspace.root),
                     capture=self._server_manager.capture,
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
                 )
                 launch = await self._preflight_launch(launch)
+                if callable(credential_activation):
+                    launch = await credential_activation(launch)
                 result = opener(launch)
             else:
                 preflight = getattr(self.adapter, "preflight", None)
@@ -942,6 +991,10 @@ class AsyncAgentSession:
                         self._interactions,
                         str(self._workspace.root),
                         capture=self._server_manager.capture,
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -965,6 +1018,10 @@ class AsyncAgentSession:
                     self.spec.tool_policy,
                     self._interactions,
                     str(self._workspace.root),
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
+                    _native_secret_inputs=native_literal_inputs(self.spec),
                 )
                 launch = await self._preflight_launch(launch)
                 result = opener(launch)
@@ -981,6 +1038,10 @@ class AsyncAgentSession:
                         self.spec.tool_policy,
                         self._interactions,
                         str(self._workspace.root),
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
+                        _native_secret_inputs=native_literal_inputs(self.spec),
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -1017,6 +1078,14 @@ class AsyncAgentSession:
     def _supports_stdio_environment_defaults(manager: object, start: Any) -> bool:
         """Whether a manager explicitly supports pre-instrumentation env defaults."""
 
+        return AsyncAgentSession._supports_start_option(
+            manager, start, "stdio_environment_defaults"
+        )
+
+    @staticmethod
+    def _supports_start_option(manager: object, start: Any, option: str) -> bool:
+        """Whether a manager explicitly supports a native launch preparation hook."""
+
         from .server_group import ServerGroupManager
 
         if isinstance(manager, ServerGroupManager):
@@ -1025,7 +1094,7 @@ class AsyncAgentSession:
             parameters = inspect.signature(start).parameters
         except (TypeError, ValueError):
             return False
-        return "stdio_environment_defaults" in parameters
+        return option in parameters
 
     @property
     def _managed_harness_session(self) -> HarnessSession | None:
@@ -3172,6 +3241,7 @@ class AsyncAgentSession:
             provenance=provenance,
             harness_cache_dir=self._harness_cache_dir,
             runtime_manager=self._runtime_manager,
+            preparation_supervisor=self._preparation_supervisor,
             runtime_invocation_dir=self._runtime_invocation_dir,
             runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,

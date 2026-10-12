@@ -34,7 +34,9 @@ from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
 from .http_proxy import McpHttpProxy
 
 if TYPE_CHECKING:
+    from ..harness._launch_credentials import LaunchCredentialBundle
     from ..harness._private_policy import PrivateToolCalls
+    from ..server_group import HarnessServerConfig
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_SIZE = 4096
@@ -298,23 +300,34 @@ def write_stdio_handoff(
     observer: Mapping[str, str] | None = None,
     command: tuple[str, ...] | None = None,
     cwd: str | None = None,
+    resolved: bool = False,
+    launch_secrets: frozenset[str] = frozenset(),
+    complete_environment: bool = False,
 ) -> set[str]:
     """Resolve launch data into a one-shot protected handoff."""
 
     from ._stdio_handoff import StdioHandoff
 
-    resolved_secrets: set[str] = set()
+    resolved_secrets: set[str] = set(launch_secrets)
     # Match the official stdio client baseline (PATH/HOME/etc.) while keeping
     # ambient provider credentials out; explicit MCP values are layered on top.
-    resolved_environment: dict[str, str] = get_default_environment()
+    resolved_environment: dict[str, str] = (
+        {} if complete_environment else get_default_environment()
+    )
     for name, value in environment.items():
         if not isinstance(name, str) or not name or "=" in name or "\x00" in name:
             raise ValueError("MCP environment name is invalid")
-        resolved = _resolve_runtime_value(value, secrets=resolved_secrets)
-        resolved_environment[name] = resolved
+        text = (
+            value
+            if resolved
+            else _resolve_runtime_value(value, secrets=resolved_secrets)
+        )
+        if not isinstance(text, str) or "\x00" in text:
+            raise ValueError("MCP environment value is invalid")
+        resolved_environment[name] = text
         _classify_runtime_value(
             name,
-            resolved,
+            text,
             secrets=resolved_secrets,
             configured=configured_keys,
         )
@@ -552,6 +565,11 @@ class McpCaptureManager:
         }
         self._targets: dict[str, _CaptureTarget] = {}
         self._instrumented: dict[str, Any] = {}
+        self._prepared_configurations: tuple[HarnessServerConfig, ...] | None = None
+        self._launch_credentials: LaunchCredentialBundle | None = None
+        self._eager_capture_only = False
+        self._launch_activated = False
+        self._launch_redaction_literals: frozenset[str] = frozenset()
         self._policy_enforced: set[str] = set()
         self._policy_paths: set[Path] = set()
         self._closed = False
@@ -590,6 +608,9 @@ class McpCaptureManager:
             CaptureWriter(
                 str(path),
                 self.baseline_ns,
+                secrets=set(self._launch_redaction_literals)
+                if self._launch_redaction_literals
+                else None,
                 on_event=lambda event_transport, direction, payload: self._writer_event(
                     connection_id, event_transport, direction, payload
                 ),
@@ -921,6 +942,156 @@ class McpCaptureManager:
                 self._fail_subscribers(authenticated_connection, "observer_eof")
 
     @_timing.timed("servers.instrument")
+    def prepare(
+        self,
+        configurations: tuple[HarnessServerConfig, ...],
+        *,
+        stdio_environment_defaults: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> tuple[HarnessServerConfig, ...]:
+        """Retain original inputs without resolving credentials or starting proxies."""
+
+        defaults = dict(stdio_environment_defaults or {})
+        aliases = {configuration.key for configuration in configurations}
+        if set(defaults).difference(aliases):
+            raise ValueError("stdio environment defaults reference an unknown server")
+        prepared = []
+        for configuration in configurations:
+            environment = dict(defaults.get(configuration.key, {}))
+            environment.update(configuration.environment)
+            prepared.append(replace(configuration, environment=environment))
+        self._prepared_configurations = tuple(prepared)
+        return self._prepared_configurations
+
+    def credential_configurations(self) -> tuple[HarnessServerConfig, ...]:
+        if self._prepared_configurations is None:
+            raise RuntimeError("capture launch has not been prepared")
+        return self._prepared_configurations
+
+    def adoptable_credentials(self) -> LaunchCredentialBundle | None:
+        return self._launch_credentials if self._eager_capture_only else None
+
+    def owns_credential_bundle(self, credentials: LaunchCredentialBundle) -> bool:
+        return self._launch_credentials is credentials
+
+    def can_enforce_portable_policy(self, connection_ids: Iterable[str]) -> bool:
+        """Validate a prepared forwarding plan; activation still must succeed."""
+
+        if self._prepared_configurations is None:
+            return self.enforces_portable_policy(connection_ids)
+        prepared = {
+            configuration.connection_id
+            for configuration in self._prepared_configurations
+            if configuration.available
+            and configuration.transport
+            in {TransportKind.STDIO, TransportKind.STREAMABLE_HTTP}
+        }
+        selected = tuple(connection_ids)
+        return bool(self._tool_policy is not None and selected) and all(
+            connection in prepared for connection in selected
+        )
+
+    async def activate(self, credentials: LaunchCredentialBundle) -> tuple[Any, ...]:
+        """Materialize protected launch data from the one pinned session bundle."""
+
+        if self._launch_credentials is not None:
+            if credentials is not self._launch_credentials:
+                if not self._eager_capture_only or not credentials.adopts(
+                    self._launch_credentials
+                ):
+                    raise RuntimeError("capture launch credential identity changed")
+                previous = self._launch_credentials
+                self._launch_credentials = credentials
+                self._eager_capture_only = False
+                self.add_secrets(set(credentials.redaction().secrets))
+                for configuration in self.credential_configurations():
+                    if configuration.transport is TransportKind.STDIO:
+                        (self.root / f"{configuration.connection_id}.env.json").unlink(
+                            missing_ok=True
+                        )
+                previous.close()
+            if not self._launch_activated:
+                raise RuntimeError("capture launch activation did not complete")
+            self._launch_credentials.validate_inputs(self.credential_configurations())
+            self._refresh_stdio_handoffs()
+            return tuple(self._instrumented.values())
+        configurations = self.credential_configurations()
+        self._launch_credentials = credentials
+        self.add_secrets(set(credentials.redaction().secrets))
+        instrumented = await self.instrument(configurations)
+        self._launch_activated = True
+        return instrumented
+
+    def _refresh_stdio_handoffs(self) -> None:
+        """A restarted native process gets pinned inputs through a fresh one-shot file."""
+
+        credentials = self._launch_credentials
+        assert credentials is not None
+        for configuration in self.credential_configurations():
+            if (
+                not configuration.available
+                or configuration.transport is not TransportKind.STDIO
+            ):
+                continue
+            key = configuration.connection_id
+            path = self.root / f"{key}.env.json"
+            if path.exists():
+                continue
+            target = self._targets[key]
+            observer = (
+                {
+                    "host": str(self._observer_host),
+                    "port": str(self._observer_port),
+                    "connection_id": key,
+                    "token": target.observation_token,
+                }
+                if target.observation_token is not None
+                else None
+            )
+            write_stdio_handoff(
+                path,
+                credentials.stdio_environment(key),
+                observer=observer,
+                resolved=True,
+                complete_environment=True,
+                launch_secrets=self._launch_redaction_literals,
+            )
+            policy_path = self.root / f"{key}.policy.json"
+            if self._tool_policy is not None and not policy_path.exists():
+                self._write_policy_handoff(
+                    policy_path, configuration.key, configuration.tools
+                )
+
+    def _write_policy_handoff(
+        self, path: Path, server: str, tools: tuple[str, ...]
+    ) -> None:
+        assert self._tool_policy is not None
+        payload = json.dumps(
+            {
+                "policy": self._tool_policy.model_dump(mode="json"),
+                "server": server,
+                "known_servers": self._server_aliases,
+                "known_tools": tools,
+                "known_tools_by_server": self._tools_by_server,
+            },
+            separators=(",", ":"),
+        )
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        self._policy_paths.add(path)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                descriptor = -1
+                output.write(payload)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+    def add_secrets(self, values: set[str]) -> None:
+        """Register pinned native inputs for present and deferred transports."""
+
+        self._launch_redaction_literals |= frozenset(values)
+        for target in self._targets.values():
+            target.writer.add_secrets(values)
+
     async def instrument(
         self,
         configurations: Iterable[Any],
@@ -947,6 +1118,23 @@ class McpCaptureManager:
             raise ValueError("stdio environment defaults reference an unknown server")
         if any(not isinstance(value, Mapping) for value in defaults.values()):
             raise ValueError("stdio environment defaults must be mappings")
+
+        if self._launch_credentials is None:
+            from ..harness._launch_credentials import LaunchCredentialBundle
+            from ..server_group import HarnessServerConfig
+
+            if all(
+                isinstance(configuration, HarnessServerConfig)
+                for configuration in configured
+            ):
+                prepared = self.prepare(configured, stdio_environment_defaults=defaults)
+                self._launch_credentials = LaunchCredentialBundle(
+                    prepared,
+                    credential_references={},
+                    stdio_baseline=get_default_environment(),
+                )
+                self._eager_capture_only = True
+                self.add_secrets(set(self._launch_credentials.redaction().secrets))
 
         output: list[Any] = []
         for configuration in configured:
@@ -987,7 +1175,11 @@ class McpCaptureManager:
                         "token": observation_token,
                     }
                 env_path = self.root / f"{key}.env.json"
-                environment = dict(getattr(configuration, "environment", {}))
+                environment = (
+                    self._launch_credentials.stdio_environment(key)
+                    if self._launch_credentials is not None
+                    else dict(getattr(configuration, "environment", {}))
+                )
                 alias = str(getattr(configuration, "key", key))
                 for name, value in defaults.get(alias, {}).items():
                     if (
@@ -1007,8 +1199,19 @@ class McpCaptureManager:
                         environment,
                         configured_keys=configured_keys,
                         observer=observer_handoff,
-                        command=(command, *tuple(getattr(configuration, "args", ()))),
-                        cwd=getattr(configuration, "cwd", None) or None,
+                        command=(
+                            self._launch_credentials.server_command(key)
+                            if self._launch_credentials is not None
+                            else (command, *tuple(getattr(configuration, "args", ())))
+                        ),
+                        cwd=(
+                            self._launch_credentials.server_cwd(key)
+                            if self._launch_credentials is not None
+                            else getattr(configuration, "cwd", None) or None
+                        ),
+                        resolved=self._launch_credentials is not None,
+                        launch_secrets=self._launch_redaction_literals,
+                        complete_environment=self._launch_credentials is not None,
                     )
                 )
                 if resolved_secrets:
@@ -1025,29 +1228,9 @@ class McpCaptureManager:
                 )
                 if self._tool_policy is not None:
                     policy_path = self.root / f"{key}.policy.json"
-                    policy_payload = json.dumps(
-                        {
-                            "policy": self._tool_policy.model_dump(mode="json"),
-                            "server": alias,
-                            "known_servers": self._server_aliases,
-                            "known_tools": tuple(getattr(configuration, "tools", ())),
-                            "known_tools_by_server": self._tools_by_server,
-                        },
-                        separators=(",", ":"),
+                    self._write_policy_handoff(
+                        policy_path, alias, tuple(getattr(configuration, "tools", ()))
                     )
-                    descriptor = os.open(
-                        policy_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-                    )
-                    self._policy_paths.add(policy_path)
-                    try:
-                        with os.fdopen(
-                            descriptor, "w", encoding="utf-8"
-                        ) as output_file:
-                            descriptor = -1
-                            output_file.write(policy_payload)
-                    finally:
-                        if descriptor >= 0:
-                            os.close(descriptor)
                     args += ("--policy-file", str(policy_path))
                     self._policy_enforced.add(key)
                 self._instrumented[key] = replace(
@@ -1078,8 +1261,10 @@ class McpCaptureManager:
                 safe_headers: dict[str, str] = {}
                 for name, value in dict(headers).items():
                     if isinstance(name, str):
-                        resolved = _resolve_runtime_value(
-                            value, secrets=resolved_secrets
+                        resolved = (
+                            self._launch_credentials.server_headers(key)[name]
+                            if self._launch_credentials is not None
+                            else _resolve_runtime_value(value, secrets=resolved_secrets)
                         )
                         safe_headers[name] = resolved
                         _classify_runtime_value(
@@ -1088,9 +1273,12 @@ class McpCaptureManager:
                             secrets=resolved_secrets,
                             configured=configured_keys,
                         )
-                resolved_endpoint = _resolve_runtime_value(
-                    endpoint, secrets=resolved_secrets
+                resolved_endpoint = (
+                    self._launch_credentials.server_endpoint(key)
+                    if self._launch_credentials is not None
+                    else _resolve_runtime_value(endpoint, secrets=resolved_secrets)
                 )
+                assert resolved_endpoint is not None
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
 
@@ -1118,6 +1306,7 @@ class McpCaptureManager:
                     known_tools_by_server=self._tools_by_server,
                     writer=target.writer,
                     on_incomplete=proxy_observation_failed,
+                    resolved_inputs=self._launch_credentials is not None,
                 )
                 target.proxy = proxy
                 if self._tool_policy is not None:
@@ -1136,6 +1325,8 @@ class McpCaptureManager:
             else:
                 self._instrumented[key] = configuration
             output.append(self._instrumented[key])
+        if self._eager_capture_only:
+            self._launch_activated = True
         return tuple(output)
 
     def writer_for(self, connection_id: str, transport: str = "stdio") -> CaptureWriter:
@@ -1252,6 +1443,12 @@ class McpCaptureManager:
                     pass
         if failures:
             raise RuntimeError("MCP capture proxy cleanup failed") from None
+        if self._launch_credentials is not None:
+            self._launch_credentials.close()
+            self._launch_credentials = None
+        self._launch_redaction_literals = frozenset()
+        self._prepared_configurations = None
+        self._eager_capture_only = False
 
 
 __all__ = [

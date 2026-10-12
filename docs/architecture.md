@@ -148,3 +148,102 @@ The opt-in `M3_TIMINGS=1` log is fed by `m3._timing` decorators and spans.
 
 See the package-specific READMEs for implementation commands and the
 [release guide](releasing.md) for versioned artifacts.
+
+### Owned preparation
+
+Agent session workspace creation uses `WorkspaceManager.create_async`. On
+POSIX, copying, read-only materialization, git worktree creation and source
+snapshotting run in private preparation jobs. The ordinary empty temporary
+workspace has no source reads or background writer and retains its small
+synchronous default path. Supplying an absolute total deadline routes even
+that empty workspace through an owned job.
+
+`PreparationSupervisor` is a kit facade with event-loop-local futures.
+`PreparationWorker` owns one helper for the worker process across kits and
+event loops, including the private loop threads used by synchronous kits. Its
+thread routes bounded versioned JSON frames and owns process handles; it never
+copies, publishes or deletes files. Pytest run teardown calls
+`shutdown_worker_preparation`; standalone use has the same explicit teardown
+seam and ownership-channel EOF at process exit. Closing a kit fences only that
+kit's jobs. Submission EOF fences work without closing the separate ownership
+channel: cleanup identities still reach the router and require its acknowledgement.
+Ownership EOF fences running cleanup and never releases a new mutation gate;
+dead-writer roots then remain explicit quarantine.
+
+The isolated helper remains single-threaded and forks each job into its own
+process group. The child closes inherited controller and sibling descriptors.
+The helper first waits for a private acknowledgement that `setsid()` completed;
+until then it owns and signals the unreaped child PID. The child waits at a
+start gate until the router has recorded the acknowledged group identity.
+Fencing before acknowledgement never opens that gate.
+Staging allocation and framework-owned materialization happen in that child. Before a
+result is ready, the helper joins the child and checks that its entire group
+has disappeared. The controller checks the same absolute deadline through
+ready, provisional acceptance and release. It then adopts the completed root
+without another suspension. Git worktrees retain their staged absolute path
+so their repository registration remains valid. Under an explicit total budget,
+worktree preparation rejects executable Git hooks, filter commands, external
+fsmonitor and partial-clone/promisor checkout before checkout. Per-command native
+hook/fsmonitor guards also apply after that capability check. Plain Git worktrees
+remain supported, and rejected preparation preserves the source and its worktree
+registrations. The unbounded compatibility path retains custom extension behavior
+and does not claim descendant containment for code that creates a new session.
+
+Cancellation fences the generation before requesting stop. The helper sends
+TERM, escalates to KILL and retains a quarantined root while any group member
+survives. Recursive deletion runs in another owned process after writer death;
+cancelled git worktrees unregister only their exact owned target. EOF fences
+unreleased jobs. Every cleanup group uses the same established-group acknowledgement
+and router start gate as a materialization group, including after submission EOF.
+An unexpected helper loss also kills groups whose identities
+were recorded before their start gates opened and the helper session containing
+unacknowledged children. Unannounced children observe start-gate EOF and cannot
+materialize. Roots remain quarantine evidence. A kernel IO wait may outlive KILL; callers return within
+the stop budget while the worker owner retains that group. Neither late
+results nor closing event loops permit publication or unsafe deletion.
+
+The deadline integration seam is
+`WorkspaceManager.create_async(supervisor, deadline=absolute_monotonic_time)`.
+The shared worker and kit facades can host further framework-owned operations.
+Native runtime installation, OpenCode catalog preparation and artifact
+capture/cleanup still have existing thread-based call sites in
+`agent_session.py`, `runtime/core.py` and `workspace.py`; total startup deadline
+integration must convert or reject those operations before claiming bounded
+ownership for the complete preparation flow. MCP capture already owns async
+observer tasks and proxy processes, but its synchronous handoff/config writes
+also need that integration audit. Arbitrary uncancellable callbacks are not a
+bounded preparation contract.
+
+Private POSIX bootstrap operations use the same worker helper and process-group
+ownership. `OwnedBootstrapOperations` owns capsule creation, protected read/unlink,
+Unix listener/connection setup and resource removal. Each job receives a one-use
+socket over a separate descriptor-transfer channel; bounded private frames carry
+capsule bytes and typed resources. Generic preparation metadata and lifecycle
+results never contain those bytes. Both descriptor transfers retain the sender's
+handle until receipt is acknowledged. Native handles become active only after
+writer/group death and accepted ownership; one caller absolute deadline covers
+all stages. Facade close fences only its own jobs and retains quarantine until
+writers die. Resource deletion checks the exact owned inode identities.
+Incomplete closed facades remain strongly owned by the run and are retried before
+helper shutdown. Constructor rollback has a separate bounded cleanup attempt;
+it does not extend the startup deadline. Published endpoint/capsule roots keep
+helper-only cleanup leases without occupying active mutation slots. Submission
+EOF reclaims them only while the ownership acknowledgement channel remains live;
+loss of that owner leaves protected quarantine. Native auth homes remain
+quarantined until the session's native process owner confirms writer death.
+
+`LiteralBootstrapBroker` can allocate its complete protected endpoint/capsule
+roots through that provider; callers need no temporary-directory filesystem work.
+A supplied directory is validated inside an owned job. Existing Codex auth files
+can be read without unlinking and staged as opaque bytes in a private native home;
+missing files have a distinct absent result. Native processes must stop before
+that home's resource owner removes it. No broker or helper is allocated when no
+invocation literals require transfer. Windows private bootstrap remains unsupported.
+
+Equivalent descendant ownership on Windows requires native Job Objects and
+is currently unsupported. Existing default Windows workspace behavior is retained;
+a requested bounded workspace preparation fails before allocating or spawning.
+The POSIX lifecycle tests in `sdk/tests/unit/test_preparation.py` cover real
+stalled writers, ignored TERM, group descendants, controller EOF, inherited
+descriptors, late results, quarantine, provisional acceptance, exact git
+registration cleanup, multiple kits/loops and worker failure.

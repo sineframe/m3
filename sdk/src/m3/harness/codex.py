@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import shutil
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from .._types.specs import AgentSpec
 from ..agent_session import AdapterTurn
 from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
+from ..server_group import HarnessServerConfig
 from ..trace.redaction import RedactionConfig, is_sensitive_key
 from ..types import (
+    UNSET,
     Codex,
     ErrorCode,
     ErrorInfo,
@@ -38,12 +43,15 @@ from ._native_errors import (
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from .contracts import (
     HarnessAdapterCapabilities,
+    HarnessCleanupError,
     HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
 )
 from .native import probe_help
+from .native_capabilities import NativeRuntimeIdentity
+from .native_settings import profile_definitions, selected_profile
 from .observations import (
     HarnessObservation,
     InteractionObservedObservation,
@@ -247,10 +255,14 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 **({"http_headers": literal_headers} if literal_headers else {}),
                 **({"env_http_headers": env_headers} if env_headers else {}),
             }
+        if config.timeouts.startup_seconds is not UNSET:
+            servers[config.key]["startup_timeout_sec"] = config.timeouts.startup_seconds
+        if config.timeouts.request_seconds is not UNSET:
+            servers[config.key]["tool_timeout_sec"] = config.timeouts.request_seconds
     # A ChatGPT login can expose account-connected apps even in an isolated
     # home. Disable apps and plugins so managed tests do not inherit tools,
     # skills, or hooks from account-connected or installed integrations.
-    return {
+    result: dict[str, Any] = {
         "features": {
             "apps": False,
             "plugins": False,
@@ -259,25 +271,89 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
         },
         "mcp_servers": servers,
     }
+    harness = launch.spec.harness
+    if isinstance(harness, Codex):
+        permissions = harness.permissions
+        profile = selected_profile(permissions)
+        if profile is not None:
+            result["default_permissions"] = profile
+        definitions = profile_definitions(permissions)
+        if definitions:
+            result["permissions"] = {
+                definition.name: {
+                    **(
+                        {"filesystem": dict(definition.filesystem.rules)}
+                        if "rules" in definition.filesystem.model_fields_set
+                        else {}
+                    ),
+                    **(
+                        {"network": definition.network.model_dump(mode="json")}
+                        if definition.network.model_dump()
+                        else {}
+                    ),
+                }
+                for definition in definitions
+            }
+        if permissions.network_access is not UNSET:
+            result["sandbox_workspace_write"] = {
+                "network_access": permissions.network_access
+            }
+    return result
 
 
 def render_codex_config(launch: HarnessLaunch) -> str:
     """Render a minimal TOML config without embedding credential values."""
-    lines = [
-        "[features]",
-        "apps = false",
-        "plugins = false",
-        "remote_plugin = false",
-        "mcp_2026_07_28 = true",
-        "",
-        "[mcp_servers]",
-    ]
-    for name, server in codex_configuration(launch)["mcp_servers"].items():
+    configuration = codex_configuration(launch)
+    lines = []
+    if "default_permissions" in configuration:
+        lines.append(
+            f"default_permissions = {json.dumps(configuration['default_permissions'], ensure_ascii=False)}"
+        )
+    if "sandbox_workspace_write" in configuration:
+        value = configuration["sandbox_workspace_write"]["network_access"]
+        lines.extend(
+            ["[sandbox_workspace_write]", f"network_access = {str(value).lower()}"]
+        )
+    for name, definition in configuration.get("permissions", {}).items():
+        prefix = f"permissions.{json.dumps(name, ensure_ascii=False)}"
+        lines.append(f"[{prefix}]")
+        if "filesystem" in definition:
+            lines.append(f"[{prefix}.filesystem]")
+            lines.extend(
+                f"{json.dumps(path, ensure_ascii=False)} = {json.dumps(access)}"
+                for path, access in definition["filesystem"].items()
+            )
+        network = definition.get("network")
+        if network is not None:
+            lines.append(f"[{prefix}.network]")
+            if "enabled" in network:
+                lines.append(f"enabled = {str(network['enabled']).lower()}")
+            if "domains" in network:
+                lines.append(f"[{prefix}.network.domains]")
+                lines.extend(
+                    f"{json.dumps(domain, ensure_ascii=False)} = {json.dumps(action)}"
+                    for domain, action in network["domains"].items()
+                )
+    lines.extend(
+        [
+            "[features]",
+            "apps = false",
+            "plugins = false",
+            "remote_plugin = false",
+            "mcp_2026_07_28 = true",
+            "",
+            "[mcp_servers]",
+        ]
+    )
+    for name, server in configuration["mcp_servers"].items():
         # TOML quoted keys preserve arbitrary valid server aliases verbatim.
         # json.dumps emits the required escapes for quotes, backslashes, and
         # control characters (and is valid TOML basic-string syntax).
         lines.append(f"\n[mcp_servers.{json.dumps(name)}]")
         lines.append(f"required = {str(server['required']).lower()}")
+        for key in ("startup_timeout_sec", "tool_timeout_sec"):
+            if key in server:
+                lines.append(f"{key} = {server[key]}")
         if "command" in server:
             lines.append(f"command = {json.dumps(server['command'])}")
             lines.append(f"args = {json.dumps(server.get('args', []))}")
@@ -351,6 +427,11 @@ def _failed_action_turn(
     )
 
 
+if TYPE_CHECKING:
+    from ._launch_credentials import NativeCredentialMaterial
+    from ._native_auth import NativeAuthHome, NativeAuthOperations
+
+
 class CodexHarnessAdapter(NativeRPCAdapter):
     """One persistent ``codex app-server`` process and thread."""
 
@@ -363,6 +444,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     ) -> None:
         super().__init__(executable=executable, environment=environment)
         self._request_id = 0
+        self._auth_operations: NativeAuthOperations | None = None
+        self._auth_home: NativeAuthHome | None = None
+        self._auth_home_available = False
+        self._auth_deadline: float | None = None
         self._thread_id: str | None = None
         self._turn_id: str | None = None
         self._pending_turn_request: int | None = None
@@ -577,11 +662,169 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     def process_argv(self, launch: HarnessLaunch) -> tuple[str, ...]:
         return ("app-server",)
 
+    @staticmethod
+    def _uses_default_login(launch: HarnessLaunch) -> bool:
+        return (
+            isinstance(launch.spec.harness, Codex)
+            and not launch.spec.harness.credential_references
+        )
+
+    def _authentication_deadline(self, launch: HarnessLaunch) -> float:
+        if launch._credential_deadline is not None:
+            deadline = launch._credential_deadline
+        elif self._auth_deadline is not None:
+            deadline = self._auth_deadline
+        else:
+            deadline = time.monotonic() + 30
+        if not math.isfinite(deadline) or deadline <= time.monotonic():
+            raise HarnessStartupError("native credential preparation deadline exceeded")
+        self._auth_deadline = deadline
+        return deadline
+
+    def _select_auth_operations(
+        self, launch: HarnessLaunch
+    ) -> NativeAuthOperations | None:
+        operations = launch._native_auth_operations
+        if (
+            launch._credential_deadline is not None
+            and operations is None
+            and self._uses_default_login(launch)
+        ):
+            raise UnsupportedFeature("owned Codex login preparation is unavailable")
+        if (
+            self._auth_operations is not None
+            and operations is not self._auth_operations
+        ):
+            raise HarnessStartupError("native login preparation owner changed")
+        self._auth_operations = operations
+        return operations
+
+    @staticmethod
+    def _login_source() -> Path:
+        return (
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+            / "auth.json"
+        )
+
+    @staticmethod
+    def _login_material(auth: bytes | None) -> NativeCredentialMaterial:
+        from ._launch_credentials import NativeCredentialMaterial
+
+        if auth is None:
+            return NativeCredentialMaterial()
+        try:
+            values = frozenset(_login_values(json.loads(auth), sensitive=True))
+        except (ValueError, RecursionError):
+            return NativeCredentialMaterial(login_bytes=auth, registry_available=False)
+        return NativeCredentialMaterial(login_bytes=auth, literals=values)
+
+    def _credential_material(self, launch: HarnessLaunch) -> NativeCredentialMaterial:
+        if not self._uses_default_login(launch):
+            return self._login_material(None)
+        operations = self._select_auth_operations(launch)
+        if operations is not None:
+            value = operations.read_native_auth(
+                self._login_source(), deadline=self._authentication_deadline(launch)
+            )
+            material = self._login_material(
+                value.consume() if value is not None else None
+            )
+            self._authentication_deadline(launch)
+            return material
+        # The legacy unbounded preparation API retains its existing login
+        # source. A bounded request never enters this direct file path.
+        source = self._login_source()
+        if not source.is_file():
+            return self._login_material(None)
+        try:
+            if source.is_symlink():
+                raise OSError
+            return self._login_material(source.read_bytes())
+        except OSError:
+            raise HarnessStartupError("Codex native login is unavailable") from None
+
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._native_auth import PinnedAuthPayload
+
+        operations = (
+            self._select_auth_operations(launch)
+            if self._uses_default_login(launch)
+            else None
+        )
+        cached = launch._credentials is not None or self._credential_source is launch
+        if operations is not None and not cached:
+            deadline = self._authentication_deadline(launch)
+            value = await asyncio.to_thread(
+                operations.read_native_auth, self._login_source(), deadline=deadline
+            )
+            material = self._login_material(
+                value.consume() if value is not None else None
+            )
+            self._authentication_deadline(launch)
+            credentials = self._credentials_for_preparation(launch, material=material)
+        else:
+            credentials = self._credentials_for_preparation(launch)
+        if (
+            operations is not None
+            and not self._auth_home_available
+            and credentials.login_bytes() is not None
+        ):
+            if launch._credential_deadline is None and self._auth_home is not None:
+                self._auth_deadline = None
+            deadline = self._authentication_deadline(launch)
+            auth = credentials.login_bytes()
+            assert auth is not None
+            self._auth_home = await asyncio.to_thread(
+                operations.stage_native_auth, PinnedAuthPayload(auth), deadline=deadline
+            )
+            self._authentication_deadline(launch)
+            self._auth_home_available = True
+        return await super().prepare_launch_credentials(
+            replace(launch, _credentials=credentials)
+        )
+
+    async def _close_credential_operations(self) -> None:
+        if self._auth_operations is not None:
+            await asyncio.to_thread(
+                self._auth_operations.close, deadline=time.monotonic() + 10
+            )
+            if not self._auth_operations.cleanup_complete:
+                raise HarnessCleanupError("native login cleanup incomplete")
+        self._auth_operations = None
+        self._auth_home = None
+        self._auth_home_available = False
+        self._auth_deadline = None
+
     def environment_for_launch(
         self, launch: HarnessLaunch, root: Path
     ) -> Mapping[str, str]:
-        home = root / "codex-home"
-        home.mkdir(mode=0o700, exist_ok=True)
+        credentials = self._credentials_for_preparation(launch)
+        operations = (
+            self._select_auth_operations(launch)
+            if self._uses_default_login(launch)
+            else None
+        )
+        auth = credentials.login_bytes()
+        if (
+            operations is not None
+            and auth is not None
+            and not self._auth_home_available
+        ):
+            from ._native_auth import PinnedAuthPayload
+
+            if launch._credential_deadline is None and self._auth_home is not None:
+                self._auth_deadline = None
+            self._auth_home = operations.stage_native_auth(
+                PinnedAuthPayload(auth), deadline=self._authentication_deadline(launch)
+            )
+            self._authentication_deadline(launch)
+            self._auth_home_available = True
+        if self._auth_home is not None:
+            home = self._auth_home.root
+            self._auth_home_available = False
+        else:
+            home = root / "codex-home"
+            home.mkdir(mode=0o700, exist_ok=True)
         config = home / "config.toml"
         root_settings = "check_for_update_on_startup = false\n"
         if isinstance(launch.spec.harness, Codex) and any(
@@ -598,49 +841,31 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         # Preserve an existing native ChatGPT login when no API-key mapping is
         # configured. The isolated home is temporary and cleaned with the
         # execution workspace; auth material never enters the serializable spec.
-        login_secrets: set[str] = set()
-        login_registry_available = True
-        if (
-            isinstance(launch.spec.harness, Codex)
-            and not launch.spec.harness.credential_references
-        ):
-            source_home = Path(
-                os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
-            )
-            source_auth = source_home / "auth.json"
+        login_registry_available = credentials.login_registry_available
+        if auth is not None and operations is None:
             target_auth = home / "auth.json"
-            if source_auth.is_file():
-                try:
-                    if source_auth.is_symlink():
+            descriptor = -1
+            created = False
+            try:
+                if target_auth.exists():
+                    if target_auth.is_symlink() or target_auth.read_bytes() != auth:
                         raise OSError
+                else:
                     descriptor = os.open(
                         target_auth, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
                     )
-                    try:
-                        with (
-                            source_auth.open("rb") as source,
-                            os.fdopen(descriptor, "wb") as destination,
-                        ):
-                            descriptor = -1
-                            auth = source.read()
-                            destination.write(auth)
-                    finally:
-                        if descriptor != -1:
-                            os.close(descriptor)
-                except (OSError, ValueError) as exc:
-                    try:
-                        target_auth.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-                    raise HarnessStartupError(
-                        "Codex native login is unavailable"
-                    ) from exc
-                # Login tokens are runtime secrets, redacted from trace evidence.
-                try:
-                    login_secrets = _login_values(json.loads(auth), sensitive=True)
-                except ValueError:
-                    login_registry_available = False
-        environment = dict(self.environment)
+                    created = True
+                    with os.fdopen(descriptor, "wb") as auth_file:
+                        descriptor = -1
+                        auth_file.write(auth)
+            except OSError:
+                if created:
+                    target_auth.unlink(missing_ok=True)
+                raise HarnessStartupError("Codex native login is unavailable") from None
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+        environment = credentials.child_environment()
         runtime_secrets: set[str] = set()
         protocol_markers: dict[str, str] = {}
         environment["CODEX_HOME"] = str(home)
@@ -648,10 +873,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         harness = launch.spec.harness
         if isinstance(harness, Codex):
             api_keys: dict[str, str] = {}
-            for target, reference in harness.credential_references.items():
-                value = environment.get(reference.name) or os.environ.get(
-                    reference.name
-                )
+            for target in harness.credential_references:
+                value = credentials.credential_environment()[target]
                 if not value:
                     raise HarnessStartupError("Codex credential is unavailable")
                 environment[target] = value
@@ -670,7 +893,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         for configuration in launch.configurations:
             for key, value in configuration.environment.items():
                 if isinstance(value, SecretReference):
-                    resolved = environment.get(value.name) or os.environ.get(value.name)
+                    resolved = credentials.reference_environment()[value.name]
                     if not resolved:
                         raise HarnessStartupError("Codex MCP credential is unavailable")
                     environment[key] = resolved
@@ -685,12 +908,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     protocol_markers[configuration.key] = _config_value(value)
             for value in configuration.headers.values():
                 if isinstance(value, SecretReference):
-                    resolved = environment.get(value.name) or os.environ.get(value.name)
+                    resolved = credentials.reference_environment()[value.name]
                     if not resolved:
                         raise HarnessStartupError("Codex MCP credential is unavailable")
                     environment[value.name] = resolved
                     runtime_secrets.add(resolved)
-        runtime_secrets |= login_secrets
+        runtime_secrets.update(credentials.redaction().secrets)
         # Credentials the adapter passes to Codex directly (for example an
         # OPENAI_API_KEY in its environment) are runtime secrets as well.
         runtime_secrets |= {
@@ -710,6 +933,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         if callable(add_secrets) and runtime_secrets:
             add_secrets(runtime_secrets)
         return environment
+
+    async def validate_native_settings(
+        self,
+        spec: AgentSpec,
+        configurations: tuple[HarnessServerConfig, ...],
+        *,
+        runtime_identity: NativeRuntimeIdentity | None = None,
+    ) -> None:
+        from .native_settings import validate_native_settings
+
+        await validate_native_settings(
+            self.executable, spec, configurations, runtime_identity
+        )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
         await self.prepare_capabilities()
@@ -790,7 +1026,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if getattr(launch.spec.workspace.kind, "value", "") == "read_only"
             else "workspace-write"
         )
-        params = {
+        params: dict[str, Any] = {
             "model": getattr(launch.spec.harness, "model", None),
             "cwd": workspace,
             # MCP tools require Codex's approval-capable mode; ``never`` makes
@@ -800,6 +1036,17 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "sandbox": sandbox,
             "ephemeral": True,
         }
+        harness = launch.spec.harness
+        if isinstance(harness, Codex):
+            permissions = harness.permissions
+            profile = selected_profile(permissions)
+            if profile is not None:
+                params.pop("sandbox")
+                params["permissions"] = profile
+            elif permissions.sandbox is not UNSET:
+                params["sandbox"] = permissions.sandbox
+            if permissions.approval_policy is not UNSET:
+                params["approvalPolicy"] = permissions.approval_policy
         await self._write_frame(
             process,
             {
@@ -821,6 +1068,17 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     raise self._thread_start_failure(error, launch)
                 result = frame.get("result")
                 if isinstance(result, Mapping):
+                    if (
+                        isinstance(harness, Codex)
+                        and selected_profile(harness.permissions) is not None
+                    ):
+                        active = result.get("activePermissionProfile")
+                        if not isinstance(active, Mapping) or active.get(
+                            "id"
+                        ) != selected_profile(harness.permissions):
+                            raise HarnessStartupError(
+                                "Codex did not activate the requested permission profile"
+                            )
                     thread = result.get("thread", result)
                     if isinstance(thread, Mapping) and isinstance(
                         thread.get("id"), str
@@ -835,7 +1093,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "model": str(params["model"])
             if isinstance(params.get("model"), str)
             else "",
-            "sandbox": sandbox,
+            **({"sandbox": params["sandbox"]} if "sandbox" in params else {}),
         }
         return self._thread_id
 

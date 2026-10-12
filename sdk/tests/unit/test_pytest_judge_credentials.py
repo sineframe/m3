@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,14 @@ def test_judge_credential_mapping_is_restored_after_direct_pytest(monkeypatch):
     monkeypatch.setenv("M3_JUDGE_API_KEY", "original-secret")
 
     class Config:
+        pluginmanager = pytest.PytestPluginManager()
+        invocation_params = pytest.Config.InvocationParams(
+            args=(), plugins=None, dir=Path.cwd()
+        )
+
+        def add_cleanup(self, callback):
+            self.cleanup_callback = callback
+
         def getoption(self, name):
             return {
                 "--credential-env": ["judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY"],

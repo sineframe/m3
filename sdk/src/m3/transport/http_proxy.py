@@ -137,6 +137,7 @@ class McpHttpProxy:
         transport: str,
         capture_path: str,
         baseline_ns: int,
+        resolved_inputs: bool = False,
         allow_private: bool = False,
         loopback_only: bool = False,
         secrets: set[str] | None = None,
@@ -150,9 +151,13 @@ class McpHttpProxy:
     ):
         self.transport = transport
         writer_secrets = set(secrets or ())
-        self.upstream_url = _expand_configured(upstream_url, writer_secrets)
+        self.upstream_url = (
+            upstream_url
+            if resolved_inputs
+            else _expand_configured(upstream_url, writer_secrets)
+        )
         self.configured_headers = {
-            key: _expand_configured(value, writer_secrets)
+            key: value if resolved_inputs else _expand_configured(value, writer_secrets)
             for key, value in (configured_headers or {}).items()
         }
         writer_secrets.update(

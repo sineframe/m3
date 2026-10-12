@@ -69,7 +69,7 @@
 - [ACP reference](reference-acp.md): Manifest, launch, session, policy, evidence, and failure behavior for ACP agents.
 - [CLI reference](reference-cli.md): The standalone m3 command selects the project Python and coordinates pytest, saved history, the local viewer, managed harnesses, authentication, and report publishing. Options after -- are passed to pytest unchanged.
 - [Compatibility and current boundaries](reference-compatibility.md): These docs describe the release shown in the site header. The SDK requires Python 3.10 or newer. A CLI-managed project must use the matching SDK version.
-- [Configuration](reference-configuration.md): Project identity and environment-file loading behavior.
+- [Configuration](reference-configuration.md): Project settings, native configuration values, and environment-file loading.
 - [Credential reference](reference-credentials.md): Resolution and validation behavior for endpoint, agent, judge, ACP, and upload credentials.
 - [Managed harness runtimes](reference-managed-runtimes.md): Reference for native harness selection, version resolution, executable acquisition, provenance, cache configuration, leases, and failure behavior.
 - [CLI output and trace limitations](reference-output.md): What each M3 line printed after a pytest run means, and which trace limitations are routine.

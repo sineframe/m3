@@ -1645,7 +1645,13 @@ def test_codex_modern_mcp_configuration_preserves_explicit_server_protocol() -> 
         "connection-1",
         command="mcp-server",
     )
-    launch = SimpleNamespace(configurations=(server,))
+    spec = AgentSpec(
+        harness=Codex(model="fixture"),
+        servers=(
+            ServerBinding(server=StdioServer(name="fixture", command="mcp-server")),
+        ),
+    )
+    launch = HarnessLaunch(spec, ServerGroupSnapshot(), (server,), spec.tool_policy)
 
     config = codex_configuration(launch)
     assert config["features"]["mcp_2026_07_28"] is True
@@ -1660,7 +1666,7 @@ def test_codex_modern_mcp_configuration_preserves_explicit_server_protocol() -> 
 
     legacy = replace(server, environment={"CODEX_MCP_PROTOCOL_VERSION": "2025-06-18"})
     with pytest.raises(HarnessStartupError, match="protocol version is unsupported"):
-        codex_configuration(SimpleNamespace(configurations=(legacy,)))
+        codex_configuration(replace(launch, configurations=(legacy,)))
 
 
 def test_codex_planned_mrtr_rejects_only_the_legacy_target_server() -> None:

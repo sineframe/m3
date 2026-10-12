@@ -29,6 +29,7 @@ from .transport.capture_proxy import McpCaptureManager
 from .types import (
     HTTPServer,
     InProcessServer,
+    McpTimeouts,
     ServerBinding,
     ServerValue,
     StdioServer,
@@ -163,6 +164,7 @@ class HarnessServerConfig:
     cwd: str | None = None
     tools: tuple[str, ...] = ()
     loopback_only: bool = False
+    timeouts: McpTimeouts = field(default_factory=McpTimeouts)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", dict(self.environment))
@@ -737,6 +739,7 @@ class ServerGroupManager:
         self,
         *,
         stdio_environment_defaults: Mapping[str, Mapping[str, Any]] | None = None,
+        defer_capture: bool = False,
     ) -> ServerGroupSnapshot:
         if self._closed:
             raise ServerStartupError("server group is closed")
@@ -792,10 +795,16 @@ class ServerGroupManager:
                 tools_by_server={record.key: record.tools for record in records},
             )
             raw_configurations = self._raw_configurations()
-            instrumented = await self._capture.instrument(
-                raw_configurations,
-                stdio_environment_defaults=stdio_environment_defaults,
-            )
+            if defer_capture:
+                instrumented = self._capture.prepare(
+                    raw_configurations,
+                    stdio_environment_defaults=stdio_environment_defaults,
+                )
+            else:
+                instrumented = await self._capture.instrument(
+                    raw_configurations,
+                    stdio_environment_defaults=stdio_environment_defaults,
+                )
             for config in instrumented:
                 configured_record = self._records.get(config.key)
                 if configured_record is None:
@@ -861,6 +870,7 @@ class ServerGroupManager:
                         available=record.available,
                         connection_id=record.connection_id,
                         command=server.command,
+                        timeouts=server.timeouts,
                         args=server.args,
                         cwd=server.cwd,
                         environment=server.environment,
@@ -878,6 +888,7 @@ class ServerGroupManager:
                         connection_id=record.connection_id,
                         endpoint=record.endpoint or server.url,
                         headers=server.headers,
+                        timeouts=server.timeouts,
                         loopback_only=server.loopback_only,
                         reason=record.reason,
                         tools=record.tools,
@@ -892,6 +903,7 @@ class ServerGroupManager:
                         available=record.available,
                         connection_id=record.connection_id,
                         endpoint=record.endpoint,
+                        timeouts=server.timeouts,
                         reason=record.reason,
                         tools=record.tools,
                     )
@@ -902,8 +914,14 @@ class ServerGroupManager:
         configurations = self._raw_configurations()
         if self._capture is None or not self._started:
             return configurations
+        prepared = {
+            configuration.connection_id: configuration
+            for configuration in (self._capture._prepared_configurations or ())
+        }
         return tuple(
-            self._capture._instrumented.get(config.connection_id, config)
+            self._capture._instrumented.get(
+                config.connection_id, prepared.get(config.connection_id, config)
+            )
             for config in configurations
         )
 

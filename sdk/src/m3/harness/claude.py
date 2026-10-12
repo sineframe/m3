@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import shutil
 import tempfile
 import time
@@ -23,12 +22,16 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
+from .._types.specs import AgentSpec
 from ..agent_session import AdapterTurn
 from ..policy import ToolPolicyEvidence
+from ..server_group import HarnessServerConfig
 from ..trace.redaction import RedactionConfig, RedactionError, redact_for_api
 from ..types import (
+    UNSET,
     Capability,
     CapabilityStatus,
+    ClaudeCode,
     ErrorCode,
     ErrorInfo,
     NativeToolPolicy,
@@ -68,6 +71,8 @@ from .native import (
     workspace_for_launch,
     write_config,
 )
+from .native_capabilities import NativeRuntimeIdentity
+from .native_settings import milliseconds
 from .observations import (
     HarnessObservation,
     MessageChunkObservation,
@@ -367,6 +372,32 @@ class ClaudeCodeHarnessAdapter:
     def supported_content_kinds(self) -> frozenset[str]:
         return self._capabilities.supported_content_kinds
 
+    async def validate_native_settings(
+        self,
+        spec: AgentSpec,
+        configurations: tuple[HarnessServerConfig, ...],
+        *,
+        runtime_identity: NativeRuntimeIdentity | None = None,
+    ) -> None:
+        from .native_settings import validate_native_settings
+
+        await validate_native_settings(
+            self.executable, spec, configurations, runtime_identity
+        )
+        startup = next(
+            (
+                item.timeouts.startup_seconds
+                for item in configurations
+                if item.timeouts.startup_seconds is not UNSET
+            ),
+            UNSET,
+        )
+        if startup is not UNSET and "MCP_TIMEOUT" in self.environment:
+            if self.environment["MCP_TIMEOUT"] != str(milliseconds(startup)):
+                raise HarnessStartupError(
+                    "Claude MCP timeout conflicts with explicit harness environment"
+                )
+
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
         if (
             shutil.which(self.executable) is None
@@ -440,20 +471,51 @@ class ClaudeCodeHarnessAdapter:
         )
         return self._capabilities.readiness()
 
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._launch_credentials import activate_native_launch
+
+        return await activate_native_launch(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+        )
+
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("Claude Code streaming is unavailable")
         if self._session is not None:
             raise HarnessStartupError("Claude Code session is already open")
+        launch = await self.prepare_launch_credentials(launch)
         root = Path(tempfile.mkdtemp(prefix="m3-claude-"))
         owner = ProcessOwner(root)
         try:
-            environment = _isolated_environment(root, self.environment)
+            credentials = launch._credentials
+            assert credentials is not None
+            environment = _isolated_environment(root, credentials.child_environment())
             environment["DISABLE_UPDATES"] = "1"
             harness = launch.spec.harness
             if harness is None:
                 raise HarnessStartupError("Claude Code harness is unavailable")
+            if isinstance(harness, ClaudeCode):
+                startup = next(
+                    (
+                        item.timeouts.startup_seconds
+                        for item in launch.configurations
+                        if item.timeouts.startup_seconds is not UNSET
+                    ),
+                    UNSET,
+                )
+                if startup is not UNSET:
+                    native_budget = str(milliseconds(startup))
+                    if (
+                        "MCP_TIMEOUT" in self.environment
+                        and self.environment["MCP_TIMEOUT"] != native_budget
+                    ):
+                        raise HarnessStartupError(
+                            "Claude MCP timeout conflicts with explicit harness environment"
+                        )
+                    environment["MCP_TIMEOUT"] = native_budget
             runtime_secrets: set[str] = set()
             for target, reference in getattr(
                 harness, "credential_references", {}
@@ -465,9 +527,7 @@ class ClaudeCodeHarnessAdapter:
                     raise HarnessStartupError(
                         "Claude Code credential reference is unavailable"
                     )
-                value = self.environment.get(reference.name)
-                if value is None:
-                    value = os.environ.get(reference.name)
+                value = credentials.credential_environment()[target]
                 if not value:
                     raise HarnessStartupError("Claude Code credential is unavailable")
                 environment[target] = value
@@ -479,7 +539,7 @@ class ClaudeCodeHarnessAdapter:
             config = write_config(
                 root,
                 launch,
-                environment=self._resolver_environment,
+                environment=credentials.reference_environment(),
                 secrets=runtime_secrets,
             )
             self._native_error_redaction = launch_error_redaction(
@@ -514,20 +574,49 @@ class ClaudeCodeHarnessAdapter:
                     str(item) for item in (policy.policy.get("read_only_tools") or ())
                 )
                 if mode == "mcp_only":
-                    argv.extend(["--tools", "", "--allowedTools", f"mcp__{server}__*"])
+                    argv.extend(["--tools", ""])
+                    if (
+                        not isinstance(harness, ClaudeCode)
+                        or harness.permissions.allowed_tools is UNSET
+                    ):
+                        argv.extend(["--allowedTools", f"mcp__{server}__*"])
                 elif mode == "mcp_read_only":
                     argv.extend(
                         [
                             "--tools",
                             ",".join(read_only),
-                            "--allowedTools",
-                            ",".join((*read_only, f"mcp__{server}__*")),
                         ]
                     )
+                    if (
+                        not isinstance(harness, ClaudeCode)
+                        or harness.permissions.allowed_tools is UNSET
+                    ):
+                        argv.extend(
+                            [
+                                "--allowedTools",
+                                ",".join((*read_only, f"mcp__{server}__*")),
+                            ]
+                        )
                 elif mode == "full":
+                    argv.extend(["--tools", "default"])
+                    if (
+                        not isinstance(harness, ClaudeCode)
+                        or not harness.permissions.model_dump()
+                    ):
+                        argv.append("--dangerously-skip-permissions")
+            if isinstance(harness, ClaudeCode):
+                permissions = harness.permissions
+                if permissions.permission_mode is not UNSET:
+                    argv.extend(["--permission-mode", permissions.permission_mode])
+                if permissions.allowed_tools is not UNSET:
+                    argv.extend(["--allowedTools", ",".join(permissions.allowed_tools)])
+                if permissions.denied_tools is not UNSET:
                     argv.extend(
-                        ["--tools", "default", "--dangerously-skip-permissions"]
+                        ["--disallowedTools", ",".join(permissions.denied_tools)]
                     )
+            from ._launch_credentials import check_credential_deadline
+
+            check_credential_deadline(launch)
             await owner.spawn(argv, environment, cwd=workspace)
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(
                 maxsize=MAX_QUEUE_ITEMS
@@ -647,6 +736,9 @@ class ClaudeCodeHarnessAdapter:
         self._owner = None
         self._config = None
         self._output = None
+        from ._launch_credentials import release_native_credentials
+
+        release_native_credentials(self._launch)
         self._launch = None
         self._root = None
         self._native_error_redaction = None

@@ -8,6 +8,401 @@ description: "Public Python API reference for m3.types."
 Signatures use `...` for factory-backed or opaque defaults. Model field
 tables show required status, defaults, constraints, and descriptions.
 
+## `UNSET`
+
+`m3.types.UNSET`
+
+## `Unset`
+
+```python
+m3.types.Unset(
+    *values,
+)
+```
+
+An omitted native setting, distinct from an explicit disabled budget.
+
+- `UNSET` = `'m3.unset'`
+
+## `HarnessTimeouts`
+
+```python
+m3.types.HarnessTimeouts(
+    *,
+    startup_seconds: float | m3.types.Unset = Unset.UNSET,
+    initialize_seconds: float | m3.types.Unset = Unset.UNSET,
+    readiness_seconds: float | m3.types.Unset = Unset.UNSET,
+    request_seconds: float | m3.types.Unset = Unset.UNSET,
+    session_seconds: float | m3.types.Unset = Unset.UNSET,
+    total_seconds: float | m3.types.Unset | None = Unset.UNSET,
+) -> None
+```
+
+Native phase budgets in seconds; omitted phases retain native defaults.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `startup_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `initialize_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `readiness_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `request_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `session_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `total_seconds` | `float \| m3.types.Unset \| None` | No | `Unset.UNSET ('m3.unset')` | — | — |
+
+## `McpTimeouts`
+
+```python
+m3.types.McpTimeouts(
+    *,
+    startup_seconds: float | m3.types.Unset = Unset.UNSET,
+    request_seconds: float | m3.types.Unset = Unset.UNSET,
+) -> None
+```
+
+Configuration values for MCP startup and request budgets in seconds.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `startup_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `request_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+
+## `NativeFilesystemPermissions`
+
+```python
+m3.types.NativeFilesystemPermissions(
+    *,
+    rules: collections.abc.Mapping[str, Literal['read', 'write', 'deny']] = ...,
+) -> None
+```
+
+Native profile path rules, separate from interactive approval policy.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `rules` | `collections.abc.Mapping[str, Literal['read', 'write', 'deny']]` | No | `factory builtins.dict()` | `type argument 1: strict=True` | — |
+
+## `NativeNetworkPermissions`
+
+```python
+m3.types.NativeNetworkPermissions(
+    *,
+    enabled: bool | m3.types.Unset = Unset.UNSET,
+    domains: collections.abc.Mapping[str, Literal['allow', 'deny']] = ...,
+) -> None
+```
+
+Native Codex profile network switch and domain decisions.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `enabled` | `bool \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `variant 1: strict=True` | — |
+| `domains` | `collections.abc.Mapping[str, Literal['allow', 'deny']]` | No | `factory builtins.dict()` | `type argument 1: strict=True` | — |
+
+## `CodexPermissionProfile`
+
+```python
+m3.types.CodexPermissionProfile(
+    *,
+    name: str,
+    filesystem: m3.types.NativeFilesystemPermissions = ...,
+    network: m3.types.NativeNetworkPermissions = ...,
+) -> None
+```
+
+A named profile definition for native Codex configuration.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `name` | `str` | Yes | — | `strict=True, min_length=1, max_length=4096` | — |
+| `filesystem` | `m3.types.NativeFilesystemPermissions` | No | `factory m3.types.NativeFilesystemPermissions()` | — | — |
+| `network` | `m3.types.NativeNetworkPermissions` | No | `factory m3.types.NativeNetworkPermissions()` | — | — |
+
+## `CodexPermissions`
+
+```python
+m3.types.CodexPermissions(
+    *,
+    profile: str | m3.types.CodexPermissionProfile | m3.types.Unset = Unset.UNSET,
+    profiles: tuple[m3.types.CodexPermissionProfile, ...] = (),
+    sandbox: Literal['read-only', 'workspace-write', 'danger-full-access'] | m3.types.Unset = Unset.UNSET,
+    network_access: bool | m3.types.Unset = Unset.UNSET,
+    approval_policy: Literal['untrusted', 'on-failure', 'on-request', 'never'] | m3.types.Unset = Unset.UNSET,
+) -> None
+```
+
+Choose a named/defined profile or legacy sandbox options, never both.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `profile` | `str \| m3.types.CodexPermissionProfile \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `variant 1: strict=True` | — |
+| `profiles` | `tuple[m3.types.CodexPermissionProfile, ...]` | No | `()` | — | — |
+| `sandbox` | `Literal['read-only', 'workspace-write', 'danger-full-access'] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `network_access` | `bool \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `variant 1: strict=True` | — |
+| `approval_policy` | `Literal['untrusted', 'on-failure', 'on-request', 'never'] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+
+## `ClaudeCodePermissions`
+
+```python
+m3.types.ClaudeCodePermissions(
+    *,
+    permission_mode: Literal['default', 'acceptEdits', 'auto', 'manual', 'plan', 'dontAsk', 'bypassPermissions'] | m3.types.Unset = Unset.UNSET,
+    allowed_tools: tuple[str, ...] | m3.types.Unset = Unset.UNSET,
+    denied_tools: tuple[str, ...] | m3.types.Unset = Unset.UNSET,
+) -> None
+```
+
+Claude Code interaction mode and explicit native tool rules.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `permission_mode` | `Literal['default', 'acceptEdits', 'auto', 'manual', 'plan', 'dontAsk', 'bypassPermissions'] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `allowed_tools` | `tuple[str, ...] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `type argument 1: strict=True` | — |
+| `denied_tools` | `tuple[str, ...] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `type argument 1: strict=True` | — |
+
+## `OpenCodePermissions`
+
+```python
+m3.types.OpenCodePermissions(
+    *,
+    rules: collections.abc.Mapping[str, Literal['allow', 'ask', 'deny']] = ...,
+) -> None
+```
+
+OpenCode native tool/pattern rules; this is not an OS filesystem sandbox.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `rules` | `collections.abc.Mapping[str, Literal['allow', 'ask', 'deny']]` | No | `factory builtins.dict()` | `type argument 1: strict=True` | — |
+
+## `CachePolicy`
+
+```python
+m3.types.CachePolicy(
+    *,
+    mode: Literal['isolated', 'immutable-seed'] = 'isolated',
+    root: str | m3.types.Unset = Unset.UNSET,
+) -> None
+```
+
+Isolated caches by default; immutable seeds require runtime support.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `mode` | `Literal['isolated', 'immutable-seed']` | No | `'isolated'` | — | — |
+| `root` | `str \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `variant 1: strict=True` | — |
+
+## `StartupAdmission`
+
+```python
+m3.types.StartupAdmission(
+    *,
+    enabled: bool = False,
+    slots: int = 4,
+    queue_timeout_seconds: float = 300,
+    normalized_load_threshold: float | m3.types.Unset | None = Unset.UNSET,
+) -> None
+```
+
+Optional startup admission, disabled until explicitly enabled.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `enabled` | `bool` | No | `False` | `strict=True` | — |
+| `slots` | `int` | No | `4` | `strict=True, gt=0` | — |
+| `queue_timeout_seconds` | `float` | No | `300` | `strict=True, gt=0, allow_inf_nan=False` | — |
+| `normalized_load_threshold` | `float \| m3.types.Unset \| None` | No | `Unset.UNSET ('m3.unset')` | — | — |
+
+## `CliSettings`
+
+```python
+m3.types.CliSettings(
+    *,
+    project_python_timeout_seconds: float | m3.types.Unset = Unset.UNSET,
+) -> None
+```
+
+Project Python probe budget in seconds.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `project_python_timeout_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+
+## `ResultsSettings`
+
+```python
+m3.types.ResultsSettings(
+    *,
+    busy_timeout_seconds: float | m3.types.Unset = Unset.UNSET,
+) -> None
+```
+
+SQLite writer wait budget in seconds.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `busy_timeout_seconds` | `float \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+
+## `WorkerBootstrapSettings`
+
+```python
+m3.types.WorkerBootstrapSettings(
+    *,
+    timeout_seconds: float = 30,
+) -> None
+```
+
+One total private worker bootstrap budget, not a per-frame timeout.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `timeout_seconds` | `float` | No | `30` | `strict=True, gt=0, allow_inf_nan=False` | — |
+
+## `ServerSettings`
+
+```python
+m3.types.ServerSettings(
+    *,
+    timeouts: m3.types.McpTimeouts = ...,
+) -> None
+```
+
+Settings for an existing server alias; this never defines a server.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
+
+## `HarnessSettings`
+
+```python
+m3.types.HarnessSettings(
+    *,
+    timeouts: m3.types.HarnessTimeouts = ...,
+    cache: m3.types.CachePolicy = ...,
+    admission: m3.types.StartupAdmission = ...,
+) -> None
+```
+
+Settings common to native harness selections.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `timeouts` | `m3.types.HarnessTimeouts` | No | `factory m3.types.HarnessTimeouts()` | — | — |
+| `cache` | `m3.types.CachePolicy` | No | `factory m3.types.CachePolicy()` | — | — |
+| `admission` | `m3.types.StartupAdmission` | No | `factory m3.types.StartupAdmission()` | — | — |
+
+## `CodexSettings`
+
+```python
+m3.types.CodexSettings(
+    *,
+    timeouts: m3.types.HarnessTimeouts = ...,
+    cache: m3.types.CachePolicy = ...,
+    admission: m3.types.StartupAdmission = ...,
+    permissions: m3.types.CodexPermissions = ...,
+) -> None
+```
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `timeouts` | `m3.types.HarnessTimeouts` | No | `factory m3.types.HarnessTimeouts()` | — | — |
+| `cache` | `m3.types.CachePolicy` | No | `factory m3.types.CachePolicy()` | — | — |
+| `admission` | `m3.types.StartupAdmission` | No | `factory m3.types.StartupAdmission()` | — | — |
+| `permissions` | `m3.types.CodexPermissions` | No | `factory m3.types.CodexPermissions()` | — | — |
+
+## `ClaudeCodeSettings`
+
+```python
+m3.types.ClaudeCodeSettings(
+    *,
+    timeouts: m3.types.HarnessTimeouts = ...,
+    cache: m3.types.CachePolicy = ...,
+    admission: m3.types.StartupAdmission = ...,
+    permissions: m3.types.ClaudeCodePermissions = ...,
+) -> None
+```
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `timeouts` | `m3.types.HarnessTimeouts` | No | `factory m3.types.HarnessTimeouts()` | — | — |
+| `cache` | `m3.types.CachePolicy` | No | `factory m3.types.CachePolicy()` | — | — |
+| `admission` | `m3.types.StartupAdmission` | No | `factory m3.types.StartupAdmission()` | — | — |
+| `permissions` | `m3.types.ClaudeCodePermissions` | No | `factory m3.types.ClaudeCodePermissions()` | — | — |
+
+## `OpenCodeSettings`
+
+```python
+m3.types.OpenCodeSettings(
+    *,
+    timeouts: m3.types.HarnessTimeouts = ...,
+    cache: m3.types.CachePolicy = ...,
+    admission: m3.types.StartupAdmission = ...,
+    permissions: m3.types.OpenCodePermissions = ...,
+) -> None
+```
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `timeouts` | `m3.types.HarnessTimeouts` | No | `factory m3.types.HarnessTimeouts()` | — | — |
+| `cache` | `m3.types.CachePolicy` | No | `factory m3.types.CachePolicy()` | — | — |
+| `admission` | `m3.types.StartupAdmission` | No | `factory m3.types.StartupAdmission()` | — | — |
+| `permissions` | `m3.types.OpenCodePermissions` | No | `factory m3.types.OpenCodePermissions()` | — | — |
+
+## `HarnessSettingsMap`
+
+```python
+m3.types.HarnessSettingsMap(
+    *,
+    codex: m3.types.CodexSettings = ...,
+    claude_code: m3.types.ClaudeCodeSettings = ...,
+    opencode: m3.types.OpenCodeSettings = ...,
+) -> None
+```
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `codex` | `m3.types.CodexSettings` | No | `factory m3.types.CodexSettings()` | — | — |
+| `claude_code` | `m3.types.ClaudeCodeSettings` | No | `factory m3.types.ClaudeCodeSettings()` | — | — |
+| `opencode` | `m3.types.OpenCodeSettings` | No | `factory m3.types.OpenCodeSettings()` | — | — |
+
 ## `EVENT_SCHEMA_ID`
 
 `m3.types.EVENT_SCHEMA_ID`
@@ -107,6 +502,7 @@ m3.types.HTTPServer(
     *,
     name: str,
     trust: m3.types.TrustLevel = TrustLevel.UNTRUSTED,
+    timeouts: m3.types.McpTimeouts = ...,
     kind: Literal['streamable_http'] = 'streamable_http',
     url: str,
     headers: collections.abc.Mapping[str, m3.types.SecretReference | str] = ...,
@@ -120,6 +516,7 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `name` | `str` | Yes | — | `min_length=1, max_length=256` | — |
 | `trust` | `m3.types.TrustLevel` | No | `TrustLevel.UNTRUSTED ('untrusted')` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 | `kind` | `Literal['streamable_http']` | No | `'streamable_http'` | — | — |
 | `url` | `str` | Yes | — | `min_length=1` | — |
 | `headers` | `collections.abc.Mapping[str, m3.types.SecretReference \| str]` | No | `factory builtins.dict()` | — | — |
@@ -132,6 +529,7 @@ m3.types.StdioServer(
     *,
     name: str,
     trust: m3.types.TrustLevel = TrustLevel.UNTRUSTED,
+    timeouts: m3.types.McpTimeouts = ...,
     kind: Literal['stdio'] = 'stdio',
     command: str,
     args: tuple[str, ...] = (),
@@ -146,6 +544,7 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `name` | `str` | Yes | — | `min_length=1, max_length=256` | — |
 | `trust` | `m3.types.TrustLevel` | No | `TrustLevel.UNTRUSTED ('untrusted')` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 | `kind` | `Literal['stdio']` | No | `'stdio'` | — | — |
 | `command` | `str` | Yes | — | `min_length=1` | — |
 | `args` | `tuple[str, ...]` | No | `()` | — | — |
@@ -159,6 +558,7 @@ m3.types.InProcessServer(
     *,
     name: str,
     trust: m3.types.TrustLevel = TrustLevel.SDK_LOOPBACK,
+    timeouts: m3.types.McpTimeouts = ...,
     kind: Literal['in_process'] = 'in_process',
     factory: Any,
     descriptor: collections.abc.Mapping[str, Any] = ...,
@@ -174,6 +574,7 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `name` | `str` | Yes | — | `min_length=1, max_length=256` | — |
 | `trust` | `m3.types.TrustLevel` | No | `TrustLevel.SDK_LOOPBACK ('sdk_loopback')` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 | `kind` | `Literal['in_process']` | No | `'in_process'` | — | — |
 | `factory` | `Any` | Yes | — | — | — |
 | `descriptor` | `collections.abc.Mapping[str, Any]` | No | `factory builtins.dict()` | — | — |
@@ -207,6 +608,7 @@ m3.types.ServerBinding(
     profile: m3.types.ServerProfileRef | None = None,
     alias: str | None = None,
     required: bool = True,
+    timeouts: m3.types.McpTimeouts = ...,
 ) -> None
 ```
 
@@ -218,6 +620,7 @@ Model fields:
 | `profile` | `m3.types.ServerProfileRef \| None` | No | `None` | — | — |
 | `alias` | `str \| None` | No | `None` | `min_length=1, max_length=256` | — |
 | `required` | `bool` | No | `True` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 
 ## `ServerValue`
 

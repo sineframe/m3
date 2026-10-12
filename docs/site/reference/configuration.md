@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-description: "Project identity and environment-file loading behavior."
+description: "Project settings, native configuration values, and environment-file loading."
 ---
 
 # Configuration
@@ -29,7 +29,7 @@ See [Find slow steps in a test run](../guides/results/timings.md), which also co
 
 ## SDK settings
 
-The SDK resolves two settings. Each can come from an explicit argument, an `M3_*` environment variable, or a `[tool.m3]` table in `pyproject.toml`.
+The SDK uses two settings at runtime. Each can come from an explicit argument, an `M3_*` environment variable, or a `[tool.m3]` table in `pyproject.toml`.
 
 | Setting | Environment variable | `[tool.m3]` key | Values | Default | Effect |
 | --- | --- | --- | --- | --- | --- |
@@ -45,6 +45,21 @@ For each setting the highest-precedence source that provides a value wins:
 
 Passing a ready-made `Config` object to `MCPTestKit` uses it as is, without reading the environment or `pyproject.toml`. A setting that is present but invalid is an error, not a fallback to the next source, and so is an unknown key in `[tool.m3]`. The resolved `Config` records where each value came from in `config.sources` (`explicit`, `environment`, `project`, or `default`).
 
+During a test invocation, m3 resolves configuration once. Pytest workers and kits constructed inside them inherit that configuration, even if the file is subsequently changed or deleted, or a worker changes an `M3_*` variable. Explicit Python overrides still apply afterward, field by field. For example, passing only `HarnessTimeouts(initialize_seconds=15)` preserves an inherited `startup_seconds=90`.
+
+Use `--m3-config PATH` to select a TOML file containing the same `[tool.m3]` tables. You create this file; m3 does not generate an additional settings file. The option is available on `m3 test`, `m3 ci test`, `m3 doctor`, and direct pytest with the m3 plugin:
+
+```sh
+m3 test --m3-config run.toml -- tests/
+m3 ci test --m3-config run.toml -- tests/
+m3 doctor --m3-config run.toml --require config --json
+pytest -p m3.pytest_plugin --m3-config run.toml tests/
+```
+
+Configuration syntax and values are validated before the CLI probes project Python. Configuration does not bind servers: entries under `[tool.m3.servers]` affect only servers already selected or bound by the test.
+
+Configured values and server selections travel to local workers through a private, single-use bootstrap. Later sessions use the worker's retained copy. Literal values stay frozen for the invocation; credential references remain references for the session's credential resolver. Remote workers are rejected when private configuration would need to be transferred.
+
 ```toml
 # pyproject.toml
 [tool.m3]
@@ -59,7 +74,7 @@ protocol_revision = "auto"
 M3_ARTIFACT_POLICY=never m3 doctor --require config --json
 ```
 
-The report's `configuration.settings` object has this shape; `origin` for a `pyproject.toml` value is `pyproject:` followed by the absolute file path:
+The report's `configuration.settings` object has this shape; `origin` for a `pyproject.toml` value is `pyproject:` followed by the absolute file path. Its separate `configuration.digest` identifies the nonsecret settings projection; private values and their file paths do not affect this digest:
 
 ```json
 {
@@ -81,3 +96,165 @@ m3 doctor: configuration error (code=invalid_configuration field=artifact_policy
 ```
 
 The `code` is `invalid_configuration` for a bad value, `unknown_setting` for an unrecognized `[tool.m3]` key, and `invalid_project` for a `pyproject.toml` that is not valid TOML or whose `[tool.m3]` is not a table. Exit 1 means the settings resolved but another requirement, such as the project Python environment, is not ready.
+
+## Construct and merge native settings
+
+`Config` also parses typed native timeout, permission, cache and admission values. Construction and loading never launch a process. Agent sessions apply native permissions and MCP budgets after merging their explicit settings and checking the selected runtime. Harness phase deadlines, cache reuse and admission values remain a configuration foundation.
+
+`load_config(config_file=path)` replaces project discovery with an explicit TOML file containing the same `[tool.m3]` table. It adds no environment variables or CLI flags. Invalid fields fail during parsing; no native process is started by this API. Both file forms merge defaults, file values, existing configuration environment values, and explicit Python values in that order. Alias settings describe existing server bindings and never create servers.
+
+Every native phase budget is a positive finite number of seconds. `session_seconds` bounds native session creation, not session lifetime or a turn. `request_seconds` on `HarnessTimeouts` bounds a native startup protocol request. `total_seconds` is an optional total startup budget. Omitted native leaves use `UNSET` and inherit. Only `total_seconds` and `normalized_load_threshold` accept Python `None` or TOML `false` to disable a budget. Required phases reject `None`; numeric fields reject booleans and strings.
+
+`merge_settings` overlays explicitly supplied leaves of the same type and validates the merged result. An initialization-only override preserves startup and total budgets. Sparse JSON exports omit `UNSET` and omitted fields, so JSON round trips preserve explicit overrides, including `None`. Nested settings models merge by explicit field. Map entries merge by key; an explicitly supplied empty map clears that map. An empty nested model inherits instead of clearing its fields. Changing only a defined profile's `name` retains earlier explicit filesystem and network leaves; supply explicit rule maps to change those permissions.
+
+A root-only `CachePolicy(root="/new")` is a partial override and can inherit `immutable-seed` mode. Harness cache settings inherit global cache settings before validation. A final `Config` or `merge_settings` result rejects a root without that opt-in, and an explicit `mode="isolated"` with a root is always invalid.
+
+```toml
+[tool.m3.harnesses.codex.timeouts]
+startup_seconds = 90
+total_seconds = 120
+[tool.m3.mcp_timeouts]
+startup_seconds = 60
+[tool.m3.servers.slow.timeouts]
+startup_seconds = 75
+[tool.m3.cli]
+project_python_timeout_seconds = 60
+[tool.m3.results]
+busy_timeout_seconds = 30
+```
+
+Codex permission values choose a named or defined profile, or legacy sandbox options. A profile cannot coexist with legacy sandbox/network overrides. Defined profiles expose a subset of the [Codex 0.160.1 native schema](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/core/config.schema.json): filesystem path decisions (`read`, `write`, `deny`), and network enablement/domain decisions (`allow`, `deny`). Interactive approval policy is separate from filesystem permissions. Claude Code and OpenCode tool rules do not promise OS filesystem confinement. Runtime support must be validated before these values are applied.
+
+### Apply native permissions and MCP budgets
+
+Native harness values accept `permissions=`, and server definitions and bindings accept `timeouts=McpTimeouts(...)`. An agent selection dictionary accepts the same typed permission value under `permissions`. `agent.session(harness_permissions=...)` overrides the selected harness's explicit leaves for that session. The low-level sync and async `agent_session` methods accept that override too.
+
+Permissions merge in this order: `[tool.m3.harnesses.<kind>.permissions]`, the selected harness's `permissions`, and the session override. Server budgets merge global `[tool.m3.mcp_timeouts]`, alias settings, the server definition, then the binding. An empty default model inherits; explicitly supplying `profiles=()` clears inherited profile definitions. Structural conflicts fail before session entry. Native capability checks run after runtime resolution and before MCP startup.
+
+Supply custom Codex profile definitions explicitly. This definition and selector can be reused by different harness cases:
+
+```python
+from m3.types import (
+    Codex,
+    CodexPermissionProfile,
+    CodexPermissions,
+    McpTimeouts,
+    NativeFilesystemPermissions,
+    NativeNetworkPermissions,
+    StdioServer,
+)
+
+profile = CodexPermissionProfile(
+    name="project",
+    filesystem=NativeFilesystemPermissions(
+        rules={":minimal": "read", ":project_roots": "write"},
+    ),
+    network=NativeNetworkPermissions(enabled=False),
+)
+harness = Codex(
+    model="your-codex-model",
+    runtime="managed",
+    version="0.162.1",
+    permissions=CodexPermissions(profile="project", profiles=(profile,)),
+)
+server = StdioServer(
+    name="slow",
+    command="python3",
+    args=("slow_mcp.py",),
+    timeouts=McpTimeouts(startup_seconds=60, request_seconds=120),
+)
+
+
+def test_native_values() -> None:
+    assert harness.permissions.profile == "project"
+    assert harness.permissions.profiles == (profile,)
+    assert server.timeouts.startup_seconds == 60
+    assert server.timeouts.request_seconds == 120
+    assert CodexPermissions(profile=profile).profile == profile
+```
+
+Use `harness` in a `HarnessCase`, as shown in [agent matrices](../guides/agents/matrices.md), or pass `harness.permissions` in an ordinary agent selection dictionary. The inline shorthand `CodexPermissions(profile=profile)` emits the same native configuration. A string selector must name an explicit definition or a builtin verified for that runtime. Duplicate definitions and conflicting inline definitions fail validation. A later `profile="other"` selector inherits the earlier `profiles` tuple; it does not import an ambient Codex config.
+
+Codex receives the selected profile in its isolated native config and `thread/start` request. M3 omits the legacy `sandbox` override and confirms the returned active profile ID. Builtins verified for the supported releases are `:read-only`, `:workspace`, and `:danger-full-access`. A legacy network setting requires `CodexPermissions(sandbox="workspace-write", network_access=True)`; profile filesystem/network rules cannot coexist with these legacy options. Interactive `approval_policy` is checked against the selected runtime's exported RPC schema, so an obsolete policy fails explicitly.
+
+Codex budgets become `startup_timeout_sec` and `tool_timeout_sec`. OpenCode's native `timeout` is one integer millisecond budget used for startup and requests; supplying distinct values for the two phases is invalid. Claude Code's `MCP_TIMEOUT` is process-wide, so all bound servers must have the same effective startup setting, including omitted settings. Claude request budgets use its per-server `timeout` field and may differ. They must be at least one second. Millisecond timers reject fractional milliseconds and values their native timer would clamp. These are native MCP budgets; M3's separate startup phase limits remain unchanged. Direct clients use their existing `timeout=` API and reject native harness budgets.
+
+Claude `permission_mode`, `allowed_tools`, and `denied_tools` become native CLI flags. Explicit rules replace inherited allowlists, and cannot widen a selected native tool policy. OpenCode `rules` become native `permission` entries under the same constraint. Native tool approvals and filesystem access are separate from M3's interaction handlers and portable tool policy.
+
+Config-only support is verified for Codex `0.160.1`/`0.162.1`, OpenCode `1.18.31`/`1.18.35`, and the published macOS arm64 Claude Code `2.1.295`/`2.1.296` distributions. Other requested config-only features fail as unknown. RPC/help fields are discovered with bounded isolated offline commands. Facts retain the native release, source revision or distribution integrity, executable digest, dialect and platform; every final session request is validated again. A script launcher needs a verified managed distribution identity for config-only support. Default sessions perform no additional discovery.
+
+Caches default to `isolated`. `immutable-seed` requests opt-in seed reuse; this type does not materialize a cache. Startup admission defaults to disabled, with four slots and a 300-second queue budget when enabled. Worker bootstrap defaults to one total 30-second budget. Native phase defaults remain unset so the runtime can retain its existing limits.
+
+This complete pytest example constructs each public settings type and verifies merging without launching a harness:
+
+```python
+from m3.configuration import Config, load_config, merge_settings
+from m3.types import (
+    UNSET,
+    CachePolicy,
+    ClaudeCodePermissions,
+    ClaudeCodeSettings,
+    CliSettings,
+    CodexPermissionProfile,
+    CodexPermissions,
+    CodexSettings,
+    HarnessSettings,
+    HarnessSettingsMap,
+    HarnessTimeouts,
+    McpTimeouts,
+    NativeFilesystemPermissions,
+    NativeNetworkPermissions,
+    OpenCodePermissions,
+    OpenCodeSettings,
+    ResultsSettings,
+    ServerSettings,
+    StartupAdmission,
+    Unset,
+    WorkerBootstrapSettings,
+)
+
+
+def test_configuration_values(tmp_path):
+    assert UNSET is Unset.UNSET
+    timeouts = merge_settings(
+        HarnessTimeouts(startup_seconds=90, total_seconds=120),
+        HarnessTimeouts(initialize_seconds=15, session_seconds=30),
+    )
+    assert timeouts.startup_seconds == 90
+    assert timeouts.total_seconds == 120
+    profile = CodexPermissionProfile(
+        name="project",
+        filesystem=NativeFilesystemPermissions(
+            rules={":workspace_roots": "write", "**/.env": "deny"}
+        ),
+        network=NativeNetworkPermissions(enabled=False),
+    )
+    config = Config(
+        harness_timeouts=timeouts,
+        mcp_timeouts=McpTimeouts(startup_seconds=60),
+        harnesses=HarnessSettingsMap(
+            codex=CodexSettings(permissions=CodexPermissions(profile=profile)),
+            claude_code=ClaudeCodeSettings(
+                permissions=ClaudeCodePermissions(permission_mode="plan")
+            ),
+            opencode=OpenCodeSettings(
+                permissions=OpenCodePermissions(rules={"edit": "deny"})
+            ),
+        ),
+        servers={"slow": ServerSettings(timeouts=McpTimeouts(startup_seconds=75))},
+        cli=CliSettings(project_python_timeout_seconds=60),
+        results=ResultsSettings(busy_timeout_seconds=30),
+        worker_bootstrap=WorkerBootstrapSettings(timeout_seconds=30),
+        cache=CachePolicy(mode="isolated"),
+        admission=StartupAdmission(enabled=False),
+    )
+    assert HarnessSettings().timeouts.startup_seconds is UNSET
+    assert config.servers["slow"].timeouts.startup_seconds == 75
+    assert "profile" not in str(config.redacted_projection().get("native_settings"))
+    path = tmp_path / "run.toml"
+    path.write_text("[tool.m3.harness_timeouts]\nstartup_seconds=90\n")
+    resolved = load_config(config_file=path, env={})
+    assert resolved.harness_timeouts.startup_seconds == 90
+```
+
+`config.sources` tracks every leaf. Dots and backslashes in mapping keys are escaped in provenance paths. `config.redacted_projection()` preserves the two existing SDK diagnostics and lists only the field and source of explicitly configured native settings; it omits native values, aliases, permission identifiers and file paths from those added diagnostics. Full `model_dump()` output is a configuration export, not a safe log projection.

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 RESERVED_PYTEST_OPTIONS = frozenset(
     {
         "--results-db",
+        "--m3-config",
         "--project-root",
         "--credential-env",
         "--m3-server-selections",

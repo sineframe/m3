@@ -12,6 +12,7 @@ from dotenv import dotenv_values
 
 from m3.configuration import ConfigError, load_config
 from m3.services.probes import ProbeKind, ProbeRequest, Probes
+from m3.types import UNSET
 
 from .canary import canary_build
 from .errors import CLIError
@@ -208,8 +209,10 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     requirements = [_parse_requirement(value) for value in args.require]
     if not requirements:
         requirements = [("config", None), ("storage", "memory")]
-    if args.env_file is not None and not any(
-        kind == "config" for kind, _ in requirements
+    if (
+        args.env_file is not None
+        and getattr(args, "m3_config", None) is None
+        and not any(kind == "config" for kind, _ in requirements)
     ):
         raise DoctorArgumentError("--env-file requires a config requirement")
     if args.project_root is not None:
@@ -229,11 +232,36 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     )
 
     root = resolve_project_root(args.project_root)
+    include_config = (
+        any(kind == "config" for kind, _ in requirements)
+        or getattr(args, "m3_config", None) is not None
+    )
+    timeout_seconds = 15.0
     environment = (
         _read_selected_environment(discover_env_file(args.env_file, root))
-        if any(kind == "config" for kind, _ in requirements)
+        if include_config
         else None
     )
+    if include_config:
+        try:
+            config = load_config(
+                env=environment,
+                cwd=args.project_root,
+                config_file=getattr(args, "m3_config", None),
+            )
+        except ConfigError as error:
+            raise DoctorConfigurationError(error) from None
+        except (OSError, TypeError, ValueError):
+            raise DoctorCLIError("invalid configuration") from None
+        from m3._configuration_snapshot import configuration_digest
+
+        configuration = {
+            "status": "ready",
+            "settings": config.redacted_projection(),
+            "digest": configuration_digest(config),
+        }
+        if config.cli.project_python_timeout_seconds is not UNSET:
+            timeout_seconds = config.cli.project_python_timeout_seconds
     try:
         cli_version = importlib.metadata.version("sf-m3-cli")
         bundled_sdk_version = importlib.metadata.version("sf-m3")
@@ -275,6 +303,7 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
             selected,
             cli_sdk_version=bundled_sdk_version,
             project_root=root,
+            timeout_seconds=timeout_seconds,
         )
     except ProjectPythonError as error:
         reason = str(error)
@@ -295,15 +324,6 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
             "source": source,
             "executable": str(selected_path) if selected_path is not None else None,
         }
-    include_config = any(kind == "config" for kind, _ in requirements)
-    if include_config:
-        try:
-            config = load_config(env=environment, cwd=args.project_root)
-        except ConfigError as error:
-            raise DoctorConfigurationError(error) from None
-        except (OSError, TypeError, ValueError):
-            raise DoctorCLIError("invalid configuration") from None
-        configuration = {"status": "ready", "settings": _json_value(config)}
     probe_report = Probes().probe_requested(_requests(requirements))
     results = _safe_probe_results(list(probe_report.results), requirements)
     ready = (
