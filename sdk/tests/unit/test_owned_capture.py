@@ -122,9 +122,11 @@ async def test_fenced_append_keeps_capture_root_until_writer_death(
 
 @pytest.mark.process_lifecycle
 @pytest.mark.asyncio
+@pytest.mark.parametrize("flush_stalls", [False, True])
 async def test_owned_stdio_capture_is_correlated_before_session_close(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    flush_stalls: bool,
 ) -> None:
     import sys
     from pathlib import Path
@@ -166,11 +168,29 @@ async def test_owned_stdio_capture_is_correlated_before_session_close(
             "PYTHONPATH": str(Path(__file__).parents[2] / "src"),
         },
     )
+    if flush_stalls:
+        original_flush = McpCaptureManager.flush
+
+        async def stalled_flush(self, *, deadline=None):
+            await original_flush(self, deadline=deadline)
+            monkeypatch.setattr(McpCaptureManager, "flush", original_flush)
+            await asyncio.wait_for(asyncio.Event().wait(), timeout=0.02)
+
+        monkeypatch.setattr(McpCaptureManager, "flush", stalled_flush)
+
     async with AsyncMCPTestKit(env={}, cwd=tmp_path) as kit:
         async with kit.agent_session(spec, adapter=adapter) as session:
             turn = await session.send("Call lookup and report the code.", timeout=5)
             assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
             assert turn.error is None
+            assert turn.response is not None
+            if flush_stalls:
+                assert "capture_incomplete" in session._trace_limitations
+                assert any(
+                    event.payload.get("code") == "capture_incomplete"
+                    for event in session._trace_recorder.events()
+                    if event.kind is EventKind.DIAGNOSTIC
+                )
             wire = [
                 event
                 for event in session._trace_recorder.events()
