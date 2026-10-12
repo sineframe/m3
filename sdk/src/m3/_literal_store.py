@@ -259,7 +259,7 @@ class LiteralBootstrapBroker:
                 self._listener.close()
             if thread is not None and thread.is_alive():
                 thread.join(timeout=max(0, deadline - time.monotonic()))
-            self._operations.close(deadline=deadline)
+            self._operations.close(deadline=time.monotonic() + 1)
             if isinstance(error, (OSError, RuntimeError)):
                 raise LiteralTransferError(
                     "worker bootstrap listener unavailable"
@@ -494,4 +494,6 @@ def bootstrap_worker(
     except (OSError, UnicodeError, ValueError):
         raise LiteralTransferError("worker bootstrap unavailable") from None
     finally:
+        # This facade never adopts filesystem resources. Fence jobs within the
+        # caller budget; incomplete cleanup stays strongly owned for teardown.
         operations.close(deadline=deadline)
