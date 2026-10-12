@@ -144,104 +144,28 @@ def test_cache_requires_original_clock_before_probe(
     asyncio.run(run())
 
 
-_CONTROLLER = r"""
-import fcntl,hashlib,json,os,select,shutil,signal,subprocess,sys,threading,time
-from dataclasses import replace
-from pathlib import Path
-from m3._bootstrap_operations import OwnedBootstrapOperations,PrivateBytes
-from m3._immutable_cache import CacheRequest,RIPGREP
-
-directory=Path(sys.argv[1]); mode=sys.argv[2]; helper=sys.argv[3]
-original=subprocess.Popen
-def launch(argv,*args,**kwargs):
-    if isinstance(argv,list) and 'm3._preparation_worker' in argv:
-        argv=[argv[0],helper,mode,str(directory/'armed'),str(directory/'ready'),str(directory/'gate'),str(directory/'late'),*argv[3:]]
-    return original(argv,*args,**kwargs)
-subprocess.Popen=launch
-warm=OwnedBootstrapOperations()
-warm.create_capsule(PrivateBytes(b'warm-helper'),deadline=time.monotonic()+10)
-warm.close(deadline=time.monotonic()+5)
-(directory/'armed').touch()
-owner=OwnedBootstrapOperations()
-done=threading.Event(); errors=[]
-deadline=time.monotonic()+(1 if mode=='late' else 20)
-def acquire():
-    try:
-        owner.materialize_immutable_cache(CacheRequest(directory/'shared',Path('/fixture/native'),'1.18.35'),deadline=deadline)
-    except Exception as error:
-        errors.append(type(error).__name__)
-    finally:
-        done.set()
-thread=threading.Thread(target=acquire,daemon=True);thread.start()
-end=time.monotonic()+5
-while not (directory/'ready').exists():
-    assert time.monotonic()<end
-    done.wait(.005)
-if mode=='eof':
-    print('held-publication',flush=True)
-    os._exit(0)
-if mode=='guard_loss':
-    ident,job=next(iter(owner._jobs.items()))
-    stage=job.root
-    guard=owner._worker._groups[ident]
-    os.kill(guard,signal.SIGKILL)
-    assert done.wait(3)
-    owner.close(deadline=time.monotonic()+.2)
-    assert not owner.cleanup_complete and stage.exists()
-    raw=b'controlled-ripgrep-artifact'
-    key=replace(RIPGREP,binary_size=len(raw),binary_sha256=hashlib.sha256(raw).hexdigest()).key
-    lock=os.open(directory/'shared'/(key+'.lock'),os.O_RDWR)
-    try:
-        try:
-            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:
-            pass
-        else:
-            raise AssertionError('writer did not retain exclusion after guard death')
-        descriptor=os.open(directory/'gate',os.O_WRONLY|os.O_NONBLOCK)
-        os.write(descriptor,b'g');os.close(descriptor)
-        end=time.monotonic()+5
-        while True:
-            try:
-                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                assert time.monotonic()<end
-                select.select([],[],[],.01)
-        assert stage.exists()
-        assert not (directory/'shared'/key/'accepted').exists()
-        shutil.rmtree(stage) # Fixture teardown after the retained writer lease ended.
-    finally:
-        os.close(lock)
-    print(json.dumps({'quarantined':True,'writer_lease_retained':True}),flush=True)
-    sys.exit(0)
-if mode=='late':
-    assert done.wait(3)
-    assert errors
-    assert time.monotonic()>=deadline
-    descriptor=os.open(directory/'gate',os.O_WRONLY|os.O_NONBLOCK)
-    os.write(descriptor,b'g');os.close(descriptor)
-else:
-    owner.close(deadline=time.monotonic()+3)
-assert done.wait(3)
-owner.close(deadline=time.monotonic()+5)
-assert owner.cleanup_complete
-assert errors
-assert mode!='late' or (directory/'late').exists()
-assert not list((directory/'shared').glob('*/accepted'))
-print(json.dumps({'fenced':True,'cleanup_complete':True,'late_rename':(directory/'late').exists()}),flush=True)
-"""
-
-
 @pytest.mark.skipif(os.name != "posix", reason="owned cache uses POSIX leases")
-@pytest.mark.parametrize("mode", ["late", "cancel", "eof", "guard_loss"])
+@pytest.mark.parametrize(
+    "mode", ["late", "cancel", "eof", "guard_loss", "accepted_loss"]
+)
 def test_held_publication_is_fenced_through_deadline_cancellation_and_caller_eof(
     tmp_path: Path, mode: str
 ) -> None:
     os.mkfifo(tmp_path / "gate", mode=0o600)
+    os.mkfifo(tmp_path / "gate-hold", mode=0o600)
     helper = Path(__file__).parents[1] / "fixtures" / "owned_cache_helper.py"
     result = subprocess.run(
-        [sys.executable, "-c", _CONTROLLER, str(tmp_path), mode, str(helper)],
+        [
+            sys.executable,
+            str(
+                Path(__file__).parents[1]
+                / "fixtures"
+                / "cache_publication_controller.py"
+            ),
+            str(tmp_path),
+            mode,
+            str(helper),
+        ],
         capture_output=True,
         text=True,
         timeout=20,

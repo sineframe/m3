@@ -27,8 +27,8 @@ from ._preparation_owner import PreparationWorker, worker_preparation
 
 if TYPE_CHECKING:
     from ._immutable_cache import CacheRequest
-    from .preparation import PreparationSupervisor
     from ._workspace_operations import CapturedWorkspace
+    from .preparation import PreparationSupervisor
 
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_FRAME = 12 * 1024 * 1024
@@ -663,6 +663,8 @@ class OwnedBootstrapOperations:
                 local.settimeout(_remaining(deadline))
                 local.sendall(b"c")
                 self._wait(job, "guard_closed", deadline)
+                worker.send("artifact_accept", ident)
+                self._wait(job, "artifact_accepted", deadline)
             with self._condition:
                 _remaining(deadline)
                 if job.fenced:

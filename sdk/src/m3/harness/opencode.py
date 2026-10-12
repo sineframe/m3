@@ -27,6 +27,7 @@ import httpx
 from .._bootstrap_operations import OwnedBootstrapOperations, PrivateOperationError
 from .._cache_settings import launch_cache
 from .._immutable_cache import CacheRequest
+from .._startup_deadlines import StartupBudget
 from .._types.specs import AgentSpec
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
@@ -379,6 +380,7 @@ class OpenCodeHarnessAdapter:
         self._session: OpenCodeSession | None = None
         self._root: Path | None = None
         self._cache_owner: OwnedBootstrapOperations | None = None
+        self._cache_clock: StartupBudget | None = None
         self._detected_dialect: str | None = None
         # Runtime-only values resolved from explicit SecretReferences.  They
         # are used to protect adapter results before they reach the public
@@ -636,6 +638,7 @@ class OpenCodeHarnessAdapter:
                 assert isinstance(harness, OpenCode) and harness.version is not None
                 cache_owner = OwnedBootstrapOperations(preparation=launch._preparation)
                 self._cache_owner = cache_owner
+                self._cache_clock = clock
                 try:
                     resource = await asyncio.to_thread(
                         cache_owner.materialize_immutable_cache,
@@ -644,6 +647,9 @@ class OpenCodeHarnessAdapter:
                         ),
                         deadline=clock.deadline,
                     )
+                except asyncio.CancelledError:
+                    cache_owner.cancel_pending()
+                    raise
                 except PrivateOperationError:
                     raise HarnessStartupError(
                         "immutable cache preparation failed"
@@ -812,7 +818,7 @@ class OpenCodeHarnessAdapter:
             try:
                 await owner.close()
                 await self._close_immutable_cache(
-                    deadline=launch._startup_clock.deadline
+                    deadline=launch._startup_clock.begin_cleanup()
                     if launch._startup_clock is not None
                     else None
                 )
@@ -878,15 +884,16 @@ class OpenCodeHarnessAdapter:
         owner = self._cache_owner
         if owner is None:
             return
-        # This is the existing preparation teardown ceiling, independent of a
-        # completed session's lifetime. Failed startup retains its parent bound.
-        end = time.monotonic() + 3.0
+        # All owned teardown shares the launch cleanup deadline.
+        clock = self._cache_clock
+        end = clock.begin_cleanup() if clock is not None else time.monotonic() + 3.0
         if deadline is not None:
             end = min(end, deadline)
         await asyncio.to_thread(owner.close, deadline=end)
         if not owner.cleanup_complete:
             raise HarnessCleanupError("immutable cache cleanup is still owned")
         self._cache_owner = None
+        self._cache_clock = None
 
     async def cancel(self) -> None:
         if self._session is not None:

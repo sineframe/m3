@@ -88,7 +88,9 @@ def _valid_seed(seed: Path) -> bool:
     return verified_binary(seed / "rg")
 
 
-def execute_cache_guard(channel: socket.socket, root: Path, deadline: float) -> None:
+def execute_cache_guard(
+    channel: socket.socket, root: Path, deadline: float, custody: socket.socket
+) -> None:
     """Hold the seed lease through writer death and accepted publication.
 
     This group is established and acknowledged by the ordinary preparation
@@ -143,6 +145,16 @@ def execute_cache_guard(channel: socket.socket, root: Path, deadline: float) -> 
         _acquire(lock, channel, deadline)
         _remaining(deadline)
         cold = not _valid_seed(seed)
+        from ._artifact_custody import transfer_artifact_lease
+
+        transfer_artifact_lease(
+            custody,
+            lock,
+            root=inputs.root,
+            key=RIPGREP.key,
+            cold=cold,
+            deadline=deadline,
+        )
         if cold and seed.exists():
             quarantine = inputs.root / (RIPGREP.key + ".corrupt-" + root.name)
             os.replace(seed, quarantine)
