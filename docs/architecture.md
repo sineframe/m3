@@ -224,6 +224,13 @@ handle until receipt is acknowledged. Native handles become active only after
 writer/group death and accepted ownership; one caller absolute deadline covers
 all stages. Facade close fences only its own jobs and retains quarantine until
 writers die. Resource deletion checks the exact owned inode identities.
+Incomplete closed facades remain strongly owned by the run and are retried before
+helper shutdown. Constructor rollback has a separate bounded cleanup attempt;
+it does not extend the startup deadline. Published endpoint/capsule roots keep
+helper-only cleanup leases without occupying active mutation slots. Submission
+EOF reclaims them only while the ownership acknowledgement channel remains live;
+loss of that owner leaves protected quarantine. Native auth homes remain
+quarantined until the session's native process owner confirms writer death.
 
 `LiteralBootstrapBroker` can allocate its complete protected endpoint/capsule
 roots through that provider; callers need no temporary-directory filesystem work.

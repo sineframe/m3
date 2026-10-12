@@ -26,6 +26,16 @@ from ._preparation_owner import PreparationWorker, worker_preparation
 
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_FRAME = 12 * 1024 * 1024
+_closed_owners: dict[int, OwnedBootstrapOperations] = {}
+_closed_owners_lock = threading.Lock()
+
+
+def drain_closed_bootstrap_operations(deadline: float) -> None:
+    """Run teardown retries owned cleanup before stopping its helper."""
+    with _closed_owners_lock:
+        owners = tuple(_closed_owners.values())
+    for owner in owners:
+        owner.close(deadline=deadline)
 
 
 class PrivateOperationError(RuntimeError):
@@ -449,9 +459,18 @@ class OwnedBootstrapOperations:
                 and job.removal in self._resources
             ):
                 self._resources.remove(job.removal)
+                assert self._worker is not None
+                self._worker.send(
+                    "dispose_private", job.removal.root.name.removeprefix("m3-lit-")
+                )
             if event in {"removed", "rejected", "private_unbound"}:
                 self._jobs.pop(frame["id"], None)
+                assert self._worker is not None
+                self._worker.forget(frame["id"])
             self._condition.notify_all()
+            if self.cleanup_complete:
+                with _closed_owners_lock:
+                    _closed_owners.pop(id(self), None)
 
     def _wait(self, job: _PrivateJob, event: str, deadline: float) -> None:
         with self._condition:
@@ -659,6 +678,16 @@ class OwnedBootstrapOperations:
                 self._resources.remove(resource)
 
     def close(self, *, deadline: float) -> None:
+        with _closed_owners_lock:
+            _closed_owners[id(self)] = self
+        try:
+            self._close_owned(deadline)
+        finally:
+            if self.cleanup_complete:
+                with _closed_owners_lock:
+                    _closed_owners.pop(id(self), None)
+
+    def _close_owned(self, deadline: float) -> None:
         with self._condition:
             self._closed = True
             jobs = tuple(self._jobs.items())
