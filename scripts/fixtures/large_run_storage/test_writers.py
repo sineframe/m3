@@ -13,7 +13,9 @@ pytestmark = pytest.mark.m3(suite_name="large-run-storage")
 
 
 @pytest.mark.parametrize("trial", range(12))
-def test_writer(trial: int) -> None:
+def test_writer(trial: int, checkpoint) -> None:
+    if checkpoint is not None and checkpoint.victim and trial != 0:
+        checkpoint.hold()
     server = StdioServer(
         name="echo", command=sys.executable, args=("-m", "m3.fixtures.echo_server")
     )
@@ -29,6 +31,24 @@ def test_writer(trial: int) -> None:
             tool_policy=FullToolPolicy(acknowledge_risk=True),
         )
         with kit.agent_session(spec, adapter=FakeClaudeCodeAdapter()) as session:
+            turn_ids = []
             for turn in range(8):
                 response = session.send(f"deterministic-{trial}-{turn}", timeout=20)
                 assert response.response is not None
+                turn_ids.append(response.turn_id.root)
+                if (
+                    checkpoint is not None
+                    and checkpoint.victim
+                    and trial == 0
+                    and turn == 1
+                ):
+                    checkpoint.send(
+                        {
+                            "kind": "unfinished",
+                            "trial": trial,
+                            "execution_id": session.snapshot().execution_id.root,
+                            "session_id": response.snapshot.session_id.root,
+                            "turn_ids": turn_ids,
+                        }
+                    )
+                    checkpoint.hold()

@@ -13,9 +13,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import selectors
+import signal
+import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import ExitStack
 from pathlib import Path
@@ -77,27 +81,298 @@ def refresh_feedback(path: Path) -> int:
         store.close()
 
 
-def stop(processes: list[subprocess.Popen[bytes]]) -> None:
-    # The CLI owns and stops its pytest process group on SIGTERM. Give that
-    # existing cleanup contract time to finish before declaring driver failure.
+class CheckpointOwner:
+    """Fixture-only live socket leases; no descendant discovery or stale kills."""
+
+    def __init__(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="m3-g1-"))
+        self.endpoint = self.root / "checkpoint"
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.listener.bind(str(self.endpoint))
+        self.endpoint.chmod(0o600)
+        self.listener.listen()
+        self.listener.setblocking(False)
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(self.listener, selectors.EVENT_READ)
+        self.peers: dict[socket.socket, dict[str, Any]] = {}
+        self.invocations: dict[int, dict[str, Any]] = {}
+
+    def register(self, index: int, directory: Path, *, victim: bool = False) -> Path:
+        directory.mkdir(mode=0o700)
+        (directory / "checkpoint.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "endpoint": str(self.endpoint),
+                    "invocation": index,
+                    "hold_victim": victim,
+                }
+            )
+        )
+        self.invocations[index] = {
+            "process": None,
+            "group": None,
+            "checkpoint": None,
+            "lifecycle": None,
+        }
+        return directory / "pytest-temp"
+
+    def bind(self, index: int, process: subprocess.Popen[bytes]) -> None:
+        self.invocations[index]["process"] = process
+
+    def _message(self, channel: socket.socket, message: dict[str, Any]) -> None:
+        peer = self.peers[channel]
+        if peer.get("hello") is None:
+            assert set(message) == {
+                "version",
+                "kind",
+                "invocation",
+                "role",
+                "worker",
+                "pid",
+                "group",
+            }, message
+            assert message["version"] == 1 and message["kind"] == "hello"
+            index, pid, group = message["invocation"], message["pid"], message["group"]
+            assert type(index) is int and index in self.invocations
+            assert type(pid) is int and type(group) is int and pid > 1 and group > 1
+            assert group != os.getpgrp() and os.getpgid(pid) == group
+            role = message["role"]
+            assert role in ("controller", "worker")
+            invocation = self.invocations[index]
+            if role == "controller":
+                assert pid == group and os.getsid(pid) == group
+                assert invocation["group"] is None
+                invocation["group"] = group
+            else:
+                assert isinstance(message["worker"], str)
+                assert invocation["group"] == group
+                assert not any(
+                    other.get("hello", {}).get("invocation") == index
+                    and other.get("hello", {}).get("worker") == message["worker"]
+                    and other.get("hello", {}).get("role") == "worker"
+                    for other in self.peers.values()
+                )
+            peer["hello"] = message
+            if role == "controller":
+                channel.sendall(b'{"action":"begin"}\n')
+            workers = self.live(index, role="worker")
+            if len(workers) == 4:
+                for worker in workers:
+                    worker.sendall(b'{"action":"begin"}\n')
+            return
+        hello = peer["hello"]
+        assert message["kind"] == "unfinished" and hello["role"] == "worker"
+        assert hello["invocation"] == 0 and message["trial"] == 0
+        assert len(message["turn_ids"]) == 2
+        assert self.invocations[0]["checkpoint"] is None
+        self.invocations[0]["checkpoint"] = message
+
+    def live(self, index: int, *, role: str | None = None) -> list[socket.socket]:
+        return [
+            channel
+            for channel, peer in self.peers.items()
+            if not peer["eof"]
+            and peer.get("hello", {}).get("invocation") == index
+            and (role is None or peer["hello"]["role"] == role)
+        ]
+
+    def pump(self, timeout: float) -> None:
+        for key, _ in self.selector.select(max(0, timeout)):
+            channel = key.fileobj
+            if channel is self.listener:
+                connection, _ = self.listener.accept()
+                connection.setblocking(False)
+                self.peers[connection] = {"buffer": b"", "eof": False}
+                self.selector.register(connection, selectors.EVENT_READ)
+                continue
+            assert isinstance(channel, socket.socket)
+            peer = self.peers[channel]
+            try:
+                data = channel.recv(4096)
+            except ConnectionResetError:
+                data = b""
+            if not data:
+                peer["eof"] = True
+                self.selector.unregister(channel)
+                channel.close()
+                continue
+            peer["buffer"] += data
+            assert len(peer["buffer"]) <= 4096, "fixture checkpoint exceeds bound"
+            while b"\n" in peer["buffer"]:
+                frame, peer["buffer"] = peer["buffer"].split(b"\n", 1)
+                self._message(channel, json.loads(frame))
+
+    def signal_groups(self, indices: list[int], sig: signal.Signals) -> None:
+        for index in indices:
+            # Every kill target is anchored by a retained live lease and a
+            # fresh OS identity check; EOF removes that lease's authority.
+            for channel in self.live(index):
+                hello = self.peers[channel]["hello"]
+                try:
+                    if os.getpgid(hello["pid"]) != hello["group"]:
+                        raise RuntimeError("fixture worker changed owned process group")
+                    os.killpg(hello["group"], sig)
+                    break
+                except ProcessLookupError:
+                    continue
+
+    def groups_dead(self, indices: list[int]) -> bool:
+        for index in indices:
+            group = self.invocations[index]["group"]
+            if group is None:
+                continue
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                return False
+            return False
+        return True
+
+    def close(self) -> None:
+        for channel in self.peers:
+            channel.close()
+        self.selector.close()
+        self.listener.close()
+        self.endpoint.unlink()
+        self.root.rmdir()
+
+
+def stop(
+    processes: list[subprocess.Popen[bytes]],
+    owner: CheckpointOwner | None = None,
+    *,
+    grace_seconds: float = 20,
+) -> None:
+    indices = (
+        []
+        if owner is None
+        else [
+            index
+            for index, invocation in owner.invocations.items()
+            if invocation["process"] in processes
+        ]
+    )
     for process in processes:
         if process.poll() is None:
             process.terminate()
-    end = time.monotonic() + 20
+    end = time.monotonic() + grace_seconds
     survivors = []
     for process in processes:
         try:
             process.wait(timeout=max(0, end - time.monotonic()))
         except subprocess.TimeoutExpired:
             survivors.append(process)
+    if owner is not None and survivors:
+        owner.pump(0)
+        owner.signal_groups(indices, signal.SIGTERM)
+        # The CLI must run its pending handler to reap its own pytest child.
+        # We never claim to reap grandchildren from this driver process.
+        for process in survivors:
+            if process.poll() is None:
+                process.send_signal(signal.SIGCONT)
+        end = time.monotonic() + 2
+        while time.monotonic() < end:
+            owner.pump(min(0.1, end - time.monotonic()))
+            if not any(owner.live(index) for index in indices) and owner.groups_dead(
+                indices
+            ):
+                break
+        owner.signal_groups(indices, signal.SIGKILL)
     for process in survivors:
         if process.poll() is None:
             process.kill()
     kill_end = time.monotonic() + 5
     for process in survivors:
         process.wait(timeout=max(0, kill_end - time.monotonic()))
+    if owner is not None:
+        end = time.monotonic() + 5
+        while time.monotonic() < end:
+            owner.pump(min(0.1, end - time.monotonic()))
+            if not any(owner.live(index) for index in indices) and owner.groups_dead(
+                indices
+            ):
+                break
+        for index in indices:
+            peers = [
+                peer
+                for peer in owner.peers.values()
+                if peer.get("hello", {}).get("invocation") == index
+            ]
+            owner.invocations[index]["lifecycle"] = {
+                "registered_workers": sum(
+                    peer["hello"]["role"] == "worker" for peer in peers
+                ),
+                "peer_eof": all(peer["eof"] for peer in peers),
+                "group_dead": owner.groups_dead([index]),
+                "cli_reaped": owner.invocations[index]["process"].poll() is not None,
+            }
+        if any(owner.live(index) for index in indices) or not owner.groups_dead(
+            indices
+        ):
+            raise RuntimeError("owned fixture worker cleanup incomplete")
     if survivors:
         raise RuntimeError("CLI did not complete termination cleanup")
+
+
+def unfinished_session(database: Path, checkpoint: dict[str, Any]) -> dict[str, Any]:
+    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+        row = connection.execute(
+            "SELECT s.state,s.closed_at,e.snapshot_json,e.run_id FROM v2_sessions s "
+            "JOIN v2_executions e ON s.execution_id=e.id WHERE s.id=? AND e.id=?",
+            (checkpoint["session_id"], checkpoint["execution_id"]),
+        ).fetchone()
+        assert row is not None
+        state, closed, snapshot_json, run_id = row
+        snapshot = json.loads(snapshot_json)
+        assert closed is None and state not in ("closed", "finished"), row
+        assert snapshot["finished_at"] is None and snapshot["run_id"] == run_id
+        turns = connection.execute(
+            "SELECT id FROM v2_turns WHERE session_id=? ORDER BY number",
+            (checkpoint["session_id"],),
+        ).fetchall()
+        assert [turn[0] for turn in turns] == checkpoint["turn_ids"]
+        assert len(turns) == 2
+        results = connection.execute(
+            "SELECT COUNT(*) FROM v2_test_results WHERE run_id=?", (run_id,)
+        ).fetchone()[0]
+        assert results == 0, "victim completed a trial before unfinished checkpoint"
+        record = json.loads(
+            connection.execute(
+                "SELECT record_json FROM v2_test_runs WHERE run_id=?", (run_id,)
+            ).fetchone()[0]
+        )
+        assert record["status"] == "running" and record.get("exit_status") is None
+    return {
+        **checkpoint,
+        "run_id": run_id,
+        "session_state": state,
+        "completed_test_results": results,
+    }
+
+
+def counts_for_run(database: Path, run_id: str) -> dict[str, int]:
+    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+        return {
+            "results": connection.execute(
+                "SELECT COUNT(*) FROM v2_test_results WHERE run_id=?", (run_id,)
+            ).fetchone()[0],
+            "executions": connection.execute(
+                "SELECT COUNT(*) FROM v2_executions WHERE run_id=?", (run_id,)
+            ).fetchone()[0],
+            "sessions": connection.execute(
+                "SELECT COUNT(*) FROM v2_sessions s JOIN v2_executions e "
+                "ON s.execution_id=e.id WHERE e.run_id=?",
+                (run_id,),
+            ).fetchone()[0],
+            "turns": connection.execute(
+                "SELECT COUNT(*) FROM v2_turns t JOIN v2_sessions s ON t.session_id=s.id "
+                "JOIN v2_executions e ON s.execution_id=e.id WHERE e.run_id=?",
+                (run_id,),
+            ).fetchone()[0],
+        }
 
 
 def run_case(
@@ -123,6 +398,7 @@ def run_case(
     refresh_passes = 0
     errors: list[str] = []
     terminated: int | None = None
+    interrupted: dict[str, Any] | None = None
     next_refresh = started
     before = {
         path.name: inspect_database(path)
@@ -134,9 +410,16 @@ def run_case(
         for path in set(databases)
     }
     with ExitStack() as stack:
+        owner = CheckpointOwner()
+        stack.callback(owner.close)
         try:
             for index in range(6):
                 log = stack.enter_context((case / f"process-{index}.log").open("wb"))
+                base = owner.register(
+                    index,
+                    case / f"bootstrap-{index}",
+                    victim=terminate_one and index == 0,
+                )
                 processes.append(
                     subprocess.Popen(
                         [
@@ -155,13 +438,23 @@ def run_case(
                             "--",
                             "test_writers.py",
                             "-q",
+                            "--basetemp",
+                            str(base),
                         ],
                         env=environment,
                         stdout=log,
                         stderr=subprocess.STDOUT,
                     )
                 )
+                owner.bind(index, processes[-1])
             while any(process.poll() is None for process in processes):
+                owner.pump(0.1)
+                checkpoint = owner.invocations[0]["checkpoint"]
+                if terminate_one and terminated is None and checkpoint is not None:
+                    assert len(owner.live(0, role="worker")) == 4
+                    interrupted = unfinished_session(databases[0], checkpoint)
+                    processes[0].terminate()
+                    terminated = 0
                 for database in set(databases):
                     if not database.exists():
                         continue
@@ -169,30 +462,13 @@ def run_case(
                         with sqlite3.connect(
                             database.as_uri() + "?mode=ro", uri=True, timeout=0.2
                         ) as connection:
-                            turns = connection.execute(
+                            connection.execute(
                                 "SELECT COUNT(*) FROM v2_turns"
                             ).fetchone()[0]
                             connection.execute(
                                 "SELECT COUNT(*) FROM v2_events"
                             ).fetchone()
                         read_passes += 1
-                        if (
-                            terminate_one
-                            and terminated is None
-                            and turns
-                            >= before[database.name]["counts"]["v2_turns"] + 24
-                        ):
-                            victim = next(
-                                (
-                                    i
-                                    for i, p in enumerate(processes)
-                                    if p.poll() is None
-                                ),
-                                None,
-                            )
-                            if victim is not None:
-                                processes[victim].terminate()
-                                terminated = victim
                         if time.monotonic() >= next_refresh:
                             refresh_passes += refresh_feedback(database)
                             next_refresh = time.monotonic() + 1
@@ -203,9 +479,8 @@ def run_case(
                             errors.append(str(error))
                 if time.monotonic() - started > 180:
                     raise RuntimeError("storage workload exceeded 180-second deadline")
-                time.sleep(0.1)
         finally:
-            stop(processes)
+            stop(processes, owner)
     reports = {path.name: inspect_database(path) for path in set(databases)}
     logs = [(case / f"process-{i}.log").read_text(errors="replace") for i in range(6)]
     failures = [
@@ -216,7 +491,9 @@ def run_case(
     codes = [process.returncode for process in processes]
     assert all(code == 0 for i, code in enumerate(codes) if i != terminated), codes
     if terminate_one:
-        assert terminated is not None, "termination did not overlap active writers"
+        assert terminated == 0 and interrupted is not None, (
+            "victim did not checkpoint an unfinished session"
+        )
         assert codes[terminated] != 0, "terminated invocation unexpectedly succeeded"
     assert not errors, errors
     assert not failures, failures
@@ -248,11 +525,37 @@ def run_case(
                 for run in report["runs"]
                 if run["run_id"] not in old_runs
             )
+    survivor_counts = {}
+    for database_name, report in reports.items():
+        database = next(path for path in set(databases) if path.name == database_name)
+        old_runs = {run["run_id"] for run in before[database_name]["runs"]}
+        for run in report["runs"]:
+            if run["run_id"] in old_runs:
+                continue
+            if interrupted is not None and run["run_id"] == interrupted["run_id"]:
+                victim_counts = counts_for_run(database, run["run_id"])
+                assert victim_counts["turns"] == 2 and victim_counts["results"] < 12
+                interrupted["final_records"] = victim_counts
+                continue
+            assert run["status"] == "finished" and run["exit_status"] == 0
+            survivor_counts[run["run_id"]] = counts_for_run(database, run["run_id"])
+            assert survivor_counts[run["run_id"]] == {
+                "results": 12,
+                "executions": 24,
+                "sessions": 12,
+                "turns": 96,
+            }
+    assert len(survivor_counts) == (5 if terminate_one else 6)
+    lifecycle = {index: item["lifecycle"] for index, item in owner.invocations.items()}
+    assert all(item["registered_workers"] == 4 for item in lifecycle.values())
     result = {
         "case": name,
         "seconds": time.monotonic() - started,
         "exit_codes": codes,
         "terminated_process": terminated,
+        "interrupted_session": interrupted,
+        "completed_survivors": survivor_counts,
+        "lifecycle": lifecycle,
         "reader_passes": read_passes,
         "feedback_refreshes": refresh_passes,
         "reader_errors": errors,

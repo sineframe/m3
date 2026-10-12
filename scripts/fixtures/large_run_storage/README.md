@@ -14,13 +14,31 @@ eight turns. It persists normal run manifests, executions, sessions, turns
 and events without calling model providers.
 
 Five cases cover a cold shared store, warm shared store, separate stores,
-termination during active writes, and recovery against the same shared store.
+interruption of an unfinished agent trial, and recovery against the same shared
+store.
 The driver reads events and turns while writers run, reloads execution entries
 and feedback, then checks SQLite integrity, foreign keys, event sequences,
 record counts and completed-run status. The terminated run is recorded
 separately; its incomplete records are not treated as completed trials.
-Termination currently requires POSIX and uses the CLI's existing process-group
-cleanup. A cleanup timeout fails the repro.
+Each invocation has a private fixture descriptor beside its unique pytest
+`--basetemp` directory. The pytest controller and four workers establish live
+socket leases before writes; the driver validates their PID/process-group
+identity. This is fixture coordination, not an m3 option or configuration
+setting. The victim is always invocation 0: trial 0 holds its open agent session
+after two persisted turns, while its other workers hold before writes. The
+other five invocations continue normally. The driver checks the victim's
+persisted session, run, two turn IDs and zero completed trial results before
+termination; it requires five complete survivor runs with exact per-run counts.
+The checkpoint holds an unfinished trial, not a SQLite transaction or lock.
+
+Termination requires POSIX. Normal shutdown first uses the CLI's SIGTERM
+cleanup. If the CLI cannot run its handler, escalation targets only process
+groups anchored by retained live leases and fresh group-identity checks. The
+driver resumes a suspended CLI after signalling its pytest group so the CLI
+can reap its own child, then kills/reaps remaining CLI children. Cleanup verifies
+peer EOF and group disappearance; a timeout remains a failure. The driver does
+not claim to reap grandchildren. A real four-worker fault test suspends the CLI
+at the unfinished-session checkpoint and verifies this escalation.
 
 Each case writes process logs and a JSON report beneath the output directory.
 The report includes new record counts so a warm or recovery case cannot pass
