@@ -442,7 +442,7 @@ async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
     handoff = json.loads(env_file.read_text(encoding="utf-8"))
     assert handoff["environment"]["TOKEN"] == "capture-secret-value"
     assert handoff["environment"]["PATH"]
-    assert handoff["canaries"] == ["capture-secret-value"]
+    assert handoff["canaries"] == ["capture-secret-value", "echo-server"]
     writer = manager.writer_for("connection-secret")
     writer.write(
         transport="stdio",

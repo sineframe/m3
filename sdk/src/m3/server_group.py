@@ -737,6 +737,7 @@ class ServerGroupManager:
         self,
         *,
         stdio_environment_defaults: Mapping[str, Mapping[str, Any]] | None = None,
+        defer_capture: bool = False,
     ) -> ServerGroupSnapshot:
         if self._closed:
             raise ServerStartupError("server group is closed")
@@ -792,10 +793,16 @@ class ServerGroupManager:
                 tools_by_server={record.key: record.tools for record in records},
             )
             raw_configurations = self._raw_configurations()
-            instrumented = await self._capture.instrument(
-                raw_configurations,
-                stdio_environment_defaults=stdio_environment_defaults,
-            )
+            if defer_capture:
+                instrumented = self._capture.prepare(
+                    raw_configurations,
+                    stdio_environment_defaults=stdio_environment_defaults,
+                )
+            else:
+                instrumented = await self._capture.instrument(
+                    raw_configurations,
+                    stdio_environment_defaults=stdio_environment_defaults,
+                )
             for config in instrumented:
                 configured_record = self._records.get(config.key)
                 if configured_record is None:
@@ -902,8 +909,14 @@ class ServerGroupManager:
         configurations = self._raw_configurations()
         if self._capture is None or not self._started:
             return configurations
+        prepared = {
+            configuration.connection_id: configuration
+            for configuration in (self._capture._prepared_configurations or ())
+        }
         return tuple(
-            self._capture._instrumented.get(config.connection_id, config)
+            self._capture._instrumented.get(
+                config.connection_id, prepared.get(config.connection_id, config)
+            )
             for config in configurations
         )
 

@@ -76,6 +76,8 @@ from .types import (
 from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 
 if TYPE_CHECKING:
+    from ._literal_store import RunLiteralStore
+    from .harness._native_auth import NativeAuthOperations
     from .harness._private_policy import PrivateToolCalls
     from .harness.contracts import HarnessLaunch, HarnessSession
     from .harness.observations import TurnEvidence
@@ -414,10 +416,16 @@ class AsyncAgentSession:
         runtime_models_dir: str | Path | None = None,
         runtime_project_root: str | Path | None = None,
         managed_input_runtime: ManagedInputRuntime | None = None,
+        _literal_registry: RunLiteralStore | None = None,
+        _credential_deadline: float | None = None,
+        _native_auth_operations: NativeAuthOperations | None = None,
     ) -> None:
         self.spec = spec
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
+        self._literal_registry = _literal_registry
+        self._credential_deadline = _credential_deadline
+        self._native_auth_operations = _native_auth_operations
         needs_elicitation = (
             managed_input_runtime is not None or spec.elicitation is not None
         )
@@ -834,20 +842,25 @@ class AsyncAgentSession:
             # Import lazily: the contract module aliases this core adapter
             # protocol, so importing it at module load would create a cycle.
             start = self._server_manager.start
+            credential_activation = getattr(
+                self.adapter, "prepare_launch_credentials", None
+            )
             defaults_provider = getattr(
                 self.adapter, "stdio_environment_defaults", None
             )
             stdio_environment_defaults = (
                 defaults_provider(self.spec) if callable(defaults_provider) else {}
             )
-            if stdio_environment_defaults and self._supports_stdio_environment_defaults(
-                self._server_manager, start
+            options: dict[str, Any] = {}
+            if stdio_environment_defaults and self._supports_start_option(
+                self._server_manager, start, "stdio_environment_defaults"
             ):
-                started_snapshot = await start(
-                    stdio_environment_defaults=stdio_environment_defaults
-                )
-            else:
-                started_snapshot = await start()
+                options["stdio_environment_defaults"] = stdio_environment_defaults
+            if callable(credential_activation) and self._supports_start_option(
+                self._server_manager, start, "defer_capture"
+            ):
+                options["defer_capture"] = True
+            started_snapshot = await start(**options)
             # Transport evidence is emitted only after the server group has
             # successfully started and before the harness is opened. The
             # snapshot is the configured source; manager configurations are
@@ -926,8 +939,13 @@ class AsyncAgentSession:
                     self._interactions,
                     str(self._workspace.root),
                     capture=self._server_manager.capture,
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
                 )
                 launch = await self._preflight_launch(launch)
+                if callable(credential_activation):
+                    launch = await credential_activation(launch)
                 result = opener(launch)
             else:
                 preflight = getattr(self.adapter, "preflight", None)
@@ -942,6 +960,9 @@ class AsyncAgentSession:
                         self._interactions,
                         str(self._workspace.root),
                         capture=self._server_manager.capture,
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -965,6 +986,9 @@ class AsyncAgentSession:
                     self.spec.tool_policy,
                     self._interactions,
                     str(self._workspace.root),
+                    _literal_registry=self._literal_registry,
+                    _credential_deadline=self._credential_deadline,
+                    _native_auth_operations=self._native_auth_operations,
                 )
                 launch = await self._preflight_launch(launch)
                 result = opener(launch)
@@ -981,6 +1005,9 @@ class AsyncAgentSession:
                         self.spec.tool_policy,
                         self._interactions,
                         str(self._workspace.root),
+                        _literal_registry=self._literal_registry,
+                        _credential_deadline=self._credential_deadline,
+                        _native_auth_operations=self._native_auth_operations,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -1017,6 +1044,14 @@ class AsyncAgentSession:
     def _supports_stdio_environment_defaults(manager: object, start: Any) -> bool:
         """Whether a manager explicitly supports pre-instrumentation env defaults."""
 
+        return AsyncAgentSession._supports_start_option(
+            manager, start, "stdio_environment_defaults"
+        )
+
+    @staticmethod
+    def _supports_start_option(manager: object, start: Any, option: str) -> bool:
+        """Whether a manager explicitly supports a native launch preparation hook."""
+
         from .server_group import ServerGroupManager
 
         if isinstance(manager, ServerGroupManager):
@@ -1025,7 +1060,7 @@ class AsyncAgentSession:
             parameters = inspect.signature(start).parameters
         except (TypeError, ValueError):
             return False
-        return "stdio_environment_defaults" in parameters
+        return option in parameters
 
     @property
     def _managed_harness_session(self) -> HarnessSession | None:
