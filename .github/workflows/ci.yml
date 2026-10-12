@@ -49,10 +49,6 @@ jobs:
           node-version: 24
       - name: Install verified Pi version
         run: npm install --global @earendil-works/pi-coding-agent@0.85.1
-      - name: Install pinned Codex CLI
-        run: npm install --global @openai/codex@0.156.1
-      - name: Verify Codex CLI version
-        run: test "$(codex --version)" = "codex-cli 0.156.1"
       - name: Run SDK unit tests without live providers
         run: |
           uv run --locked --no-sync --project sdk --extra judge \
@@ -122,14 +118,6 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
-      - name: Install Node for installed harness tests
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
-        with:
-          node-version: 24
-      - name: Install pinned Codex CLI
-        run: npm install --global @openai/codex@0.156.1
-      - name: Verify Codex CLI version
-        run: test "$(codex --version)" = "codex-cli 0.156.1"
       - name: Run SDK Codex MRTR tests
         run: |
           uv run --locked --no-sync --project sdk --extra judge \
@@ -254,10 +242,6 @@ jobs:
           node-version: 24
       - name: Install verified Pi version
         run: npm install --global @earendil-works/pi-coding-agent@0.85.1
-      - name: Install pinned Codex CLI
-        run: npm install --global @openai/codex@0.156.1
-      - name: Verify Codex CLI version
-        run: test "$(codex --version)" = "codex-cli 0.156.1"
       - name: Run process lifecycle tests serially
         env:
           M3_REQUIRE_PI_MRTR: "1"
@@ -292,10 +276,6 @@ jobs:
           node-version: 24
       - name: Install verified Pi version
         run: npm install --global @earendil-works/pi-coding-agent@0.85.1
-      - name: Install pinned Codex CLI
-        run: npm install --global @openai/codex@0.156.1
-      - name: Verify Codex CLI version
-        run: test "$(codex --version)" = "codex-cli 0.156.1"
       - name: Run SDK examples without live providers
         env:
           M3_REQUIRE_PI_MRTR: "1"

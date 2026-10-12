@@ -179,10 +179,6 @@ jobs:
           node-version: 24
       - name: Install verified Pi version
         run: npm install --global @earendil-works/pi-coding-agent@0.85.1
-      - name: Install pinned Codex CLI
-        run: npm install --global @openai/codex@0.156.1
-      - name: Verify Codex CLI version
-        run: test "$(codex --version)" = "codex-cli 0.156.1"
       - name: Run non-live test shard
         run: ${{ matrix.shard.run }}
 

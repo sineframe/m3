@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
-import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -15,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from fixtures.codex_app_server_harness import CodexUnavailable, require_codex
 from fixtures.codex_mrtr_server import ADDRESS_SCHEMA, BUSINESS_ADDRESS, HOME_ADDRESS
 from fixtures.codex_responses_provider import (
     ModelOutput,
@@ -45,23 +43,10 @@ _MCP_SERVER = _ROOT / "tests" / "fixtures" / "codex_mrtr_server.py"
 
 
 def _require_codex() -> str:
-    executable = os.environ.get("M3_CODEX_EXECUTABLE") or shutil.which("codex")
-    if executable is None:
-        pytest.fail("Codex 0.156.1 is required; set M3_CODEX_EXECUTABLE")
     try:
-        version = subprocess.run(
-            [executable, "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        pytest.fail("Codex 0.156.1 could not be executed")
-    expected = "codex-cli 0.156.1"
-    if version != expected:
-        pytest.fail(f"expected {expected!r}, found {version!r}")
-    return executable
+        return require_codex()[0]
+    except CodexUnavailable as exc:
+        pytest.fail(str(exc), pytrace=False)
 
 
 class FixtureCodexHarnessAdapter(CodexHarnessAdapter):

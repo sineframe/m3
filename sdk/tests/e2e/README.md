@@ -31,12 +31,12 @@ patterns in the [hosted elicitation guide](https://m3.sineframe.com/docs/guides/
 the action-scope suite covers non-accept
 responses, two planned turns in one session, and required-plan completion. The
 approval-spoof suite verifies that a server cannot impersonate Codex's separate
-native tool-approval request. The test helpers fail if Codex is missing or has
-the wrong version; they do not skip these suites.
+native tool-approval request. The test helpers acquire Codex 0.156.1 through
+the managed runtime, so the `codex` on `PATH` is never used. The first run
+downloads it into the harness cache (`M3_HARNESS_CACHE_DIR` overrides the
+location). The helpers fail rather than skip if it cannot be acquired.
 
 ```bash
-npm install --global @openai/codex@0.156.1
-test "$(codex --version)" = "codex-cli 0.156.1"
 uv run --project sdk --all-extras pytest -q \
   sdk/tests/e2e/test_real_codex_native_mrtr.py \
   sdk/tests/e2e/test_real_codex_managed_mrtr.py \
@@ -45,8 +45,8 @@ uv run --project sdk --all-extras pytest -q \
   sdk/examples/tests/test_modern_mrtr_codex_approval_spoof.py
 ```
 
-CI installs and verifies `@openai/codex@0.156.1` in the regular PR test job and
-in the existing push lifecycle and examples jobs. The original four-suite gate
+CI runs these suites in the regular PR test job and in the existing push
+lifecycle and examples jobs. The original four-suite gate
 passed 40 tests; the two approval-spoof cases were added afterward and are now
 included in those required jobs. Coverage includes accept/decline/cancel
 mappings for form and URL prompts, two planned actions in one session, unused
@@ -55,8 +55,7 @@ approval from the session tool selection, independent of the action-bound MRTR
 plan. These tests use a local deterministic provider and make no paid provider
 calls.
 
-Set `M3_CODEX_EXECUTABLE` if the binary is not on `PATH`; the tests require
-`codex-cli 0.156.1`. Read the
+Read the
 [Codex limitations](../../docs/elicitation-api.md#codex-app-server-support-and-limitations)
 and the [Pi-to-Codex scenario inventory](../mrtr-harness-parity.md) before
 interpreting partial suite results.
