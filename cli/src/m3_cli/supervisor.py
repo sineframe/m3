@@ -31,6 +31,8 @@ from uuid import uuid4
 
 from m3 import _timing, _timing_report
 from m3._terminal import Style, fit, hyperlink, supports_hyperlinks, visible_len
+from m3.configuration import Config, ConfigError, load_config
+from m3.types import UNSET
 
 from . import console
 from .branding import M3_ASCII_ART, M3_TAGLINE
@@ -378,9 +380,16 @@ def validate_project_python(
     cli_sdk_version: str | None = None,
     project_root: Path | None = None,
     require_xdist: bool = False,
+    timeout_seconds: float = 15,
 ) -> str:
     """Check project imports in a child process and enforce the SDK version."""
 
+    if (
+        isinstance(timeout_seconds, bool)
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise ProjectPythonError("project Python timeout must be finite and positive")
     try:
         result = subprocess.run(
             [str(python), "-c", _VALIDATE_SCRIPT],
@@ -388,7 +397,7 @@ def validate_project_python(
             capture_output=True,
             text=True,
             check=False,
-            timeout=15,
+            timeout=timeout_seconds,
         )
     except (OSError, subprocess.TimeoutExpired):
         raise ProjectPythonError(
@@ -1011,12 +1020,15 @@ def _run_pytest_process(
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
     no_header: bool = False,
+    configuration: Config | None = None,
+    configuration_file: str | os.PathLike[str] | None = None,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
     process: subprocess.Popen[Any] | None = None
     runtime_dir: Path | None = None
     progress: _ProgressStream | None = None
+    invocation = None
     try:
         with _termination_signal_handlers():
             kwargs: dict[str, Any] = {}
@@ -1075,28 +1087,53 @@ def _run_pytest_process(
                         Path(harness_cache_dir).expanduser().absolute()
                     )
                 progress = _ProgressStream(progress_path)
-            process = subprocess.Popen(
-                pytest_command(
-                    python,
-                    database,
-                    pytest_args,
-                    baseline=baseline,
-                    project_root=project_root,
-                    explicit_root=explicit_root,
-                    harnesses=harnesses,
-                    server_selections=server_selections,
-                    trials=trials,
-                    suite=suite,
-                    credential_env=credential_env,
-                    execution_timeout=execution_timeout,
-                    judge_max_requests=judge_max_requests,
-                    runtime=runtime,
-                    ci_mode=ci_mode,
+            command = pytest_command(
+                python,
+                database,
+                pytest_args,
+                baseline=baseline,
+                project_root=project_root,
+                explicit_root=explicit_root,
+                harnesses=harnesses,
+                server_selections=()
+                if configuration is not None
+                else server_selections,
+                trials=trials,
+                suite=suite,
+                credential_env=credential_env,
+                execution_timeout=execution_timeout,
+                judge_max_requests=judge_max_requests,
+                runtime=runtime,
+                ci_mode=ci_mode,
+                run_id=run_id,
+                ci_metadata=ci_metadata,
+                num_processes=num_processes,
+                no_header=no_header,
+            )
+            if configuration is not None:
+                from m3._configuration_run import ConfigurationInvocation
+                from m3._server_selection import normalize_servers
+
+                invocation = ConfigurationInvocation(
+                    configuration,
                     run_id=run_id,
-                    ci_metadata=ci_metadata,
-                    num_processes=num_processes,
-                    no_header=no_header,
-                ),
+                    selected_file=None
+                    if configuration_file is None
+                    else str(Path(configuration_file).expanduser().absolute()),
+                    server_selections=normalize_servers(list(server_selections))
+                    if server_selections
+                    else None,
+                )
+                transfer = invocation.issue()
+                command = [
+                    str(python),
+                    "-m",
+                    "m3._pytest_runner",
+                    transfer.model_dump_json(),
+                    *command[3:],
+                ]
+            process = subprocess.Popen(
+                command,
                 env=child_environment,
                 **kwargs,
             )
@@ -1129,6 +1166,8 @@ def _run_pytest_process(
             progress.close()
         if runtime_dir is not None:
             shutil.rmtree(runtime_dir, ignore_errors=True)
+        if invocation is not None:
+            invocation.close()
 
 
 class _ProgressStream:
@@ -1213,6 +1252,7 @@ def _prepare_test(
     root: Path,
     *,
     require_xdist: bool = False,
+    project_python_timeout_seconds: float = 15,
 ) -> tuple[Path, Path] | None:
     database_path = _absolute_database(database, project_root=root)
     try:
@@ -1220,12 +1260,39 @@ def _prepare_test(
         selected = resolve_project_python(python, project_root=root)
         with _timing.span("cli.validate_python"):
             validate_project_python(
-                selected, project_root=root, require_xdist=require_xdist
+                selected,
+                project_root=root,
+                require_xdist=require_xdist,
+                timeout_seconds=project_python_timeout_seconds,
             )
     except (OSError, ProjectPythonError) as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return None
     return selected, database_path
+
+
+def _resolve_test_configuration(
+    root: Path,
+    *,
+    config_file: str | os.PathLike[str] | None,
+    env_file: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None = None,
+) -> tuple[Config, dict[str, str]] | None:
+    try:
+        resolved_environment = (
+            dict(environment)
+            if environment is not None
+            else _test_environment(env_file, root)
+        )
+        config = load_config(
+            env=resolved_environment,
+            cwd=root,
+            config_file=Path(config_file) if config_file is not None else None,
+        )
+        return config, resolved_environment
+    except (ConfigError, ProjectPythonError) as error:
+        print(f"m3 test: {error}", file=sys.stderr)
+        return None
 
 
 def _stop_server(child: _ServerChild | None) -> None:
@@ -1668,6 +1735,7 @@ def run_test_with_runs(
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
     banner_shown: bool = False,
+    config_file: str | os.PathLike[str] | None = None,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
@@ -1736,10 +1804,24 @@ def run_test_with_runs(
             project_root=root,
         )
 
+    resolved = _resolve_test_configuration(
+        root, config_file=config_file, env_file=env_file, environment=environment
+    )
+    if resolved is None:
+        return TestRunResult(OPERATIONAL_ERROR)
+    configuration, child_environment = resolved
     with _timing.span("cli.history_scan", "before"):
         before = list_stored_runs(database_path)
     prepared = _prepare_test(
-        python, database, root, require_xdist=num_processes is not None
+        python,
+        database,
+        root,
+        require_xdist=num_processes is not None,
+        project_python_timeout_seconds=(
+            15
+            if configuration.cli.project_python_timeout_seconds is UNSET
+            else configuration.cli.project_python_timeout_seconds
+        ),
     )
     if prepared is None:
         return TestRunResult(
@@ -1771,22 +1853,13 @@ def run_test_with_runs(
             project_root=root,
         )
 
-    try:
-        child_environment = (
-            dict(environment)
-            if environment is not None
-            else _test_environment(env_file, root)
-        )
-    except ProjectPythonError as exc:
-        print(f"m3 test: {exc}", file=sys.stderr)
-        return TestRunResult(
-            OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
-        )
     exit_code = _run_pytest_with_cursor(
         no_header,
         selected,
         database_path,
         pytest_args,
+        configuration=configuration,
+        configuration_file=config_file,
         baseline=baseline,
         project_root=root,
         explicit_root=project_root is not None,
@@ -1862,6 +1935,7 @@ def run_test(
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
     banner_shown: bool = False,
+    config_file: str | os.PathLike[str] | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1916,6 +1990,7 @@ def run_test(
             ci_metadata=ci_metadata,
             num_processes=num_processes,
             banner_shown=banner_shown,
+            config_file=config_file,
         ).exit_code
     root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
@@ -1933,8 +2008,22 @@ def run_test(
             num_processes=num_processes,
         )
     )
+    resolved = _resolve_test_configuration(
+        root, config_file=config_file, env_file=env_file
+    )
+    if resolved is None:
+        return OPERATIONAL_ERROR
+    configuration, child_environment = resolved
     prepared = _prepare_test(
-        python, database, root, require_xdist=num_processes is not None
+        python,
+        database,
+        root,
+        require_xdist=num_processes is not None,
+        project_python_timeout_seconds=(
+            15
+            if configuration.cli.project_python_timeout_seconds is UNSET
+            else configuration.cli.project_python_timeout_seconds
+        ),
     )
     if prepared is None:
         return OPERATIONAL_ERROR
@@ -1953,16 +2042,13 @@ def run_test(
     if not baseline_found:
         print(f"m3 test: baseline run was not found: {baseline}", file=sys.stderr)
         return OPERATIONAL_ERROR
-    try:
-        child_environment = _test_environment(env_file, root)
-    except ProjectPythonError as exc:
-        print(f"m3 test: {exc}", file=sys.stderr)
-        return OPERATIONAL_ERROR
     return _run_pytest_with_cursor(
         no_header,
         selected,
         database_path,
         pytest_args,
+        configuration=configuration,
+        configuration_file=config_file,
         baseline=baseline,
         project_root=root,
         explicit_root=project_root is not None,

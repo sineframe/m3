@@ -12,12 +12,17 @@ from .configuration import Config, _with_overrides, load_config
 
 if TYPE_CHECKING:
     from ._literal_store import RunLiteralStore
+    from .types import HTTPServer, StdioServer
 
 
 @dataclass(frozen=True, repr=False)
 class ConfigurationContext:
     config: Config = field(repr=False)
     literal_registry: RunLiteralStore | None = field(default=None, repr=False)
+    selected_file: str | None = field(default=None, repr=False)
+    server_selections: tuple[HTTPServer | StdioServer, ...] | None = field(
+        default=None, repr=False
+    )
 
     def __getstate__(self) -> None:
         raise TypeError("invocation configuration requires private snapshot transport")
@@ -32,6 +37,11 @@ class ConfigurationToken:
 
 _lock = RLock()
 _current: ConfigurationToken | None = None
+
+
+def current_configuration() -> ConfigurationContext | None:
+    with _lock:
+        return _current.context if _current is not None else None
 
 
 def install_configuration(context: ConfigurationContext) -> ConfigurationToken:
@@ -56,8 +66,7 @@ def resolve_configuration(
     env: Mapping[str, str] | None,
     cwd: str | Path | None,
 ) -> ConfigurationContext:
-    with _lock:
-        context = _current.context if _current is not None else None
+    context = current_configuration()
     if context is None:
         config = (
             explicit
@@ -68,5 +77,8 @@ def resolve_configuration(
     if explicit is None or explicit is context.config:
         return context
     return ConfigurationContext(
-        _with_overrides(context.config, explicit), context.literal_registry
+        _with_overrides(context.config, explicit),
+        context.literal_registry,
+        context.selected_file,
+        context.server_selections,
     )

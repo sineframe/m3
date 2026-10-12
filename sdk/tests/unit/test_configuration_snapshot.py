@@ -15,7 +15,7 @@ from m3._configuration_snapshot import (
 )
 from m3._literal_store import RunLiteralStore
 from m3.configuration import Config, load_config
-from m3.types import HarnessTimeouts
+from m3.types import HarnessTimeouts, SecretReference, StdioServer
 
 
 def test_default_configuration_has_no_registry_or_bootstrap_handles() -> None:
@@ -103,3 +103,34 @@ def test_malformed_worker_snapshot_has_value_free_error() -> None:
     with pytest.raises(ConfigurationSnapshotError) as caught:
         parse_configuration_snapshot('{"version":"PRIVATE-CANARY"}')
     assert "PRIVATE-CANARY" not in str(caught.value)
+
+
+def test_server_literals_are_private_and_credential_references_stay_unresolved() -> (
+    None
+):
+    server = StdioServer(
+        name="server",
+        command="python",
+        args=("PRIVATE-CANARY",),
+        environment={
+            "LITERAL": "FROZEN-SECRET",
+            "LIVE": SecretReference(source="environment", name="ROTATING_KEY"),
+        },
+    )
+    registry = RunLiteralStore("run")
+    try:
+        snapshot = freeze_configuration(Config(), registry, server_selections=(server,))
+        metadata = snapshot.model_dump_json()
+        assert "PRIVATE-CANARY" not in metadata
+        assert "FROZEN-SECRET" not in metadata
+        assert "ROTATING_KEY" not in metadata
+        restored = restore_configuration_snapshot(
+            parse_configuration_snapshot(metadata), registry
+        )
+        assert restored.server_selections == (server,)
+        assert (
+            restored.server_selections[0].environment["LIVE"]
+            == server.environment["LIVE"]
+        )
+    finally:
+        registry.close()

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, StrictStr, field_validator, model_validator
 
 from ._configuration_context import ConfigurationContext
 from ._literal_store import LiteralHandle, LiteralTransferError, RunLiteralStore
 from .configuration import Config
-from .types import FrozenModel
+from .types import FrozenModel, HTTPServer, StdioServer
 
 
 class ConfigurationSnapshotError(ValueError):
@@ -25,6 +25,15 @@ class _LiteralReference(FrozenModel):
 
     def handle(self) -> LiteralHandle:
         return LiteralHandle(self.run_id, self.generation, self.slot)
+
+
+class _PrivateConfiguration(FrozenModel):
+    config: Config = Field(repr=False)
+    selected_file: StrictStr | None = Field(default=None, repr=False)
+    server_selections: (
+        tuple[Annotated[HTTPServer | StdioServer, Field(discriminator="kind")], ...]
+        | None
+    ) = Field(default=None, repr=False)
 
 
 class ConfigurationSnapshot(FrozenModel):
@@ -102,14 +111,24 @@ def parse_configuration_snapshot(raw: str) -> ConfigurationSnapshot:
 
 
 def freeze_configuration(
-    config: Config, registry: RunLiteralStore | None
+    config: Config,
+    registry: RunLiteralStore | None,
+    *,
+    selected_file: str | None = None,
+    server_selections: tuple[HTTPServer | StdioServer, ...] | None = None,
 ) -> ConfigurationSnapshot:
     digest = configuration_digest(config)
-    if config == Config():
+    if config == Config() and selected_file is None and server_selections is None:
         return ConfigurationSnapshot(digest=digest, settings=config)
     if registry is None:
         raise ConfigurationSnapshotError("configured settings need a private registry")
-    handle = registry.freeze(config.model_dump_json())
+    handle = registry.freeze(
+        _PrivateConfiguration(
+            config=config,
+            selected_file=selected_file,
+            server_selections=server_selections,
+        ).model_dump_json()
+    )
     return ConfigurationSnapshot(
         digest=digest, reference=_LiteralReference(**handle.metadata())
     )
@@ -120,17 +139,21 @@ def restore_configuration_snapshot(
 ) -> ConfigurationContext:
     if snapshot.settings is not None:
         config = snapshot.settings
+        selected_file = None
+        server_selections = None
     else:
         if registry is None or snapshot.reference is None:
             raise ConfigurationSnapshotError("configuration registry is unavailable")
         try:
-            config = Config.model_validate_json(
+            private = _PrivateConfiguration.model_validate_json(
                 registry.resolve(snapshot.reference.handle())
             )
+            config, selected_file = private.config, private.selected_file
+            server_selections = private.server_selections
         except (LiteralTransferError, ValueError, TypeError):
             raise ConfigurationSnapshotError(
                 "configuration snapshot is invalid"
             ) from None
     if configuration_digest(config) != snapshot.digest:
         raise ConfigurationSnapshotError("configuration snapshot projection mismatch")
-    return ConfigurationContext(config, registry)
+    return ConfigurationContext(config, registry, selected_file, server_selections)
