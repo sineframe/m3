@@ -347,7 +347,13 @@ def test_malformed_requests_do_not_break_other_worker_bootstraps(
                 size += 100
             client.sendall(struct.pack("!I", size) + raw)
             client.shutdown(socket.SHUT_WR)
-            assert client.recv(4096) == b""
+            try:
+                received = client.recv(4096)
+            except ConnectionResetError:
+                # Linux resets a socket closed with an unread oversized body;
+                # macOS reports EOF. Both must reject without returning data.
+                received = b""
+            assert received == b""
         worker = bootstrap_worker(descriptor)
         assert worker.resolve(handle) == "private-literal"
         worker.close()
