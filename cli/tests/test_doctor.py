@@ -315,3 +315,54 @@ def test_doctor_human_not_ready_has_direct_remediation(
     monkeypatch.delenv("CONDA_PREFIX", raising=False)
     assert main(["doctor", "--project-root", str(tmp_path)]) == 1
     assert "Next: m3 setup" in capsys.readouterr().out
+
+
+def test_doctor_m3_config_reports_settings_origin_and_digest(
+    tmp_path: Path, capsys
+) -> None:
+    cfg = tmp_path / "c.toml"
+    cfg.write_text("[tool.m3.results]\nbusy_timeout_seconds = 30\n", encoding="utf-8")
+    assert main(
+        ["doctor", "--require", "config", "--m3-config", str(cfg), "--json"]
+    ) in {0, 1}
+    report = json.loads(capsys.readouterr().out)
+    settings = report["configuration"]["settings"]
+    assert settings["results"]["busy_timeout_seconds"] == 30.0
+    assert (
+        settings["sources"]["results.busy_timeout_seconds"]["origin"]
+        == f"config-file:{cfg}"
+    )
+    assert report["configuration"]["digest"].startswith("sha256:")
+
+
+def test_doctor_m3_config_missing_file(tmp_path: Path, capsys) -> None:
+    missing = tmp_path / "missing.toml"
+    assert (
+        main(["doctor", "--require", "config", "--m3-config", str(missing), "--json"])
+        == 2
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["error"]["code"] == "invalid_project"
+    assert payload["error"]["field"] == "config_file"
+
+
+def test_doctor_m3_config_requires_config_requirement(capsys) -> None:
+    assert (
+        main(
+            ["doctor", "--require", "storage:memory", "--m3-config", "c.toml", "--json"]
+        )
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert "--m3-config requires a config requirement" in captured.out + captured.err
+
+
+def test_doctor_requires_dotted_config_leaf(capsys) -> None:
+    assert main(
+        ["doctor", "--require", "config:results.busy_timeout_seconds", "--json"]
+    ) in {0, 1}
+    report = json.loads(capsys.readouterr().out)
+    assert report["requirements"] == ["config:results.busy_timeout_seconds"]
+    assert main(["doctor", "--require", "config:results.nope"]) == 2
+    assert "invalid requirement" in capsys.readouterr().err

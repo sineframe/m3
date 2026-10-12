@@ -112,6 +112,14 @@ def _parser() -> argparse.ArgumentParser:
         help="dotenv file; defaults to PROJECT_ROOT/.env when present",
     )
     doctor_parser.add_argument(
+        "--m3-config",
+        dest="m3_config",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="TOML file with [tool.m3] settings; replaces pyproject.toml discovery",
+    )
+    doctor_parser.add_argument(
         "--json", action="store_true", help="emit a machine-readable report"
     )
 
@@ -269,6 +277,14 @@ def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> N
         default=None,
         metavar="PATH",
         help="dotenv file; defaults to PROJECT_ROOT/.env when present",
+    )
+    test.add_argument(
+        "--m3-config",
+        dest="m3_config",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="TOML file with [tool.m3] settings; replaces pyproject.toml discovery",
     )
     if include_ui:
         test.add_argument(
@@ -464,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
                     suite=args.suite,
                     credential_env=args.credential_env,
                     env_file=args.env_file,
+                    config_file=args.m3_config,
                     execution_timeout=args.execution_timeout,
                     judge_max_requests=args.judge_max_requests,
                     runtime=args.runtime,
