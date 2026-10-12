@@ -586,6 +586,57 @@ def test_xdist_timings_include_controller_and_workers(tmp_path: Path) -> None:
     assert any("worker" in name for name in processes)
 
 
+def test_xdist_workers_use_controller_configuration_after_file_removal(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("xdist")
+    cfg = tmp_path / "cfg.toml"
+    cfg.write_text("[tool.m3.results]\nbusy_timeout_seconds = 30\n")
+    (tmp_path / "conftest.py").write_text(
+        "import os, pytest\n"
+        "@pytest.hookimpl(trylast=True)\n"
+        "def pytest_configure(config):\n"
+        "    if not hasattr(config, 'workerinput'):\n"
+        "        os.remove(os.environ['CFG'])\n"
+    )
+    test_file = tmp_path / "test_cfg.py"
+    test_file.write_text(
+        "import pytest\n"
+        "from m3 import MCPTestKit\n"
+        "from m3._default_store import make_default_store\n"
+        "pytestmark = pytest.mark.m3(suite_name='cfg')\n"
+        "def _check():\n"
+        "    kit = MCPTestKit()\n"
+        "    try:\n"
+        "        assert kit.config.results.busy_timeout_seconds == 30.0\n"
+        "    finally:\n"
+        "        kit.close()\n"
+        "    store = make_default_store()\n"
+        "    try:\n"
+        "        assert store.busy_timeout_ms == 30000\n"
+        "    finally:\n"
+        "        store.close()\n"
+        "def test_a(): _check()\n"
+        "def test_b(): _check()\n"
+    )
+    result = _run(
+        tmp_path,
+        test_file,
+        xdist=True,
+        run_id="run-cfg",
+        pytest_args=("--m3-config", str(cfg)),
+        extra_env={"CFG": str(cfg)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+    assert not cfg.exists()
+    with sqlite3.connect(tmp_path / "xdist.sqlite") as db:
+        (record_json,) = db.execute(
+            "select record_json from v2_test_runs where run_id='run-cfg'"
+        ).fetchone()
+    assert json.loads(record_json)["configuration_digest"].startswith("sha256:")
+
+
 def test_suite_selection_normalizes_marker_for_plain_and_agent_tests(
     tmp_path: Path,
 ) -> None:
