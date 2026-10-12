@@ -19,10 +19,13 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from ._preparation_owner import PreparationWorker, worker_preparation
+
+if TYPE_CHECKING:
+    from ._immutable_cache import CacheRequest
 
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_FRAME = 12 * 1024 * 1024
@@ -147,7 +150,12 @@ def _decode_result(
     operation: str, root: Path, frame: dict[str, Any], descriptor: int | None
 ) -> _PrivateResult:
     result = _PrivateResult()
-    if operation in {"private_capsule", "private_native_auth", "private_endpoint"}:
+    if operation in {
+        "private_capsule",
+        "private_native_auth",
+        "private_endpoint",
+        "private_immutable_cache",
+    }:
         if set(frame) != {"version", "resource"} or not isinstance(
             frame["resource"], dict
         ):
@@ -158,12 +166,15 @@ def _decode_result(
             if operation == "private_endpoint"
             else "auth.json"
             if operation == "private_native_auth"
+            else "cache/opencode/bin/rg"
+            if operation == "private_immutable_cache"
             else "capsule"
         )
         if (
             resource.root != root
             or resource.path != root / name
-            or resource.native_home != (operation == "private_native_auth")
+            or resource.native_home
+            != (operation in {"private_native_auth", "private_immutable_cache"})
         ):
             raise PrivateOperationError("invalid private bootstrap resource")
         result.resource = resource
@@ -569,6 +580,10 @@ class OwnedBootstrapOperations:
             self._wait(job, "accepted", deadline)
             worker.send("release", ident)
             self._wait(job, "released", deadline)
+            if operation == "private_immutable_cache":
+                local.settimeout(_remaining(deadline))
+                local.sendall(b"c")
+                self._wait(job, "guard_closed", deadline)
             with self._condition:
                 _remaining(deadline)
                 if job.fenced:
@@ -632,6 +647,16 @@ class OwnedBootstrapOperations:
             {"bytes": _encode_bytes(value)},
             deadline,
         )
+        assert result.resource is not None
+        return result.resource
+
+    def materialize_immutable_cache(
+        self,
+        request: CacheRequest,
+        *,
+        deadline: float,
+    ) -> OwnedResource:
+        result = self._run("private_immutable_cache", request.private_frame(), deadline)
         assert result.resource is not None
         return result.resource
 

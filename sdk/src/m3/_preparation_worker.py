@@ -357,9 +357,15 @@ def _fork_job(
             if private_channel is not None:
                 from ._bootstrap_operations import execute_private_operation
 
-                execute_private_operation(
-                    private_channel, root, operation, payload["deadline"]
-                )
+                if operation == "private_immutable_cache":
+                    from ._cache_guard import execute_cache_guard
+
+                    with private_channel:
+                        execute_cache_guard(private_channel, root, payload["deadline"])
+                else:
+                    execute_private_operation(
+                        private_channel, root, operation, payload["deadline"]
+                    )
                 result = {}
             else:
                 result = _job(operation, root, payload)
@@ -368,6 +374,7 @@ def _fork_job(
                 "private_capsule",
                 "private_endpoint",
                 "private_native_auth",
+                "private_immutable_cache",
             }:
                 identity = root.stat(follow_symlinks=False)
                 # Helper-only ownership evidence; never forwarded as a result.
@@ -407,6 +414,7 @@ class Job:
     cleanup_source: str | None = None
     stream_open: bool = True
     private_kind: str | None = None
+    cache_guard: bool = False
     cleanup_identity: tuple[int, int] | None = None
 
 
@@ -459,7 +467,8 @@ def _supervise(
         job.state = "fenced"
         if job.stop_at is None:
             job.stop_at = time.monotonic()
-            job.process.signal(signal.SIGTERM)
+            if not job.cache_guard:
+                job.process.signal(signal.SIGTERM)
 
     def spawn_cleanup(job: Job) -> None:
         # Writer death precedes unregistering the exact owned worktree. Never
@@ -480,6 +489,7 @@ def _supervise(
             gated=True,
         )
         job.process = process
+        job.cache_guard = False
         job.state = "removing"
         job.stop_at = None
         job.killed = False
@@ -503,6 +513,7 @@ def _supervise(
                 "private_remove",
                 "private_native_auth",
                 "private_read_auth",
+                "private_immutable_cache",
             }
             short_endpoint = request[
                 "operation"
@@ -538,10 +549,12 @@ def _supervise(
             assert process.stdout is not None
             os.set_blocking(process.stdout.fileno(), False)
             job = Job(ident, root, process)
+            job.cache_guard = request["operation"] == "private_immutable_cache"
             if request["operation"] in {
                 "private_capsule",
                 "private_endpoint",
                 "private_native_auth",
+                "private_immutable_cache",
             }:
                 job.private_kind = request["operation"]
             if (
@@ -696,13 +709,15 @@ def _supervise(
         if raw == b"s":
             job.process.group_established = True
             if job.state == "fenced":
-                job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
+                if not job.cache_guard:
+                    job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
             elif job.state in {"running", "removing"}:
                 if ownership_open:
                     emit(
                         job.ident,
                         "cleanup_started" if job.state == "removing" else "started",
                         pid=job.process.pid,
+                        cache_guard=job.cache_guard,
                     )
                 else:
                     stop(job)
@@ -714,6 +729,11 @@ def _supervise(
         raw = os.read(key.fd, 65536)
         if raw:
             job.output.extend(raw)
+            if job.cache_guard and job.output.startswith(b'{"cache_ready":true}\n'):
+                del job.output[: len(b'{"cache_ready":true}\n')]
+                if job.state == "running":
+                    job.state = "ready"
+                    emit(job.ident, "ready", data={})
             if len(job.output) > MAX_FRAME:
                 stop(job)
         else:
@@ -734,6 +754,26 @@ def _supervise(
                 del private_leases[ident]
         for ident, job in tuple(jobs.items()):
             if job.state == "released":
+                if job.cache_guard:
+                    if (
+                        job.process.poll() is None
+                        or job.process.alive()
+                        or job.stream_open
+                    ):
+                        continue
+                    try:
+                        result = json.loads(job.output)
+                    except (ValueError, UnicodeError):
+                        result = {"ok": False}
+                    if result.get("ok") is not True:
+                        emit(ident, "failed")
+                        stop(job)
+                        continue
+                    identity = result.get("cleanup_identity")
+                    if identity is not None:
+                        job.cleanup_identity = (identity[0], identity[1])
+                    emit(ident, "guard_closed")
+                    job.cache_guard = False
                 if controller_open:
                     continue
                 if job.private_kind in {"private_capsule", "private_endpoint"}:
@@ -781,6 +821,7 @@ def _supervise(
                         job.stop_at is not None
                         and now - job.stop_at >= TERM_GRACE
                         and not job.killed
+                        and not job.cache_guard
                     ):
                         job.process.signal(signal.SIGKILL)
                         job.killed = True
