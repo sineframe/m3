@@ -67,6 +67,14 @@ For an ACP agent that asks before calling tools, pass
 it only for a trusted agent and a scoped workspace, because the same setting
 also approves the agent's requests to run commands or edit files.
 
+A post-turn `tool policy violation` fails the turn while retaining a completed
+answer in `turn.response`, the trace, and stored results. Inspect
+`turn.error.details["policy_violations"]` for the rejected MCP identity and
+reason. Codex's native resource introspection is allowed when its protocol
+identifies it as a harness built-in. A bound MCP server named `codex`, or
+captured MCP traffic with the same tool name, still follows the test's tool
+policy.
+
 ## Execution timed out
 
 Each agent execution gets 180 seconds unless you change it. `--execution-timeout
