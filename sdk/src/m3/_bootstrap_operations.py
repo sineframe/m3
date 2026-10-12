@@ -752,6 +752,7 @@ class OwnedBootstrapOperations:
         identity: Mapping[str, Any] | None,
         *,
         deadline: float,
+        cached: Mapping[str, Any] | None = None,
     ) -> PrivateBytes:
         result = self._run(
             "private_native_support",
@@ -759,6 +760,7 @@ class OwnedBootstrapOperations:
                 "executable": executable,
                 "kind": kind,
                 "runtime_identity": identity,
+                "cached": cached,
             },
             deadline,
         )

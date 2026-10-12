@@ -11,12 +11,17 @@ import platform
 import re
 import shutil
 import tempfile
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..errors import UnsupportedFeature
 from .native import ProcessOwner, drain_bounded
+
+if TYPE_CHECKING:
+    from .._bootstrap_operations import OwnedBootstrapOperations
 
 _QUERY_SECONDS = 15.0
 _MAXIMUM_BYTES = 262_144
@@ -129,6 +134,18 @@ class _ExecutableStamp:
 _ARTIFACT_CACHE: dict[
     tuple[str, Path, str, NativeRuntimeIdentity | None],
     tuple[_ExecutableStamp, NativeSupport],
+] = {}
+
+
+@dataclass(frozen=True, repr=False)
+class _OwnedNativeFacts:
+    path: str
+    support: NativeSupport
+    stamp: _ExecutableStamp | None
+
+
+_OWNED_FACTS_CACHE: dict[
+    tuple[str, str, str, NativeRuntimeIdentity | None], _OwnedNativeFacts
 ] = {}
 
 
@@ -445,6 +462,51 @@ async def discover_native_support(
         return support
 
 
+async def discover_native_support_receipt(
+    executable: str,
+    kind: str,
+    runtime_identity: NativeRuntimeIdentity | None,
+    cached: _OwnedNativeFacts | None,
+    root: Path,
+) -> _OwnedNativeFacts:
+    """Verify a candidate's filesystem identity only inside an owned job."""
+    path = _executable_path(executable)
+    host = f"{platform.system().lower()}-{platform.machine().lower()}"
+    key = (kind, path, host, runtime_identity)
+    if (
+        cached is not None
+        and cached.stamp is not None
+        and cached.path == str(path)
+        and cached.support.platform == host
+        and cached.support.runtime_identity == runtime_identity
+    ):
+        _ARTIFACT_CACHE[key] = (cached.stamp, cached.support)
+    support = await discover_native_support(
+        executable, kind, runtime_identity, owned_root=root
+    )
+    artifact = _ARTIFACT_CACHE.get(key)
+    stamp = None
+    if artifact is not None and artifact[1] == support:
+        if _ExecutableStamp.read(path) == artifact[0]:
+            stamp = artifact[0]
+    return _OwnedNativeFacts(str(path), support, stamp)
+
+
+async def _close_owned_query(
+    operations: OwnedBootstrapOperations, deadline: float
+) -> None:
+    # Fence synchronously even if the executor cannot schedule its IPC drain.
+    operations.cancel_pending()
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(operations.close, deadline=deadline),
+            timeout=max(0.0, deadline - time.monotonic()),
+        )
+    except Exception:
+        # The run-owned cleanup registry retains unsettled query jobs.
+        pass
+
+
 async def discover_native_support_owned(
     executable: str,
     kind: str,
@@ -452,7 +514,7 @@ async def discover_native_support_owned(
     *,
     deadline: float,
 ) -> NativeSupport:
-    """Read native facts in a fenced job under one caller-owned deadline."""
+    """Cache accepted facts, while rechecking identity in every owned request."""
     from pydantic import TypeAdapter
 
     from .._bootstrap_operations import OwnedBootstrapOperations, PrivateOperationError
@@ -467,19 +529,33 @@ async def discover_native_support_owned(
         if runtime_identity is not None
         else None
     )
+    host = f"{platform.system().lower()}-{platform.machine().lower()}"
+    key = (kind, executable, host, runtime_identity)
+    cached = _OWNED_FACTS_CACHE.get(key)
+    candidate = (
+        TypeAdapter(_OwnedNativeFacts).dump_python(cached, mode="json")
+        if cached is not None
+        else None
+    )
     try:
         result = await asyncio.to_thread(
             operations.discover_native_support,
             executable,
             kind,
             identity,
+            cached=candidate,
             deadline=deadline,
         )
-        return TypeAdapter(NativeSupport).validate_json(result.consume())
+        facts = TypeAdapter(_OwnedNativeFacts).validate_json(result.consume())
+        if facts.stamp is not None:
+            _OWNED_FACTS_CACHE[key] = facts
+        else:
+            _OWNED_FACTS_CACHE.pop(key, None)
+        return facts.support
     except PrivateOperationError:
         raise UnsupportedFeature("owned native capability discovery failed") from None
     finally:
-        await asyncio.to_thread(operations.close, deadline=deadline)
+        await _close_owned_query(operations, deadline)
 
 
 @dataclass(frozen=True)
@@ -502,4 +578,4 @@ async def probe_native_owned(
         )
         return TypeAdapter(NativeProbeResult).validate_json(result.consume())
     finally:
-        await asyncio.to_thread(operations.close, deadline=deadline)
+        await _close_owned_query(operations, deadline)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -41,12 +42,18 @@ class NativePreparation:
                 deadline=deadline,
             )
             return cls(operations, resource.root, clock)
-        except BaseException:
+        except BaseException as failure:
+            operations.cancel_pending()
             # The operation facade retains unresolved ownership if this bounded
             # cleanup attempt cannot confirm writer death.
             try:
-                await asyncio.to_thread(
-                    operations.close, deadline=clock.begin_cleanup()
+                cleanup_deadline = clock.begin_cleanup()
+                remaining = max(0.0, cleanup_deadline - time.monotonic())
+                if isinstance(failure, asyncio.CancelledError):
+                    remaining = min(3.0, remaining)
+                await asyncio.wait_for(
+                    asyncio.to_thread(operations.close, deadline=cleanup_deadline),
+                    timeout=remaining,
                 )
             except BaseException:
                 # The original preparation error remains the caller's cause;
@@ -59,7 +66,11 @@ class NativePreparation:
 
     async def close(self) -> None:
         deadline = self.clock.begin_cleanup()
-        await asyncio.to_thread(self.operations.close, deadline=deadline)
+        self.operations.cancel_pending()
+        await asyncio.wait_for(
+            asyncio.to_thread(self.operations.close, deadline=deadline),
+            timeout=max(0.0, deadline - time.monotonic()),
+        )
         if not self.operations.cleanup_complete:
             from ..errors import CleanupError
 

@@ -654,10 +654,16 @@ class McpCaptureManager:
                 operations, resource, clock, capture._owned_capture_incomplete
             )
             return capture
-        except BaseException:
+        except BaseException as failure:
+            operations.cancel_pending()
             try:
-                await asyncio.to_thread(
-                    operations.close, deadline=clock.begin_cleanup()
+                cleanup_deadline = clock.begin_cleanup()
+                remaining = max(0.0, cleanup_deadline - time.monotonic())
+                if isinstance(failure, asyncio.CancelledError):
+                    remaining = min(3.0, remaining)
+                await asyncio.wait_for(
+                    asyncio.to_thread(operations.close, deadline=cleanup_deadline),
+                    timeout=remaining,
                 )
             except BaseException:
                 pass
@@ -1216,12 +1222,16 @@ class McpCaptureManager:
 
         assert self._owned_resource is not None
         payload, launch_secrets = render_stdio_handoff(environment, **options)
-        await asyncio.to_thread(
-            self._owned_operations.write_capture_files,
-            self._owned_resource,
-            {path.name: PrivateBytes(payload)},
-            deadline=self._capture_deadline(),
-        )
+        try:
+            await asyncio.to_thread(
+                self._owned_operations.write_capture_files,
+                self._owned_resource,
+                {path.name: PrivateBytes(payload)},
+                deadline=self._capture_deadline(),
+            )
+        except BaseException:
+            self._owned_operations.fence_pending()
+            raise
         return launch_secrets
 
     async def _write_policy_handoff(
@@ -1242,12 +1252,16 @@ class McpCaptureManager:
             from .._bootstrap_operations import PrivateBytes
 
             assert self._owned_resource is not None
-            await asyncio.to_thread(
-                self._owned_operations.write_capture_files,
-                self._owned_resource,
-                {path.name: PrivateBytes(payload.encode("utf-8"))},
-                deadline=self._capture_deadline(),
-            )
+            try:
+                await asyncio.to_thread(
+                    self._owned_operations.write_capture_files,
+                    self._owned_resource,
+                    {path.name: PrivateBytes(payload.encode("utf-8"))},
+                    deadline=self._capture_deadline(),
+                )
+            except BaseException:
+                self._owned_operations.fence_pending()
+                raise
             return
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         self._policy_paths.add(path)

@@ -273,6 +273,7 @@ class NativeRPCAdapter:
         self._process: JsonRpcProcess | None = None
         self._failed_preparation: NativePreparation | None = None
         self._startup_cleanup_failed = False
+        self._startup_cleanup_task: asyncio.Task[None] | None = None
         self._cancel_requested = False
         self._terminal_status: Literal["failed", "cancelled", "interrupted"] | None = (
             None
@@ -511,18 +512,26 @@ class NativeRPCAdapter:
             self._session = NativeRPCSession(self, process, session_id)
             self._failed_preparation = None
             return self._session
-        except BaseException:
+        except BaseException as failure:
+            from .._startup_deadlines import retain_cleanup, wait_cleanup
+
             if process.owner is not None and preparation is not None:
                 preparation.adopt(process.owner)
-            try:
+
+            async def cleanup_failed_process() -> None:
                 await process.close()
                 if process.owner is None and preparation is not None:
                     await preparation.close()
+
+            self._startup_cleanup_task = retain_cleanup(cleanup_failed_process)
+            stopped = await wait_cleanup(
+                self._startup_cleanup_task,
+                launch._startup_clock,
+                cancelled=isinstance(failure, asyncio.CancelledError),
+            )
+            self._startup_cleanup_failed = not stopped
+            if stopped:
                 self._failed_preparation = None
-            except BaseException:
-                self._startup_cleanup_failed = True
-                # Keep both the failed process and its staged files attached
-                # to the adapter for an explicit close retry.
             raise
 
     def native_configuration_files(self, launch: HarnessLaunch) -> Mapping[str, bytes]:
@@ -861,6 +870,18 @@ class NativeRPCAdapter:
         raise NotImplementedError
 
     async def close(self) -> None:
+        pending = self._startup_cleanup_task
+        if pending is not None and not pending.done():
+            from .._startup_deadlines import wait_cleanup
+            from ..errors import CleanupError
+
+            clock = self._launch._startup_clock if self._launch is not None else None
+            if (
+                not await wait_cleanup(pending, clock, cancelled=False)
+                and not pending.done()
+            ):
+                raise CleanupError("native startup cleanup remains pending")
+        self._startup_cleanup_task = None
         if self._session is not None:
             await self._session.close()
         elif self._process is not None:
