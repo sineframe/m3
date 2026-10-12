@@ -52,6 +52,13 @@ from ._default_store import (
 from ._default_store import (
     make_default_store as _make_default_store,
 )
+from ._native_settings import NativePermissions as _NativePermissions
+from ._native_settings import permission_override as _permission_override
+from ._native_settings import resolve_native_settings as _resolve_native_settings
+from ._native_settings import resolve_runtime_settings as _resolve_runtime_settings
+from ._native_settings import validate_bound_settings as _validate_bound_settings
+from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import Unset as _Unset
 from ._types.specs import AgentSpec as _AgentSpec
 from .agent_session import AgentAdapter as _AgentAdapter
 from .agent_session import AsyncAgentSession as _CoreAsyncAgentSession
@@ -1411,6 +1418,7 @@ class AsyncMCPTestKit:
                 server=selected,
                 alias=binding.alias or selected.name,
                 required=binding.required,
+                timeouts=binding.timeouts,
             )
             profile_provenance = resolved_profile.provenance
         if selected is None or not isinstance(
@@ -1420,6 +1428,14 @@ class AsyncMCPTestKit:
                 "direct server profiles require runtime resolution"
             )
         requested_revision: str | None
+        effective_binding = _resolve_runtime_settings((binding,), self.config)[0]
+        if (
+            effective_binding.server is not None
+            and effective_binding.server.timeouts.model_dump()
+        ):
+            raise _UnsupportedFeature(
+                "native MCP budgets require an agent harness; direct clients use timeout"
+            )
         requested_transport: _TransportKind | None = None
         if protocol is None:
             requested_revision = self.config.protocol_revision
@@ -1517,6 +1533,7 @@ class AsyncMCPTestKit:
         _artifact_store: _ArtifactStore | None = None,
         _managed_input_runtime: _Any = None,
         harness_cache_dir: str | _Path | None = None,
+        harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
     ) -> AsyncAgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
@@ -1534,6 +1551,9 @@ class AsyncMCPTestKit:
                     details={"reason": "resolver_unavailable"},
                 )
             spec, session_profile_provenance = _resolve_agent_spec(spec, resolver)
+        spec = _resolve_native_settings(
+            _permission_override(spec, harness_permissions), self.config
+        )
         server_profile_by_ordinal = {
             item.get("_ordinal"): item
             for item in session_profile_provenance
@@ -1549,7 +1569,10 @@ class AsyncMCPTestKit:
                 )
             session_server_bindings.append(row)
         resolved = adapter or self._adapter_registry.resolve(spec)
-        bindings = spec.servers + _runtime_server_bindings(runtime_servers)
+        bindings = spec.servers + _resolve_runtime_settings(
+            _runtime_server_bindings(runtime_servers), self.config
+        )
+        _validate_bound_settings(spec, bindings)
         manager = _ServerGroupManager(bindings, tool_policy=spec.tool_policy)
         interactions = Interactions(
             permission_policy=spec.permission_policy,

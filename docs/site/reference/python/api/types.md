@@ -133,6 +133,7 @@ Model fields:
 m3.types.CodexPermissions(
     *,
     profile: str | m3.types.CodexPermissionProfile | m3.types.Unset = Unset.UNSET,
+    profiles: tuple[m3.types.CodexPermissionProfile, ...] = (),
     sandbox: Literal['read-only', 'workspace-write', 'danger-full-access'] | m3.types.Unset = Unset.UNSET,
     network_access: bool | m3.types.Unset = Unset.UNSET,
     approval_policy: Literal['untrusted', 'on-failure', 'on-request', 'never'] | m3.types.Unset = Unset.UNSET,
@@ -146,6 +147,7 @@ Model fields:
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
 | `profile` | `str \| m3.types.CodexPermissionProfile \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `variant 1: strict=True` | — |
+| `profiles` | `tuple[m3.types.CodexPermissionProfile, ...]` | No | `()` | — | — |
 | `sandbox` | `Literal['read-only', 'workspace-write', 'danger-full-access'] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
 | `network_access` | `bool \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `variant 1: strict=True` | — |
 | `approval_policy` | `Literal['untrusted', 'on-failure', 'on-request', 'never'] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
@@ -155,7 +157,7 @@ Model fields:
 ```python
 m3.types.ClaudeCodePermissions(
     *,
-    permission_mode: Literal['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'] | m3.types.Unset = Unset.UNSET,
+    permission_mode: Literal['default', 'acceptEdits', 'auto', 'manual', 'plan', 'dontAsk', 'bypassPermissions'] | m3.types.Unset = Unset.UNSET,
     allowed_tools: tuple[str, ...] | m3.types.Unset = Unset.UNSET,
     denied_tools: tuple[str, ...] | m3.types.Unset = Unset.UNSET,
 ) -> None
@@ -167,7 +169,7 @@ Model fields:
 
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
-| `permission_mode` | `Literal['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
+| `permission_mode` | `Literal['default', 'acceptEdits', 'auto', 'manual', 'plan', 'dontAsk', 'bypassPermissions'] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | — | — |
 | `allowed_tools` | `tuple[str, ...] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `type argument 1: strict=True` | — |
 | `denied_tools` | `tuple[str, ...] \| m3.types.Unset` | No | `Unset.UNSET ('m3.unset')` | `type argument 1: strict=True` | — |
 
@@ -500,6 +502,7 @@ m3.types.HTTPServer(
     *,
     name: str,
     trust: m3.types.TrustLevel = TrustLevel.UNTRUSTED,
+    timeouts: m3.types.McpTimeouts = ...,
     kind: Literal['streamable_http'] = 'streamable_http',
     url: str,
     headers: collections.abc.Mapping[str, m3.types.SecretReference | str] = ...,
@@ -513,6 +516,7 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `name` | `str` | Yes | — | `min_length=1, max_length=256` | — |
 | `trust` | `m3.types.TrustLevel` | No | `TrustLevel.UNTRUSTED ('untrusted')` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 | `kind` | `Literal['streamable_http']` | No | `'streamable_http'` | — | — |
 | `url` | `str` | Yes | — | `min_length=1` | — |
 | `headers` | `collections.abc.Mapping[str, m3.types.SecretReference \| str]` | No | `factory builtins.dict()` | — | — |
@@ -525,6 +529,7 @@ m3.types.StdioServer(
     *,
     name: str,
     trust: m3.types.TrustLevel = TrustLevel.UNTRUSTED,
+    timeouts: m3.types.McpTimeouts = ...,
     kind: Literal['stdio'] = 'stdio',
     command: str,
     args: tuple[str, ...] = (),
@@ -539,6 +544,7 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `name` | `str` | Yes | — | `min_length=1, max_length=256` | — |
 | `trust` | `m3.types.TrustLevel` | No | `TrustLevel.UNTRUSTED ('untrusted')` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 | `kind` | `Literal['stdio']` | No | `'stdio'` | — | — |
 | `command` | `str` | Yes | — | `min_length=1` | — |
 | `args` | `tuple[str, ...]` | No | `()` | — | — |
@@ -552,6 +558,7 @@ m3.types.InProcessServer(
     *,
     name: str,
     trust: m3.types.TrustLevel = TrustLevel.SDK_LOOPBACK,
+    timeouts: m3.types.McpTimeouts = ...,
     kind: Literal['in_process'] = 'in_process',
     factory: Any,
     descriptor: collections.abc.Mapping[str, Any] = ...,
@@ -567,6 +574,7 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `name` | `str` | Yes | — | `min_length=1, max_length=256` | — |
 | `trust` | `m3.types.TrustLevel` | No | `TrustLevel.SDK_LOOPBACK ('sdk_loopback')` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 | `kind` | `Literal['in_process']` | No | `'in_process'` | — | — |
 | `factory` | `Any` | Yes | — | — | — |
 | `descriptor` | `collections.abc.Mapping[str, Any]` | No | `factory builtins.dict()` | — | — |
@@ -600,6 +608,7 @@ m3.types.ServerBinding(
     profile: m3.types.ServerProfileRef | None = None,
     alias: str | None = None,
     required: bool = True,
+    timeouts: m3.types.McpTimeouts = ...,
 ) -> None
 ```
 
@@ -611,6 +620,7 @@ Model fields:
 | `profile` | `m3.types.ServerProfileRef \| None` | No | `None` | — | — |
 | `alias` | `str \| None` | No | `None` | `min_length=1, max_length=256` | — |
 | `required` | `bool` | No | `True` | — | — |
+| `timeouts` | `m3.types.McpTimeouts` | No | `factory m3.types.McpTimeouts()` | — | — |
 
 ## `ServerValue`
 

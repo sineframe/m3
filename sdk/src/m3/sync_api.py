@@ -62,6 +62,10 @@ from ._default_store import (
 from ._default_store import (
     make_default_store as _make_default_store,
 )
+from ._native_settings import NativePermissions as _NativePermissions
+from ._native_settings import permission_override as _permission_override
+from ._types.settings import UNSET as _NATIVE_UNSET
+from ._types.settings import Unset as _Unset
 from ._types.specs import AgentSpec as _AgentSpec
 from .agent_session import AgentAdapter as _AgentAdapter
 from .agent_session import AsyncAgentSession as _AsyncAgentSession
@@ -2100,11 +2104,13 @@ class MCPTestKit:
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
         harness_cache_dir: str | _Path | None = None,
+        harness_permissions: _NativePermissions | _Unset = _NATIVE_UNSET,
     ) -> AgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
             self._unsupported("agent_session")
         spec = _cast(_AgentSpec, self._with_run_id(spec))
+        spec = _permission_override(spec, harness_permissions)
         with self._state_lock:
             if self._closed:
                 raise _KitClosed("MCPTestKit is closed")

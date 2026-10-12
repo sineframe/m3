@@ -147,6 +147,7 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
         "manifest",
         "agent_mode_id",
         "session_config",
+        "permissions",
     ):
         if field in entry:
             kwargs[field] = entry[field]
@@ -161,7 +162,8 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k in {"name", "model", "executable", "runtime", "version"}
+                if k
+                in {"name", "model", "executable", "runtime", "version", "permissions"}
             },
         )
     if kind == "opencode":
@@ -172,7 +174,8 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k in {"name", "model", "executable", "runtime", "version"}
+                if k
+                in {"name", "model", "executable", "runtime", "version", "permissions"}
             },
         )
     if kind == "pi":
@@ -350,6 +353,7 @@ class _Selection:
             "declared_artifacts",
             "workspace",
             "permission_policy",
+            "harness_permissions",
             "sampling_policy",
             "filesystem_policy",
             "terminal_policy",
@@ -537,6 +541,7 @@ def expand(
             raise ValueError("models must be a non-empty list")
         allowed_by_kind = {
             "claude_code": {
+                "permissions",
                 "harness",
                 "models",
                 "name",
@@ -551,6 +556,7 @@ def expand(
                 "_execution_timeout",
             },
             "codex": {
+                "permissions",
                 "harness",
                 "models",
                 "name",
@@ -565,6 +571,7 @@ def expand(
                 "_execution_timeout",
             },
             "opencode": {
+                "permissions",
                 "harness",
                 "models",
                 "name",
