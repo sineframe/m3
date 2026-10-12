@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +20,25 @@ class _NativeOwner(Protocol):
     async def ready(self) -> None: ...
 
     async def stop(self) -> None: ...
+
+
+def validate_host_admission(settings: StartupAdmission) -> None:
+    if not settings.enabled:
+        return
+    if (
+        os.name != "posix"
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "waitid")
+        or not hasattr(os, "WNOWAIT")
+    ):
+        raise UnsupportedFeature("host startup admission requires POSIX locks")
+    threshold = settings.normalized_load_threshold
+    if (
+        threshold is not UNSET
+        and threshold is not None
+        and not hasattr(os, "getloadavg")
+    ):
+        raise UnsupportedFeature("normalized host load is unavailable")
 
 
 def _lock(descriptor: int) -> bool:
@@ -105,23 +123,9 @@ class HostAdmission:
     async def acquire(self, settings: StartupAdmission) -> StartupLease | None:
         if not settings.enabled:
             return None
-        if (
-            os.name != "posix"
-            or not hasattr(os, "O_NOFOLLOW")
-            or not hasattr(os, "waitid")
-            or not hasattr(os, "WNOWAIT")
-        ):
-            raise UnsupportedFeature("host startup admission requires POSIX locks")
+        validate_host_admission(settings)
         threshold = settings.normalized_load_threshold
-        if (
-            threshold is not UNSET
-            and threshold is not None
-            and not hasattr(os, "getloadavg")
-        ):
-            raise UnsupportedFeature("normalized host load is unavailable")
-        root = self._root or Path(tempfile.gettempdir()) / (
-            f"m3-native-admission-{os.getuid()}"
-        )
+        root = self._root or Path("/tmp") / (f"m3-native-admission-{os.getuid()}")
         _directory(root)
         tickets = root / "queue"
         slots = root / "slots"

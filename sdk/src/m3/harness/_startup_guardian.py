@@ -7,6 +7,7 @@ isolated Python import settings. The slot descriptor never enters vendor code.
 from __future__ import annotations
 
 import json
+import math
 import os
 import resource
 import selectors
@@ -34,8 +35,12 @@ def _read_exact(channel: socket.socket, size: int, deadline: float) -> bytes:
     return bytes(data)
 
 
-def _receive(channel: socket.socket) -> dict[str, object]:
+def _receive(
+    channel: socket.socket, startup_deadline: float | None = None
+) -> dict[str, object]:
     deadline = time.monotonic() + 15
+    if startup_deadline is not None:
+        deadline = min(deadline, startup_deadline)
     size = struct.unpack("!I", _read_exact(channel, 4, deadline))[0]
     if size > _MAX_FRAME:
         raise ValueError
@@ -88,7 +93,9 @@ def _leader_exited(pid: int) -> bool:
     return waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
 
 
-def _fork(argv: list[str], environment: dict[str, str], cwd: str) -> tuple[int, int]:
+def _fork(
+    argv: list[str], environment: dict[str, str], cwd: str, deadline: float | None
+) -> tuple[int, int]:
     ready_read, ready_write = os.pipe()
     gate_read, gate_write = os.pipe()
     pid = os.fork()
@@ -109,7 +116,11 @@ def _fork(argv: list[str], environment: dict[str, str], cwd: str) -> tuple[int, 
             if os.read(gate_read, 1) != b"G":
                 os._exit(0)
             os.close(gate_read)
+            if deadline is not None and time.monotonic() >= deadline:
+                os._exit(124)
             os.chdir(cwd)
+            if deadline is not None and time.monotonic() >= deadline:
+                os._exit(124)
             os.execvpe(argv[0], argv, environment)
         except BaseException:
             os._exit(127)
@@ -131,6 +142,7 @@ def main(channel_fd: int, slot_fd: int) -> int:
     argv = request.get("argv")
     environment = request.get("environment")
     cwd = request.get("cwd")
+    deadline_value = request.get("deadline")
     if (
         not isinstance(argv, list)
         or not argv
@@ -144,9 +156,18 @@ def main(channel_fd: int, slot_fd: int) -> int:
         )
         or not isinstance(cwd, str)
         or "\x00" in cwd
+        or (
+            deadline_value is not None
+            and (
+                isinstance(deadline_value, bool)
+                or not isinstance(deadline_value, (int, float))
+                or not math.isfinite(deadline_value)
+            )
+        )
     ):
         raise ValueError
-    pid, gate = _fork(argv, environment, cwd)
+    deadline = float(deadline_value) if deadline_value is not None else None
+    pid, gate = _fork(argv, environment, cwd, deadline)
     for descriptor in (0, 1, 2):
         os.close(descriptor)
     stopping: float | None = None
@@ -158,9 +179,19 @@ def main(channel_fd: int, slot_fd: int) -> int:
         selector = selectors.DefaultSelector()
         selector.register(channel, selectors.EVENT_READ)
         while True:
+            if (
+                deadline is not None
+                and time.monotonic() >= deadline
+                and stopping is None
+            ):
+                stopping = time.monotonic()
+                if gate >= 0:
+                    os.close(gate)
+                    gate = -1
+                _signal(pid, signal.SIGTERM)
             if selector.select(0.025):
                 try:
-                    command = _receive(channel).get("action")
+                    command = _receive(channel, deadline).get("action")
                 except (EOFError, OSError, ValueError):
                     command = "stop"
                     selector.unregister(channel)
@@ -171,6 +202,7 @@ def main(channel_fd: int, slot_fd: int) -> int:
                     began = True
                     _send(channel, event="started", pid=pid)
                 elif command == "ready" and began and stopping is None:
+                    deadline = None
                     if slot_fd >= 0:
                         os.close(slot_fd)
                         slot_fd = -1
