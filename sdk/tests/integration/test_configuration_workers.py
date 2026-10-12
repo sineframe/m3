@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -154,3 +155,78 @@ def test_workers_keep_config_after_file_deletion(tmp_path: Path) -> None:
             assert "PRIVATE-CANARY" not in output + error
         finally:
             (tmp_path / "release").touch()
+
+
+def test_server_literals_use_private_worker_transfer(tmp_path: Path) -> None:
+    source = tmp_path / "test_server_inputs.py"
+    source.write_text("""
+import json
+import pytest
+from m3._configuration_context import current_configuration
+from m3.sync_api import MCPTestKit
+
+@pytest.mark.parametrize("trial", range(4))
+def test_inputs(trial, request):
+    context = current_configuration()
+    assert context.server_selections[0].args == ("SERVER-LITERAL-CANARY",)
+    assert "SERVER-LITERAL-CANARY" not in json.dumps(request.config.workerinput)
+    assert "SERVER-LITERAL-CANARY" not in str(request.config.invocation_params.args)
+    assert request.config.getoption("--m3-server-selections") is None
+    for _ in range(2):
+        with MCPTestKit() as kit:
+            assert kit._literal_registry is context.literal_registry
+    assert context.literal_registry is not None
+    assert context.server_selections[0].args == ("SERVER-LITERAL-CANARY",)
+""")
+    servers = json.dumps(
+        [{"type": "stdio", "command": "python", "args": ["SERVER-LITERAL-CANARY"]}]
+    )
+    with _pytest_process(
+        ["--m3-server-selections", servers, "-n", "2", "-q", str(source)], tmp_path
+    ) as process:
+        output, error = process.communicate(timeout=30)
+        assert process.returncode == 0, output + error
+        assert "4 passed" in output
+        assert "SERVER-LITERAL-CANARY" not in output + error
+
+
+def test_replacement_worker_receives_original_config(tmp_path: Path) -> None:
+    configuration = tmp_path / "settings.toml"
+    configuration.write_text(
+        '[tool.m3]\nartifact_policy="always"\n'
+        "[tool.m3.harness_timeouts]\nstartup_seconds=90\n"
+        '[tool.m3.harnesses.codex.permissions]\nprofile="PRIVATE-CANARY"\n'
+    )
+    source = _WORKER_SOURCE.replace("range(4)", "range(12)").replace(
+        '    os.environ["M3_ARTIFACT_POLICY"] = "never"',
+        "    if trial == 0:\n"
+        "        os._exit(19)\n"
+        '    if request.config.workerinput["workerid"] in ("gw0", "gw1"):\n'
+        "        deadline = time.monotonic() + 20\n"
+        '        while not (Path(__file__).parent / "gw2.ready").exists():\n'
+        '            assert time.monotonic() < deadline, "replacement did not start"\n'
+        "            time.sleep(0.01)\n"
+        '    os.environ["M3_ARTIFACT_POLICY"] = "never"',
+    )
+    source += '\n    (Path(__file__).parent / (request.config.workerinput["workerid"] + ".verified")).touch()\n'
+    test_file = tmp_path / "test_replacement.py"
+    test_file.write_text(source)
+    with _pytest_process(
+        ["--m3-config", str(configuration), "-n", "2", "-q", str(test_file)],
+        tmp_path,
+    ) as process:
+        deadline = time.monotonic() + 25
+        while len(list(tmp_path.glob("gw*.ready"))) < 2:
+            if process.poll() is not None:
+                output, error = process.communicate()
+                pytest.fail(output + error)
+            if time.monotonic() >= deadline:
+                pytest.fail("workers did not finish configuration bootstrap")
+            time.sleep(0.01)
+        configuration.unlink()
+        (tmp_path / "release").touch()
+        output, error = process.communicate(timeout=30)
+        assert process.returncode == 1, output + error
+        assert "1 failed, 11 passed" in output
+        assert (tmp_path / "gw2.verified").exists(), output + error
+        assert "PRIVATE-CANARY" not in output + error

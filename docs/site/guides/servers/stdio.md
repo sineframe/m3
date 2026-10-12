@@ -61,6 +61,11 @@ directory. The assertion checks discovery and the returned quote. Change the
 command, arguments, and working directory to match your own server; see
 [test your own server](../../start/your-server.md).
 
+M3 passes `command` and `args` literally across harnesses, including strings
+such as `${NAME:-default}`. Supply server environment values through
+`environment`. If your command launches a shell, that shell applies its own
+expansion rules to the script you provide.
+
 ## If startup fails
 
 First run the server command manually from the configured working directory.

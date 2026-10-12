@@ -561,10 +561,9 @@ class OpenCodeHarnessAdapter:
         client: httpx.AsyncClient | None = None
         try:
             harness = launch.spec.harness
-            assert launch._credentials is not None
-            environment = _isolated_environment(
-                root, launch._credentials.child_environment()
-            )
+            credentials = launch._credentials
+            assert credentials is not None
+            environment = _isolated_environment(root, credentials.child_environment())
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             if isinstance(harness, OpenCode) and harness.runtime == "managed":
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
@@ -586,8 +585,7 @@ class OpenCodeHarnessAdapter:
                         raise HarnessStartupError(
                             "OpenCode credential reference is unavailable"
                         )
-                    assert launch._credentials is not None
-                    value = launch._credentials.credential_environment()[variable]
+                    value = credentials.credential_environment()[variable]
                     if not value:
                         raise HarnessStartupError("OpenCode credential is unavailable")
                     environment[variable] = value
@@ -598,26 +596,20 @@ class OpenCodeHarnessAdapter:
                         value,
                         environment,
                         runtime_secrets,
-                        resolver_environment=launch._credentials.reference_environment()
-                        if launch._credentials is not None
-                        else None,
+                        resolver_environment=credentials.reference_environment(),
                     )
                 for value in server.headers.values():
                     _resolve_opencode_environment_value(
                         value,
                         environment,
                         runtime_secrets,
-                        resolver_environment=launch._credentials.reference_environment()
-                        if launch._credentials is not None
-                        else None,
+                        resolver_environment=credentials.reference_environment(),
                     )
                 _resolve_opencode_environment_value(
                     server.endpoint,
                     environment,
                     runtime_secrets,
-                    resolver_environment=launch._credentials.reference_environment()
-                    if launch._credentials is not None
-                    else self._resolver_environment,
+                    resolver_environment=credentials.reference_environment(),
                 )
             self._runtime_secrets = runtime_secrets
             self._native_error_redaction = launch_error_redaction(
