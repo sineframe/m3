@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from pydantic import JsonValue
@@ -69,6 +69,9 @@ from .observations import (
     RawFrameObservation,
     TurnEvidence,
 )
+
+if TYPE_CHECKING:
+    from ._launch_credentials import LaunchCredentialBundle, NativeCredentialMaterial
 
 
 def _json_safe(value: Any, *, limit: int = 8_388_608) -> JsonValue | None:
@@ -238,6 +241,9 @@ class NativeRPCAdapter:
     ) -> None:
         self.executable = _executable(executable, self.executable_name)
         self.environment = dict(environment or {})
+        self._resolver_environment = environment
+        self._credential_source: HarnessLaunch | None = None
+        self._prepared_credentials: LaunchCredentialBundle | None = None
         self._capabilities = HarnessAdapterCapabilities(
             name=self.harness_kind,
             supports_streaming=True,
@@ -319,7 +325,9 @@ class NativeRPCAdapter:
                 for config in launch.configurations
                 if config.available
             )
-            enforcement = getattr(launch.capture, "enforces_portable_policy", None)
+            enforcement = getattr(launch.capture, "can_enforce_portable_policy", None)
+            if not callable(enforcement):
+                enforcement = getattr(launch.capture, "enforces_portable_policy", None)
             if not callable(enforcement) or not enforcement(available_connections):
                 return self._capabilities.readiness(
                     ready=False, reason="tool_policy_unsupported"
@@ -344,22 +352,93 @@ class NativeRPCAdapter:
             self._capabilities = replace(self._capabilities, supports_tool_policy=True)
         return self._capabilities.readiness()
 
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._launch_credentials import activate_native_launch
+
+        source = launch
+        if launch._credentials is None:
+            launch = replace(
+                launch, _credentials=self._credentials_for_preparation(launch)
+            )
+        effective = await activate_native_launch(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+        )
+        self._credential_source = source
+        self._prepared_credentials = effective._credentials
+        return effective
+
+    def _credentials_for_preparation(
+        self, launch: HarnessLaunch, *, material: NativeCredentialMaterial | None = None
+    ) -> LaunchCredentialBundle:
+        """Retain compatibility with direct native environment preparation."""
+
+        from ._launch_credentials import collect_native_credentials
+
+        if launch._credentials is not None:
+            launch._credentials.validate_selection(launch)
+            launch._credentials.validate_inputs(
+                launch.configurations,
+                effective=launch._credentials.effective_inputs_bound,
+            )
+            return launch._credentials
+        if self._credential_source is launch and self._prepared_credentials is not None:
+            self._prepared_credentials.validate_selection(launch)
+            self._prepared_credentials.validate_inputs(
+                launch.configurations,
+                effective=self._prepared_credentials.effective_inputs_bound,
+            )
+            return self._prepared_credentials
+        if self._session is not None:
+            raise HarnessStartupError("native credential session is already open")
+        if self._prepared_credentials is not None:
+            from ..transport.capture_proxy import McpCaptureManager
+
+            previous_capture = getattr(self._credential_source, "capture", None)
+            if isinstance(
+                previous_capture, McpCaptureManager
+            ) and previous_capture.owns_credential_bundle(self._prepared_credentials):
+                raise HarnessStartupError("native credential owner is still active")
+            self._prepared_credentials.close()
+        credentials = collect_native_credentials(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+            material=material
+            if material is not None
+            else self._credential_material(launch),
+        )
+        self._credential_source = launch
+        self._prepared_credentials = credentials
+        return credentials
+
+    def _credential_material(self, launch: HarnessLaunch) -> NativeCredentialMaterial:
+        from ._launch_credentials import NativeCredentialMaterial
+
+        return NativeCredentialMaterial()
+
+    async def _close_credential_operations(self) -> None:
+        pass
+
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
         if self._session is not None:
             raise HarnessStartupError(f"{self.name} session is already open")
+        launch = await self.prepare_launch_credentials(launch)
         root = Path(tempfile.mkdtemp(prefix=f"m3-{self.name}-"))
         process = JsonRpcProcess(self.executable, self.process_argv(launch))
         try:
             # Keep provider state isolated while allowing only explicit adapter
             # overrides and credentials to reach the child.
-            await process.open(
-                environment=self.environment_for_launch(launch, root),
-                cwd=workspace_for_launch(launch, root),
-                root=root,
-            )
+            from ._launch_credentials import check_credential_deadline
+
+            environment = self.environment_for_launch(launch, root)
+            workspace = workspace_for_launch(launch, root)
+            check_credential_deadline(launch)
+            await process.open(environment=environment, cwd=workspace, root=root)
             session_id = await self.initialize(process, launch)
             effective_launch = launch
             if (
@@ -436,7 +515,7 @@ class NativeRPCAdapter:
     def environment_for_launch(
         self, launch: HarnessLaunch, root: Path
     ) -> Mapping[str, str]:
-        return self.environment
+        return self._credentials_for_preparation(launch).child_environment()
 
     async def initialize(self, process: JsonRpcProcess, launch: HarnessLaunch) -> str:
         return str(uuid4())
@@ -711,6 +790,17 @@ class NativeRPCAdapter:
     async def close(self) -> None:
         if self._session is not None:
             await self._session.close()
+        await self._close_credential_operations()
+        from ..transport.capture_proxy import McpCaptureManager
+
+        if self._prepared_credentials is not None:
+            capture = getattr(self._credential_source, "capture", None)
+            if not isinstance(
+                capture, McpCaptureManager
+            ) or not capture.owns_credential_bundle(self._prepared_credentials):
+                self._prepared_credentials.close()
+        self._prepared_credentials = None
+        self._credential_source = None
         self._session = None
         self._process = None
         self._runtime_secrets.clear()

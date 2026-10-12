@@ -495,7 +495,9 @@ class OpenCodeHarnessAdapter:
                 for config in launch.configurations
                 if config.available
             )
-            enforcement = getattr(launch.capture, "enforces_portable_policy", None)
+            enforcement = getattr(launch.capture, "can_enforce_portable_policy", None)
+            if not callable(enforcement):
+                enforcement = getattr(launch.capture, "enforces_portable_policy", None)
             if not callable(enforcement) or not enforcement(available_connections):
                 return self._capabilities.readiness(
                     ready=False, reason="tool_policy_unsupported"
@@ -537,18 +539,31 @@ class OpenCodeHarnessAdapter:
             return "v2"
         raise HarnessStartupError("OpenCode configuration dialect is unsupported")
 
+    async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
+        from ._launch_credentials import activate_native_launch
+
+        return await activate_native_launch(
+            launch,
+            resolver_environment=self._resolver_environment,
+            child_environment=self.environment,
+        )
+
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError("OpenCode server is unavailable")
         if self._session is not None:
             raise HarnessStartupError("OpenCode session is already open")
+        launch = await self.prepare_launch_credentials(launch)
         root = Path(tempfile.mkdtemp(prefix="m3-opencode-"))
         owner = ProcessOwner(root)
         client: httpx.AsyncClient | None = None
         try:
             harness = launch.spec.harness
-            environment = _isolated_environment(root, self.environment)
+            assert launch._credentials is not None
+            environment = _isolated_environment(
+                root, launch._credentials.child_environment()
+            )
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             if isinstance(harness, OpenCode) and harness.runtime == "managed":
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
@@ -570,9 +585,8 @@ class OpenCodeHarnessAdapter:
                         raise HarnessStartupError(
                             "OpenCode credential reference is unavailable"
                         )
-                    value = environment.get(reference.name)
-                    if value is None:
-                        value = os.environ.get(reference.name)
+                    assert launch._credentials is not None
+                    value = launch._credentials.credential_environment()[variable]
                     if not value:
                         raise HarnessStartupError("OpenCode credential is unavailable")
                     environment[variable] = value
@@ -583,20 +597,26 @@ class OpenCodeHarnessAdapter:
                         value,
                         environment,
                         runtime_secrets,
-                        resolver_environment=self._resolver_environment,
+                        resolver_environment=launch._credentials.reference_environment()
+                        if launch._credentials is not None
+                        else None,
                     )
                 for value in server.headers.values():
                     _resolve_opencode_environment_value(
                         value,
                         environment,
                         runtime_secrets,
-                        resolver_environment=self._resolver_environment,
+                        resolver_environment=launch._credentials.reference_environment()
+                        if launch._credentials is not None
+                        else None,
                     )
                 _resolve_opencode_environment_value(
                     server.endpoint,
                     environment,
                     runtime_secrets,
-                    resolver_environment=self._resolver_environment,
+                    resolver_environment=launch._credentials.reference_environment()
+                    if launch._credentials is not None
+                    else self._resolver_environment,
                 )
             self._runtime_secrets = runtime_secrets
             self._native_error_redaction = launch_error_redaction(
@@ -628,6 +648,9 @@ class OpenCodeHarnessAdapter:
             config = _write_opencode_config(root, launch, dialect)
             workspace = workspace_for_launch(launch, root)
             environment["OPENCODE_CONFIG"] = str(config)
+            from ._launch_credentials import check_credential_deadline
+
+            check_credential_deadline(launch)
             await owner.spawn(
                 [self.executable, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                 environment,
@@ -732,6 +755,9 @@ class OpenCodeHarnessAdapter:
         self._client = None
         self._owner = None
         self._base_url = None
+        from ._launch_credentials import release_native_credentials
+
+        release_native_credentials(self._launch)
         self._launch = None
         self._root = None
         self._runtime_secrets.clear()

@@ -37,8 +37,11 @@ from ..types import (
 )
 
 if TYPE_CHECKING:
+    from .._literal_store import LiteralHandle, RunLiteralStore
     from ..managed_runtime import ManagedInputRuntime
     from ..server_group import HarnessServerConfig, ServerGroupSnapshot
+    from ._launch_credentials import LaunchCredentialBundle
+    from ._native_auth import NativeAuthOperations
     from ._private_policy import PrivateToolCalls
     from .observations import HarnessSessionEvidence, TurnEvidence
 
@@ -260,6 +263,20 @@ class HarnessLaunch:
     # Runtime-owned, read-only capture context.  The adapter may query a
     # structured snapshot but never owns transport framing or proxy cleanup.
     capture: Any | None = None
+    _credentials: LaunchCredentialBundle | None = field(
+        default=None, repr=False, compare=False
+    )
+    _literal_registry: RunLiteralStore | None = field(
+        default=None, repr=False, compare=False
+    )
+    _credential_deadline: float | None = field(default=None, repr=False, compare=False)
+    _native_auth_operations: NativeAuthOperations | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    _native_secret_inputs: tuple[str | LiteralHandle, ...] = field(
+        default=(), repr=False, compare=False
+    )
 
     def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""
@@ -273,6 +290,11 @@ class HarnessLaunch:
             self.workspace_root,
             evidence,
             self.capture,
+            self._credentials,
+            self._literal_registry,
+            self._credential_deadline,
+            self._native_auth_operations,
+            self._native_secret_inputs,
         )
 
 

@@ -50,6 +50,8 @@ def launch_error_redaction(
     """
 
     values = set(resolved_secrets)
+    if launch._credentials is not None:
+        values.update(launch._credentials.redaction().secrets)
     values.update(value for value in environment.values() if value)
     for server in launch.configurations:
         for value in (*server.environment.values(), *server.headers.values()):
