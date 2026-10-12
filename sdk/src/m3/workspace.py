@@ -186,6 +186,7 @@ class WorkspaceManager:
         self._async_cleanup_lock = asyncio.Lock()
         self._cleanup_operations: OwnedBootstrapOperations | None = None
         self._capture_operations: OwnedBootstrapOperations | None = None
+        self._artifact_secrets: frozenset[str] = frozenset()
 
     async def create_async(
         self,
@@ -541,6 +542,11 @@ class WorkspaceManager:
             and self.artifact_policy is not ArtifactPolicy.NEVER,
         )
 
+    def add_artifact_secrets(self, values: Iterable[str]) -> None:
+        """Retain launch-pinned values for artifact redaction without resolving them."""
+        with self._lock:
+            self._artifact_secrets |= frozenset(value for value in values if value)
+
     async def capture_async(
         self, outcome: ExecutionOutcome, *, deadline: float | None = None
     ) -> WorkspaceCapture:
@@ -563,6 +569,7 @@ class WorkspaceManager:
                     self._store,
                     collect=bool(self.declared_artifacts)
                     and self.artifact_policy is not ArtifactPolicy.NEVER,
+                    known_literals=self._artifact_secrets,
                 )
                 payload = {
                     "policy": self.policy.model_dump(mode="json"),

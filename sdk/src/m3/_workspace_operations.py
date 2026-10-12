@@ -29,7 +29,9 @@ class CapturedWorkspace:
     blobs: tuple[tuple[ArtifactRef, bytes], ...] = field(default=(), repr=False)
 
 
-def artifact_backend(store: ArtifactStore, *, collect: bool) -> dict[str, Any]:
+def artifact_backend(
+    store: ArtifactStore, *, collect: bool, known_literals: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """Pin supported backend settings before any bounded workspace job starts."""
     from .errors import UnsupportedFeature
     from .storage.sqlite import SQLiteArtifactStore
@@ -48,6 +50,13 @@ def artifact_backend(store: ArtifactStore, *, collect: bool) -> dict[str, Any]:
             secrets=config.secrets,
             sensitive_keys=config.sensitive_keys,
             credential_file_contents=config.credential_file_contents,
+        )
+    if known_literals:
+        config = RedactionConfig(
+            secrets=config.secrets | known_literals,
+            sensitive_keys=config.sensitive_keys,
+            credential_file_contents=config.credential_file_contents,
+            include_environment=config.include_environment,
         )
     redaction = {
         key: sorted(value) if isinstance(value, frozenset) else value
