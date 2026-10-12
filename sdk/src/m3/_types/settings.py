@@ -99,6 +99,7 @@ class CodexPermissions(_Settings):
     """Choose a named/defined profile or legacy sandbox options, never both."""
 
     profile: _Name | CodexPermissionProfile | _Unset = UNSET
+    profiles: tuple[CodexPermissionProfile, ...] = ()
     sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | _Unset = (
         UNSET
     )
@@ -113,6 +114,13 @@ class CodexPermissions(_Settings):
             self.sandbox is not UNSET or self.network_access is not UNSET
         ):
             raise ValueError("profile cannot be combined with legacy sandbox options")
+        definitions = {definition.name: definition for definition in self.profiles}
+        if len(definitions) != len(self.profiles):
+            raise ValueError("profile definitions require unique names")
+        if isinstance(self.profile, CodexPermissionProfile):
+            existing = definitions.get(self.profile.name)
+            if existing is not None and existing != self.profile:
+                raise ValueError("inline profile conflicts with its named definition")
         return self
 
 
@@ -120,7 +128,15 @@ class ClaudeCodePermissions(_Settings):
     """Claude Code interaction mode and explicit native tool rules."""
 
     permission_mode: (
-        Literal["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"]
+        Literal[
+            "default",
+            "acceptEdits",
+            "auto",
+            "manual",
+            "plan",
+            "dontAsk",
+            "bypassPermissions",
+        ]
         | _Unset
     ) = UNSET
     allowed_tools: tuple[_Name, ...] | _Unset = UNSET

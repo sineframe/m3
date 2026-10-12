@@ -29,6 +29,7 @@ from .transport.capture_proxy import McpCaptureManager
 from .types import (
     HTTPServer,
     InProcessServer,
+    McpTimeouts,
     ServerBinding,
     ServerValue,
     StdioServer,
@@ -163,6 +164,7 @@ class HarnessServerConfig:
     cwd: str | None = None
     tools: tuple[str, ...] = ()
     loopback_only: bool = False
+    timeouts: McpTimeouts = field(default_factory=McpTimeouts)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", dict(self.environment))
@@ -861,6 +863,7 @@ class ServerGroupManager:
                         available=record.available,
                         connection_id=record.connection_id,
                         command=server.command,
+                        timeouts=server.timeouts,
                         args=server.args,
                         cwd=server.cwd,
                         environment=server.environment,
@@ -878,6 +881,7 @@ class ServerGroupManager:
                         connection_id=record.connection_id,
                         endpoint=record.endpoint or server.url,
                         headers=server.headers,
+                        timeouts=server.timeouts,
                         loopback_only=server.loopback_only,
                         reason=record.reason,
                         tools=record.tools,
@@ -892,6 +896,7 @@ class ServerGroupManager:
                         available=record.available,
                         connection_id=record.connection_id,
                         endpoint=record.endpoint,
+                        timeouts=server.timeouts,
                         reason=record.reason,
                         tools=record.tools,
                     )

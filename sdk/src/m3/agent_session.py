@@ -829,6 +829,33 @@ class AsyncAgentSession:
         # it must complete (or be cancelled) before server startup, probes, or
         # provider open can produce side effects.
         await self._prepare_managed_runtime()
+        from ._native_settings import requested_native_settings
+
+        configuration_reader = getattr(self._server_manager, "configurations", None)
+        native_configurations = (
+            tuple(configuration_reader()) if callable(configuration_reader) else ()
+        )
+        if requested_native_settings(self.spec) or any(
+            config.timeouts.model_dump() for config in native_configurations
+        ):
+            validate_settings = getattr(self.adapter, "validate_native_settings", None)
+            if not callable(validate_settings):
+                raise UnsupportedFeature(
+                    "adapter cannot validate requested native settings"
+                )
+            from .harness.native_capabilities import NativeRuntimeIdentity
+
+            runtime_identity = None
+            if self._runtime_lease is not None:
+                provenance = getattr(self._runtime_lease, "provenance", None)
+                if not isinstance(provenance, Mapping):
+                    raise UnsupportedFeature(
+                        "managed native capability identity is unavailable"
+                    )
+                runtime_identity = NativeRuntimeIdentity.from_provenance(provenance)
+            await validate_settings(
+                self.spec, native_configurations, runtime_identity=runtime_identity
+            )
         if self._deferred_elicitation_capability_check:
             await _prepare_capabilities(self.adapter)
             _require_elicitation_capability(self.adapter)
