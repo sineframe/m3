@@ -32,6 +32,14 @@ if TYPE_CHECKING:
 
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_FRAME = 12 * 1024 * 1024
+_RESOURCE_LAYOUTS = {
+    "private_capsule": ("capsule", False),
+    "private_native_auth": ("auth.json", True),
+    "private_native_launch": (".owner", True),
+    "private_capture_root": (".owner", True),
+    "private_endpoint": ("ipc", False),
+    "private_immutable_cache": ("cache/opencode/bin/rg", True),
+}
 _closed_owners: dict[int, OwnedBootstrapOperations] = {}
 _closed_owners_lock = threading.Lock()
 
@@ -166,43 +174,18 @@ def _decode_result(
             "immutable cache does not support this native build"
         )
     result = _PrivateResult()
-    if operation in {
-        "private_capsule",
-        "private_native_auth",
-        "private_native_launch",
-        "private_capture_root",
-        "private_endpoint",
-        "private_immutable_cache",
-    }:
+    layout = _RESOURCE_LAYOUTS.get(operation)
+    if layout is not None:
         if set(frame) != {"version", "resource"} or not isinstance(
             frame["resource"], dict
         ):
             raise PrivateOperationError("invalid private bootstrap result")
         resource = OwnedResource.from_private_frame(frame["resource"])
-        name = (
-            "ipc"
-            if operation == "private_endpoint"
-            else "auth.json"
-            if operation == "private_native_auth"
-            else "cache/opencode/bin/rg"
-            if operation == "private_immutable_cache"
-            else ".owner"
-            if operation in {"private_native_launch", "private_capture_root"}
-            else "capsule"
-        )
+        name, native_home = layout
         if (
             resource.root != root
             or resource.path != root / name
-            or resource.native_home
-            != (
-                operation
-                in {
-                    "private_native_auth",
-                    "private_immutable_cache",
-                    "private_native_launch",
-                    "private_capture_root",
-                }
-            )
+            or resource.native_home != native_home
         ):
             raise PrivateOperationError("invalid private bootstrap resource")
         result.resource = resource
