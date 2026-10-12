@@ -1,0 +1,33 @@
+# Concurrent results-store repro
+
+From the repository root, use a Python environment containing the workspace
+SDK, CLI, pytest and pytest-xdist dependencies:
+
+```sh
+.venv/bin/python scripts/repro_large_run_storage.py --output /tmp/m3-storage-repro
+```
+
+The output directory must not already exist. The driver starts six actual
+`m3 test` processes with four pytest workers each. Every test uses a real stdio
+echo MCP server for 16 tool calls and a deterministic fake agent adapter for
+eight turns. It persists normal run manifests, executions, sessions, turns
+and events without calling model providers.
+
+Five cases cover a cold shared store, warm shared store, separate stores,
+termination during active writes, and recovery against the same shared store.
+The driver reads events and turns while writers run, reloads execution entries
+and feedback, then checks SQLite integrity, foreign keys, event sequences,
+record counts and completed-run status. The terminated run is recorded
+separately; its incomplete records are not treated as completed trials.
+Termination currently requires POSIX and uses the CLI's existing process-group
+cleanup. A cleanup timeout fails the repro.
+
+Each case writes process logs and a JSON report beneath the output directory.
+The report includes new record counts so a warm or recovery case cannot pass
+solely because earlier records exist. Fixture-generated reports under `.m3`
+are ignored by Git.
+
+This is a storage contention and recovery repro. It does not reproduce native
+harness startup, assert provider behavior or implement the statistical release
+performance gate. A successful run means contention was not reproduced under
+this workload; it does not establish that every host or filesystem is safe.
