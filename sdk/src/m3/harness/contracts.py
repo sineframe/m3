@@ -39,11 +39,12 @@ from ..types import (
 if TYPE_CHECKING:
     from ..managed_runtime import ManagedInputRuntime
     from ..server_group import HarnessServerConfig, ServerGroupSnapshot
+    from ._private_policy import PrivateToolCalls
     from .observations import HarnessSessionEvidence, TurnEvidence
 
 
 class HarnessAdapterError(MCPError):
-    """Sanitized adapter failure; messages never contain harness output."""
+    """Sanitized adapter failure; native text must cross a redaction boundary."""
 
 
 class HarnessStartupError(HarnessAdapterError):
@@ -177,6 +178,9 @@ class HarnessTurnResult:
     # Private same-worker envelope consumed by the managed-input runtime.
     elicitation: PendingElicitationRound | None = None
     operation_parameters: Mapping[str, object] | None = None
+    _private_tool_calls: PrivateToolCalls | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if (

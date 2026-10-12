@@ -22,7 +22,7 @@ import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from mcp.client.stdio import get_default_environment
@@ -32,6 +32,9 @@ from ..trace.capture import CaptureWriter, read_capture
 from ..trace.redaction import is_sensitive_key
 from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
 from .http_proxy import McpHttpProxy
+
+if TYPE_CHECKING:
+    from ..harness._private_policy import PrivateToolCalls
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_SIZE = 4096
@@ -552,6 +555,9 @@ class McpCaptureManager:
         self._limitations: dict[str, tuple[str, ...]] = {}
         self._subscriptions: set[McpObservationSubscription] = set()
         self._observation_sequences: dict[str, int] = {}
+        # Original forwarded tool identities stay in this volatile ledger;
+        # redacted capture files are never a policy identity authority.
+        self._private_policy_calls: dict[str, list[str | None]] = {}
         self._observation_loop: asyncio.AbstractEventLoop | None = None
         self._publication_lock = threading.Lock()
         self._publication_ticket = 0
@@ -591,6 +597,7 @@ class McpCaptureManager:
     def _writer_event(
         self, connection_id: str, transport: str, direction: str, payload: Any
     ) -> None:
+        self._remember_private_call(connection_id, direction, payload)
         loop = self._observation_loop
         if loop is None or loop.is_closed():
             return
@@ -618,6 +625,53 @@ class McpCaptureManager:
             with self._publication_lock:
                 self._pending_publication_tickets.discard(ticket)
             return
+
+    def _remember_private_call(
+        self, connection_id: str, direction: str, payload: Any
+    ) -> None:
+        if direction != "client_to_server" or not isinstance(payload, Mapping):
+            return
+        if payload.get("method") != "tools/call":
+            return
+        params = payload.get("params")
+        tool = params.get("name") if isinstance(params, Mapping) else None
+        # Keep a value-free invalid-call marker even when no bounded native
+        # identity exists. Omitted provider updates must not hide that traffic.
+        identity = tool if isinstance(tool, str) and 0 < len(tool) <= 256 else None
+        with self._publication_lock:
+            if not self._closed:
+                self._private_policy_calls.setdefault(connection_id, []).append(
+                    identity
+                )
+
+    def _private_forwarded_calls(self) -> PrivateToolCalls:
+        """Return nonserializable originals, independently of durable redaction."""
+
+        from ..harness._private_policy import PrivateToolCalls
+        from ..trace.redaction import RedactionConfig
+
+        with self._publication_lock:
+            calls = tuple(
+                {"server": connection, "tool": tool, "call_id": str(index)}
+                for connection, tools in self._private_policy_calls.items()
+                for index, tool in enumerate(tools)
+            )
+            writers = tuple(target.writer for target in self._targets.values())
+        registries = tuple(writer._redaction_snapshot() for writer in writers)
+        registry = (
+            RedactionConfig(
+                secrets=frozenset(
+                    value
+                    for item in registries
+                    if item is not None
+                    for value in item.secrets
+                ),
+                include_environment=False,
+            )
+            if registries and all(item is not None for item in registries)
+            else None
+        )
+        return PrivateToolCalls(calls, registry)
 
     def _publish_scheduled(
         self,
@@ -828,6 +882,9 @@ class McpCaptureManager:
                 ):
                     self._fail_subscribers(connection_id, "invalid_channel_message")
                     break
+                self._remember_private_call(
+                    connection_id, message["direction"], message["payload"]
+                )
                 self._publish(
                     connection_id,
                     TransportKind.STDIO.value,
@@ -1172,6 +1229,8 @@ class McpCaptureManager:
             )
             for connection_id, target in self._targets.items()
         }
+        with self._publication_lock:
+            self._private_policy_calls.clear()
         if self._owns_root:
             shutil.rmtree(self.root, ignore_errors=True)
         else:
