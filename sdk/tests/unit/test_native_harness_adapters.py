@@ -1819,7 +1819,10 @@ for line in sys.stdin:
         HarnessLaunch(spec, base.servers, base.configurations, base.tool_policy)
     )
     result = await session.send(HarnessTurnRequest.from_message("credential"))
-    assert _response_text(result) == canary
+    # The fixture echoes the actual child credential. The native return is
+    # projected before even the lower-level harness-session boundary.
+    assert _response_text(result) == "[REDACTED]"
+    assert canary not in repr(result)
     assert isinstance(spec.harness, ClaudeCode)
     assert (
         spec.harness.credential_references["ANTHROPIC_API_KEY"].name
