@@ -375,6 +375,13 @@ def _fork_job(
                 "private_capsule",
                 "private_endpoint",
                 "private_native_auth",
+                "private_native_launch",
+                "private_capture_root",
+                "private_capture_append",
+                "private_capture_files",
+                "private_capture_read",
+                "private_native_support",
+                "private_native_probe",
             }:
                 identity = root.stat(follow_symlinks=False)
                 # Helper-only ownership evidence; never forwarded as a result.
@@ -509,6 +516,13 @@ def _supervise(
                 "private_connect",
                 "private_remove",
                 "private_native_auth",
+                "private_native_launch",
+                "private_capture_root",
+                "private_capture_append",
+                "private_capture_files",
+                "private_capture_read",
+                "private_native_support",
+                "private_native_probe",
                 "private_read_auth",
                 "private_workspace_cleanup",
                 "private_workspace_capture",
@@ -551,6 +565,13 @@ def _supervise(
                 "private_capsule",
                 "private_endpoint",
                 "private_native_auth",
+                "private_native_launch",
+                "private_capture_root",
+                "private_capture_append",
+                "private_capture_files",
+                "private_capture_read",
+                "private_native_support",
+                "private_native_probe",
             }:
                 job.private_kind = request["operation"]
             if (
@@ -736,7 +757,16 @@ def _supervise(
             for ident, lease in tuple(private_leases.items()):
                 # Native auth may still have a harness writer. Session process
                 # ownership must confirm its death before disposing this lease.
-                if lease.private_kind == "private_native_auth":
+                if lease.private_kind in {
+                    "private_native_auth",
+                    "private_native_launch",
+                    "private_capture_root",
+                    "private_capture_append",
+                    "private_capture_files",
+                    "private_capture_read",
+                    "private_native_support",
+                    "private_native_probe",
+                }:
                     continue
                 lease.state = "fenced"
                 jobs[ident] = lease

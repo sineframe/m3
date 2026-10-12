@@ -22,6 +22,8 @@ original_unlink = Path.unlink
 original_workspace_cleanup = WorkspaceManager._cleanup
 original_workspace_capture = WorkspaceManager.capture
 
+active_directory: Path | None = None
+
 
 def block_filesystem(target: Path) -> None:
     marker.write_text(json.dumps({"pid": os.getpid(), "root": str(target.parent)}))
@@ -31,20 +33,30 @@ def block_filesystem(target: Path) -> None:
 
 
 def blocked_open(path: str | Path, flags: int, *args: object, **kwargs: object) -> int:
+    global active_directory
     target = Path(path)
+    if flags & getattr(os, "O_DIRECTORY", 0):
+        active_directory = target
     writing = bool(flags & os.O_WRONLY)
     matching = (
         target.name == "capsule" and writing
         if mode == "write"
         else target.name == "capsule" and not writing
     )
+    if mode == "capture":
+        matching = target.name.endswith(".jsonl") and writing
     if mode != "remove" and arm.exists() and matching:
+        if mode == "capture" and active_directory is not None:
+            target = active_directory / target.name
         block_filesystem(target)
     return original_open(path, flags, *args, **kwargs)
 
 
 def blocked_unlink(path: Path, *args: object, **kwargs: object) -> None:
-    if mode == "remove" and arm.exists() and path.name == "capsule":
+    matching = (mode == "remove" and path.name == "capsule") or (
+        mode == "native_remove" and path.name == ".owner"
+    )
+    if matching and arm.exists():
         block_filesystem(path)
     original_unlink(path, *args, **kwargs)
 

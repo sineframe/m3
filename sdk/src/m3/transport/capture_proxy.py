@@ -34,9 +34,12 @@ from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
 from .http_proxy import McpHttpProxy
 
 if TYPE_CHECKING:
+    from .._bootstrap_operations import OwnedBootstrapOperations, OwnedResource
+    from .._startup_deadlines import StartupBudget
     from ..harness._launch_credentials import LaunchCredentialBundle
     from ..harness._private_policy import PrivateToolCalls
     from ..server_group import HarnessServerConfig
+    from ._owned_capture import OwnedCaptureSink
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_SIZE = 4096
@@ -292,8 +295,7 @@ def _classify_runtime_value(
         secrets.add(value)
 
 
-def write_stdio_handoff(
-    path: str | os.PathLike[str],
+def render_stdio_handoff(
     environment: Mapping[str, Any],
     *,
     configured_keys: frozenset[str] = frozenset(),
@@ -303,8 +305,8 @@ def write_stdio_handoff(
     resolved: bool = False,
     launch_secrets: frozenset[str] = frozenset(),
     complete_environment: bool = False,
-) -> set[str]:
-    """Resolve launch data into a one-shot protected handoff."""
+) -> tuple[bytes, set[str]]:
+    """Render private launch bytes without filesystem access."""
 
     from ._stdio_handoff import StdioHandoff
 
@@ -342,13 +344,40 @@ def write_stdio_handoff(
             "observer": observer,
         }
     )
+    return payload.model_dump_json(exclude_none=True).encode("utf-8"), resolved_secrets
+
+
+def write_stdio_handoff(
+    path: str | os.PathLike[str],
+    environment: Mapping[str, Any],
+    *,
+    configured_keys: frozenset[str] = frozenset(),
+    observer: Mapping[str, str] | None = None,
+    command: tuple[str, ...] | None = None,
+    cwd: str | None = None,
+    resolved: bool = False,
+    launch_secrets: frozenset[str] = frozenset(),
+    complete_environment: bool = False,
+) -> set[str]:
+    """Resolve launch data into a one-shot protected handoff."""
+
+    payload, resolved_secrets = render_stdio_handoff(
+        environment,
+        configured_keys=configured_keys,
+        observer=observer,
+        command=command,
+        cwd=cwd,
+        resolved=resolved,
+        launch_secrets=launch_secrets,
+        complete_environment=complete_environment,
+    )
     handoff = Path(path)
     created = False
     try:
         descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created = True
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
-            output_file.write(payload.model_dump_json(exclude_none=True))
+        with os.fdopen(descriptor, "wb") as output_file:
+            output_file.write(payload)
     except BaseException:
         if created:
             try:
@@ -433,8 +462,11 @@ def _event_kind(payload: Mapping[str, Any], direction: str) -> str:
     return "response"
 
 
-def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
-    records = read_capture(str(target.path))
+def _project_events(
+    target: _CaptureTarget, records: list[dict[str, Any]] | None = None
+) -> tuple[McpWireEvent, ...]:
+    if records is None:
+        records = read_capture(str(target.path))
     sequence = 0
     pending: dict[
         tuple[type[Any], Any, str], tuple[int, float, Mapping[str, Any], str | None]
@@ -537,6 +569,7 @@ class McpCaptureManager:
         tool_policy: ToolPolicy | None = None,
         server_aliases: Iterable[str] = (),
         tools_by_server: Mapping[str, Iterable[str]] | None = None,
+        _prepared_root: bool = False,
     ) -> None:
         self._owns_root = root is None
         self.root = (
@@ -544,7 +577,13 @@ class McpCaptureManager:
             if root is not None
             else Path(tempfile.mkdtemp(prefix="m3-capture-"))
         )
-        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not _prepared_root:
+            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._owned_operations: OwnedBootstrapOperations | None = None
+        self._owned_resource: OwnedResource | None = None
+        self._owned_sink: OwnedCaptureSink | None = None
+        self._startup_clock: StartupBudget | None = None
+        self._owned_records: dict[str, list[dict[str, Any]]] = {}
         self.baseline_ns = (
             baseline_ns if baseline_ns is not None else time.perf_counter_ns()
         )
@@ -592,6 +631,102 @@ class McpCaptureManager:
         self._closing_observer = False
         self._observation_start_failures: dict[str, str] = {}
 
+    @classmethod
+    async def create_owned(
+        cls, clock: StartupBudget, **options: Any
+    ) -> McpCaptureManager:
+        from .._bootstrap_operations import OwnedBootstrapOperations
+        from ._owned_capture import OwnedCaptureSink
+
+        operations = OwnedBootstrapOperations()
+        deadline = clock.begin_owned_preparation()
+        assert deadline is not None
+        try:
+            resource = await asyncio.to_thread(
+                operations.create_capture_root, deadline=deadline
+            )
+            capture = cls(resource.root, _prepared_root=True, **options)
+            capture._owns_root = True
+            capture._owned_operations = operations
+            capture._owned_resource = resource
+            capture._startup_clock = clock
+            capture._owned_sink = OwnedCaptureSink(
+                operations, resource, clock, capture._owned_capture_incomplete
+            )
+            return capture
+        except BaseException:
+            try:
+                await asyncio.to_thread(
+                    operations.close, deadline=clock.begin_cleanup()
+                )
+            except BaseException:
+                pass
+            raise
+
+    def _append_capture_record(self, filename: str, data: str) -> None:
+        assert self._owned_sink is not None
+        self._owned_sink.enqueue(filename, data)
+
+    def _owned_capture_incomplete(self, reason: str) -> None:
+        for connection in tuple(self._targets):
+            self._limitations[connection] = tuple(
+                dict.fromkeys((*self._limitations.get(connection, ()), reason))
+            )
+            self.fail_observation(connection, reason)
+
+    def _capture_deadline(self, deadline: float | None = None) -> float:
+        from .._startup_deadlines import earliest
+
+        parent = (
+            (self._startup_clock.cleanup_deadline or self._startup_clock.deadline)
+            if self._startup_clock is not None
+            else None
+        )
+        value = earliest(parent, deadline)
+        return time.monotonic() + 10.0 if value is None else value
+
+    async def flush(self, *, deadline: float | None = None) -> None:
+        if self._owned_sink is None:
+            return
+        await self._owned_sink.flush(deadline=deadline)
+        operations, resource = self._owned_operations, self._owned_resource
+        assert operations is not None and resource is not None
+        active_deadline = self._capture_deadline(deadline)
+        for connection, target in self._targets.items():
+            try:
+                value = await asyncio.to_thread(
+                    operations.read_capture,
+                    resource,
+                    target.path.name,
+                    deadline=active_deadline,
+                )
+                records: list[dict[str, Any]] = []
+                for line in (
+                    value.consume().decode("utf-8", errors="replace").splitlines()
+                ):
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(record, dict):
+                        records.append(record)
+                self._owned_records[connection] = sorted(
+                    records, key=lambda record: float(record.get("offset_ms", 0))
+                )
+            except asyncio.CancelledError:
+                operations.fence_pending()
+                raise
+            except Exception:
+                self.fail_observation(connection, "capture_read_failed")
+
+    def _events(self, target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
+        records = (
+            self._owned_records.get(target.connection_id, [])
+            if self._owned_operations is not None
+            else None
+        )
+        return _project_events(target, records)
+
     def _target(self, connection_id: str, transport: str) -> _CaptureTarget:
         target = self._targets.get(connection_id)
         if target is not None:
@@ -610,6 +745,9 @@ class McpCaptureManager:
                 self.baseline_ns,
                 secrets=set(self._launch_redaction_literals)
                 if self._launch_redaction_literals
+                else None,
+                _append=(lambda data: self._append_capture_record(path.name, data))
+                if self._owned_sink is not None
                 else None,
                 on_event=lambda event_transport, direction, payload: self._writer_event(
                     connection_id, event_transport, direction, payload
@@ -999,6 +1137,10 @@ class McpCaptureManager:
                     self._launch_credentials
                 ):
                     raise RuntimeError("capture launch credential identity changed")
+                if self._owned_operations is not None:
+                    raise RuntimeError(
+                        "owned capture launch credential identity changed"
+                    )
                 previous = self._launch_credentials
                 self._launch_credentials = credentials
                 self._eager_capture_only = False
@@ -1012,7 +1154,7 @@ class McpCaptureManager:
             if not self._launch_activated:
                 raise RuntimeError("capture launch activation did not complete")
             self._launch_credentials.validate_inputs(self.credential_configurations())
-            self._refresh_stdio_handoffs()
+            await self._refresh_stdio_handoffs()
             return tuple(self._instrumented.values())
         configurations = self.credential_configurations()
         self._launch_credentials = credentials
@@ -1021,7 +1163,7 @@ class McpCaptureManager:
         self._launch_activated = True
         return instrumented
 
-    def _refresh_stdio_handoffs(self) -> None:
+    async def _refresh_stdio_handoffs(self) -> None:
         """A restarted native process gets pinned inputs through a fresh one-shot file."""
 
         credentials = self._launch_credentials
@@ -1034,7 +1176,7 @@ class McpCaptureManager:
                 continue
             key = configuration.connection_id
             path = self.root / f"{key}.env.json"
-            if path.exists():
+            if self._owned_operations is None and path.exists():
                 continue
             target = self._targets[key]
             observer = (
@@ -1047,7 +1189,7 @@ class McpCaptureManager:
                 if target.observation_token is not None
                 else None
             )
-            write_stdio_handoff(
+            await self._write_stdio_handoff(
                 path,
                 credentials.stdio_environment(key),
                 command=credentials.server_command(key),
@@ -1058,12 +1200,31 @@ class McpCaptureManager:
                 launch_secrets=self._launch_redaction_literals,
             )
             policy_path = self.root / f"{key}.policy.json"
-            if self._tool_policy is not None and not policy_path.exists():
-                self._write_policy_handoff(
+            if self._tool_policy is not None and (
+                self._owned_operations is not None or not policy_path.exists()
+            ):
+                await self._write_policy_handoff(
                     policy_path, configuration.key, configuration.tools
                 )
 
-    def _write_policy_handoff(
+    async def _write_stdio_handoff(
+        self, path: Path, environment: Mapping[str, Any], **options: Any
+    ) -> set[str]:
+        if self._owned_operations is None:
+            return write_stdio_handoff(path, environment, **options)
+        from .._bootstrap_operations import PrivateBytes
+
+        assert self._owned_resource is not None
+        payload, launch_secrets = render_stdio_handoff(environment, **options)
+        await asyncio.to_thread(
+            self._owned_operations.write_capture_files,
+            self._owned_resource,
+            {path.name: PrivateBytes(payload)},
+            deadline=self._capture_deadline(),
+        )
+        return launch_secrets
+
+    async def _write_policy_handoff(
         self, path: Path, server: str, tools: tuple[str, ...]
     ) -> None:
         assert self._tool_policy is not None
@@ -1077,6 +1238,17 @@ class McpCaptureManager:
             },
             separators=(",", ":"),
         )
+        if self._owned_operations is not None:
+            from .._bootstrap_operations import PrivateBytes
+
+            assert self._owned_resource is not None
+            await asyncio.to_thread(
+                self._owned_operations.write_capture_files,
+                self._owned_resource,
+                {path.name: PrivateBytes(payload.encode("utf-8"))},
+                deadline=self._capture_deadline(),
+            )
+            return
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         self._policy_paths.add(path)
         try:
@@ -1196,7 +1368,7 @@ class McpCaptureManager:
                     getattr(configuration, "sensitive_keys", ())
                 )
                 resolved_secrets.update(
-                    write_stdio_handoff(
+                    await self._write_stdio_handoff(
                         env_path,
                         environment,
                         configured_keys=configured_keys,
@@ -1230,7 +1402,7 @@ class McpCaptureManager:
                 )
                 if self._tool_policy is not None:
                     policy_path = self.root / f"{key}.policy.json"
-                    self._write_policy_handoff(
+                    await self._write_policy_handoff(
                         policy_path, alias, tuple(getattr(configuration, "tools", ()))
                     )
                     args += ("--policy-file", str(policy_path))
@@ -1371,7 +1543,7 @@ class McpCaptureManager:
         return McpCaptureSnapshot(
             connection_id,
             target.transport,
-            _project_events(target),
+            self._events(target),
             complete=self._closed,
             limitations=self._limitations.get(connection_id, ()),
         )
@@ -1413,12 +1585,20 @@ class McpCaptureManager:
         for subscription in tuple(self._subscriptions):
             subscription._finish()
         self._subscriptions.clear()
+        cleanup_deadline = (
+            self._startup_clock.begin_cleanup()
+            if self._startup_clock is not None
+            else time.monotonic() + 10.0
+        )
+        if self._owned_sink is not None:
+            await self._owned_sink.close(deadline=cleanup_deadline)
+            await self.flush(deadline=cleanup_deadline)
         self._closed = True
         self._closed_snapshots = {
             connection_id: McpCaptureSnapshot(
                 connection_id,
                 target.transport,
-                _project_events(target),
+                self._events(target),
                 complete=True,
                 limitations=self._limitations.get(connection_id, ())
                 + (("capture_root_removed",) if self._owns_root else ()),
@@ -1427,7 +1607,14 @@ class McpCaptureManager:
         }
         with self._publication_lock:
             self._private_policy_calls.clear()
-        if self._owns_root:
+        if self._owned_operations is not None:
+            await asyncio.to_thread(
+                self._owned_operations.close, deadline=cleanup_deadline
+            )
+            if not self._owned_operations.cleanup_complete:
+                self._closed = False
+                raise RuntimeError("owned capture cleanup incomplete")
+        elif self._owns_root:
             shutil.rmtree(self.root, ignore_errors=True)
         else:
             # Explicit capture roots are caller-owned, but one-shot launch

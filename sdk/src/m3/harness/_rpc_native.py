@@ -73,6 +73,7 @@ from .observations import (
 
 if TYPE_CHECKING:
     from ._launch_credentials import LaunchCredentialBundle, NativeCredentialMaterial
+    from ._native_preparation import NativePreparation
     from .admission import StartupLease
 
 
@@ -111,10 +112,11 @@ class JsonRpcProcess:
         startup_lease: StartupLease | None = None,
         owned_startup: bool = False,
         startup_deadline: float | None = None,
+        prepared: bool = False,
     ) -> None:
         self.root = root or Path(tempfile.mkdtemp(prefix="m3-native-"))
         self.owner = ProcessOwner(self.root)
-        env = _isolated_environment(self.root, environment)
+        env = _isolated_environment(self.root, environment, prepared=prepared)
         await self.owner.spawn(
             [self.executable, *self.argv],
             env,
@@ -181,14 +183,16 @@ class JsonRpcProcess:
     async def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         if self.owner is not None:
             await self.owner.close()
         if self._reader is not None:
             self._reader.cancel()
             await asyncio.gather(self._reader, return_exceptions=True)
-        if self.root is not None:
+        if self.root is not None and (
+            self.owner is None or self.owner._owned_preparation is None
+        ):
             shutil.rmtree(self.root, ignore_errors=True)
+        self._closed = True
 
 
 class NativeRPCSession(NativeSessionBase):
@@ -267,6 +271,8 @@ class NativeRPCAdapter:
         self._launch: HarnessLaunch | None = None
         self._session: NativeRPCSession | None = None
         self._process: JsonRpcProcess | None = None
+        self._failed_preparation: NativePreparation | None = None
+        self._startup_cleanup_failed = False
         self._cancel_requested = False
         self._terminal_status: Literal["failed", "cancelled", "interrupted"] | None = (
             None
@@ -294,7 +300,9 @@ class NativeRPCAdapter:
         return self._capabilities.supported_content_kinds
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        if (
+        from ._native_preparation import owned_native_preparation
+
+        if not owned_native_preparation(launch) and (
             shutil.which(self.executable) is None
             and not Path(self.executable).is_file()
         ):
@@ -436,14 +444,29 @@ class NativeRPCAdapter:
         pass
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
+        from ._native_preparation import validate_owned_startup
+
+        validate_owned_startup(launch)
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
         if self._session is not None:
             raise HarnessStartupError(f"{self.name} session is already open")
         launch = await self.prepare_launch_credentials(launch)
-        root = Path(tempfile.mkdtemp(prefix=f"m3-{self.name}-"))
+        from ._native_preparation import NativePreparation, owned_native_preparation
+
+        preparation = None
+        if owned_native_preparation(launch):
+            preparation = await NativePreparation.create(
+                launch, self.harness_kind, self.native_configuration_files(launch)
+            )
+            root = preparation.root
+        else:
+            root = Path(tempfile.mkdtemp(prefix=f"m3-{self.name}-"))
         process = JsonRpcProcess(self.executable, self.process_argv(launch))
+        self._process = process
+        self._launch = launch
+        self._failed_preparation = preparation
         try:
             # Keep provider state isolated while allowing only explicit adapter
             # overrides and credentials to reach the child.
@@ -452,13 +475,30 @@ class NativeRPCAdapter:
             environment = self.environment_for_launch(launch, root)
             workspace = workspace_for_launch(launch, root)
             check_credential_deadline(launch)
+            if preparation is not None and launch._startup_clock is not None:
+                launch._startup_clock.clear_owned_preparation()
+                launch._startup_clock.begin_native()
             await process.open(
                 environment=environment,
                 cwd=workspace,
                 root=root,
-                **startup_spawn_options(launch._startup_lease),
+                **startup_spawn_options(
+                    launch._startup_lease,
+                    owned_startup=preparation is not None,
+                    startup_deadline=launch._startup_clock.deadline
+                    if launch._startup_clock is not None
+                    and (preparation is not None or launch._startup_lease is not None)
+                    else None,
+                ),
+                **({"prepared": True} if preparation is not None else {}),
             )
+            assert process.owner is not None
+            if preparation is not None:
+                preparation.adopt(process.owner)
             session_id = await self.initialize(process, launch)
+            await process.owner.startup_ready()
+            if launch._startup_clock is not None:
+                launch._startup_clock.finish()
             effective_launch = launch
             if (
                 launch.tool_policy_evidence is None
@@ -469,10 +509,24 @@ class NativeRPCAdapter:
                 )
             self._launch, self._process = effective_launch, process
             self._session = NativeRPCSession(self, process, session_id)
+            self._failed_preparation = None
             return self._session
-        except Exception:
-            await process.close()
+        except BaseException:
+            if process.owner is not None and preparation is not None:
+                preparation.adopt(process.owner)
+            try:
+                await process.close()
+                if process.owner is None and preparation is not None:
+                    await preparation.close()
+                self._failed_preparation = None
+            except BaseException:
+                self._startup_cleanup_failed = True
+                # Keep both the failed process and its staged files attached
+                # to the adapter for an explicit close retry.
             raise
+
+    def native_configuration_files(self, launch: HarnessLaunch) -> Mapping[str, bytes]:
+        raise HarnessStartupError("owned startup is unavailable for this harness")
 
     async def send(
         self,
@@ -809,6 +863,11 @@ class NativeRPCAdapter:
     async def close(self) -> None:
         if self._session is not None:
             await self._session.close()
+        elif self._process is not None:
+            await self._process.close()
+        if self._failed_preparation is not None:
+            await self._failed_preparation.close()
+            self._failed_preparation = None
         await self._close_credential_operations()
         from ..transport.capture_proxy import McpCaptureManager
 

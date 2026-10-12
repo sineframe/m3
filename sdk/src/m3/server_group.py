@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import _timing
+from ._startup_deadlines import StartupBudget
 from .errors import MCPError
 from .transport.capture_proxy import McpCaptureManager
 from .types import (
@@ -740,6 +741,7 @@ class ServerGroupManager:
         *,
         stdio_environment_defaults: Mapping[str, Mapping[str, Any]] | None = None,
         defer_capture: bool = False,
+        startup_clock: StartupBudget | None = None,
     ) -> ServerGroupSnapshot:
         if self._closed:
             raise ServerStartupError("server group is closed")
@@ -787,13 +789,19 @@ class ServerGroupManager:
                 for record in records
                 if isinstance(record.server, HTTPServer) and record.server.loopback_only
             }
-            self._capture = McpCaptureManager(
-                trusted_private_keys=trusted_private,
-                loopback_only_keys=loopback_only,
-                tool_policy=self._tool_policy,
-                server_aliases=tuple(record.key for record in records),
-                tools_by_server={record.key: record.tools for record in records},
-            )
+            capture_options: dict[str, Any] = {
+                "trusted_private_keys": trusted_private,
+                "loopback_only_keys": loopback_only,
+                "tool_policy": self._tool_policy,
+                "server_aliases": tuple(record.key for record in records),
+                "tools_by_server": {record.key: record.tools for record in records},
+            }
+            if startup_clock is not None:
+                self._capture = await McpCaptureManager.create_owned(
+                    startup_clock, **capture_options
+                )
+            else:
+                self._capture = McpCaptureManager(**capture_options)
             raw_configurations = self._raw_configurations()
             if defer_capture:
                 instrumented = self._capture.prepare(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -22,11 +23,13 @@ class CaptureWriter:
         *,
         secrets: set[str] | None = None,
         on_event: Callable[[str, str, Any], None] | None = None,
+        _append: Callable[[str], None] | None = None,
     ):
         self.path = Path(path)
         self.baseline_ns = baseline_ns
         self.lock = threading.Lock()
         self._on_event = on_event
+        self._append = _append
         self._secrets: set[str] | None = None
         if secrets is not None:
             self._secrets = set(known_secret_values())
@@ -88,11 +91,16 @@ class CaptureWriter:
             "metadata": safe_metadata,
             "redacted_paths": payload_paths + metadata_paths,
         }
-        with self.lock:
-            with self.path.open("a", encoding="utf-8") as output:
-                output.write(
-                    json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        encoded = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        if self._append is not None:
+            self._append(encoded)
+        else:
+            with self.lock:
+                descriptor = os.open(
+                    self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600
                 )
+                with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                    output.write(encoded)
         # Live control consumers need the original decoded exchange while the
         # durable trace above must remain redacted. Policy denials describe
         # messages that were not forwarded across the MCP boundary.

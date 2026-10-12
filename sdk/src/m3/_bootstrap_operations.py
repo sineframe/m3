@@ -17,6 +17,7 @@ import stat
 import struct
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -151,7 +152,13 @@ def _decode_result(
     operation: str, root: Path, frame: dict[str, Any], descriptor: int | None
 ) -> _PrivateResult:
     result = _PrivateResult()
-    if operation in {"private_capsule", "private_native_auth", "private_endpoint"}:
+    if operation in {
+        "private_capsule",
+        "private_native_auth",
+        "private_native_launch",
+        "private_capture_root",
+        "private_endpoint",
+    }:
         if set(frame) != {"version", "resource"} or not isinstance(
             frame["resource"], dict
         ):
@@ -162,16 +169,32 @@ def _decode_result(
             if operation == "private_endpoint"
             else "auth.json"
             if operation == "private_native_auth"
+            else ".owner"
+            if operation in {"private_native_launch", "private_capture_root"}
             else "capsule"
         )
         if (
             resource.root != root
             or resource.path != root / name
-            or resource.native_home != (operation == "private_native_auth")
+            or resource.native_home
+            != (
+                operation
+                in {
+                    "private_native_auth",
+                    "private_native_launch",
+                    "private_capture_root",
+                }
+            )
         ):
             raise PrivateOperationError("invalid private bootstrap resource")
         result.resource = resource
-    elif operation in {"private_read", "private_read_auth"}:
+    elif operation in {
+        "private_read",
+        "private_read_auth",
+        "private_capture_read",
+        "private_native_support",
+        "private_native_probe",
+    }:
         if (
             operation == "private_read_auth"
             and set(frame) == {"version", "absent"}
@@ -201,6 +224,7 @@ class _PrivateJob:
     binding_requested: bool = False
     channel: socket.socket | None = field(default=None, repr=False)
     removal: OwnedResource | None = None
+    uses_resource: OwnedResource | None = None
 
 
 def _remaining(deadline: float) -> float:
@@ -312,6 +336,14 @@ def execute_private_operation(
     channel: socket.socket, root: Path, operation: str, deadline: float
 ) -> None:
     """Called only after the helper's process-group gate has opened."""
+    from ._native_operations import (
+        discover_support,
+        probe_native,
+        read_capture,
+        stage_native_launch,
+        write_capture,
+    )
+
     with channel:
         request, unexpected = _receive_private(channel, deadline)
         if unexpected is not None:
@@ -323,7 +355,26 @@ def execute_private_operation(
         result: dict[str, Any] = {"version": 1}
         transferred: socket.socket | None = None
         try:
-            if operation in {"private_capsule", "private_native_auth"}:
+            if operation == "private_native_probe":
+                result["bytes"] = probe_native(root, request)
+            elif operation == "private_native_support":
+                result["bytes"] = discover_support(root, request)
+            elif operation == "private_capture_root":
+                marker = root / ".owner"
+                descriptor = os.open(
+                    marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                )
+                os.close(descriptor)
+                result["resource"] = _resource(root, marker, native_home=True)
+            elif operation in {"private_capture_append", "private_capture_files"}:
+                write_capture(
+                    request, deadline, append=operation == "private_capture_append"
+                )
+            elif operation == "private_capture_read":
+                result["bytes"] = read_capture(request)
+            elif operation == "private_native_launch":
+                result["resource"] = stage_native_launch(root, request, deadline)
+            elif operation in {"private_capsule", "private_native_auth"}:
                 raw = base64.b64decode(request["bytes"], validate=True)
                 if len(raw) > _MAX_BYTES:
                     raise PrivateOperationError("private bootstrap data exceeds limit")
@@ -524,6 +575,16 @@ class OwnedBootstrapOperations:
                 else worker.root / ident
             )
             job = _PrivateJob(root)
+            if operation in {
+                "private_capture_append",
+                "private_capture_files",
+                "private_capture_read",
+            }:
+                job.uses_resource = OwnedResource.from_private_frame(
+                    payload["resource"]
+                )
+                if job.uses_resource not in self._resources:
+                    raise PrivateOperationError("private capture resource is not owned")
             if operation == "private_remove":
                 job.removal = OwnedResource.from_private_frame(payload["resource"])
                 if any(
@@ -653,6 +714,112 @@ class OwnedBootstrapOperations:
         assert result.resource is not None
         return result.resource
 
+    def probe_native(
+        self, executable: str, args: tuple[str, ...], *, deadline: float
+    ) -> PrivateBytes:
+        result = self._run(
+            "private_native_probe", {"executable": executable, "args": args}, deadline
+        )
+        assert result.value is not None
+        return result.value
+
+    def discover_native_support(
+        self,
+        executable: str,
+        kind: str,
+        identity: Mapping[str, Any] | None,
+        *,
+        deadline: float,
+    ) -> PrivateBytes:
+        result = self._run(
+            "private_native_support",
+            {
+                "executable": executable,
+                "kind": kind,
+                "runtime_identity": identity,
+            },
+            deadline,
+        )
+        assert result.value is not None
+        return result.value
+
+    def read_capture(
+        self, resource: OwnedResource, filename: str, *, deadline: float
+    ) -> PrivateBytes:
+        result = self._run(
+            "private_capture_read",
+            {"resource": resource.private_frame(), "name": filename},
+            deadline,
+        )
+        assert result.value is not None
+        return result.value
+
+    def create_capture_root(self, *, deadline: float) -> OwnedResource:
+        result = self._run("private_capture_root", {}, deadline)
+        assert result.resource is not None
+        return result.resource
+
+    def write_capture_files(
+        self,
+        resource: OwnedResource,
+        files: Mapping[str, PrivateBytesSource],
+        *,
+        deadline: float,
+    ) -> None:
+        self._capture_files("private_capture_files", resource, files, deadline)
+
+    def append_capture(
+        self,
+        resource: OwnedResource,
+        files: Mapping[str, PrivateBytesSource],
+        *,
+        deadline: float,
+    ) -> None:
+        self._capture_files("private_capture_append", resource, files, deadline)
+
+    def _capture_files(
+        self,
+        operation: str,
+        resource: OwnedResource,
+        files: Mapping[str, PrivateBytesSource],
+        deadline: float,
+    ) -> None:
+        self._run(
+            operation,
+            {
+                "resource": resource.private_frame(),
+                "files": {name: _encode_bytes(value) for name, value in files.items()},
+            },
+            deadline,
+        )
+
+    def stage_native_launch(
+        self,
+        harness: str,
+        files: Mapping[str, PrivateBytesSource],
+        *,
+        deadline: float,
+    ) -> OwnedResource:
+        from ._native_operations import _NATIVE_FILES, _NATIVE_REQUIRED_FILES
+
+        allowed = _NATIVE_FILES.get(harness)
+        if (
+            allowed is None
+            or not set(files).issubset(allowed)
+            or not _NATIVE_REQUIRED_FILES[harness].issubset(files)
+        ):
+            raise PrivateOperationError("unsupported native launch files")
+        result = self._run(
+            "private_native_launch",
+            {
+                "harness": harness,
+                "files": {name: _encode_bytes(value) for name, value in files.items()},
+            },
+            deadline,
+        )
+        assert result.resource is not None
+        return result.resource
+
     def read_native_auth(self, path: Path, *, deadline: float) -> PrivateBytes | None:
         result = self._run("private_read_auth", {"path": str(path)}, deadline)
         if result.absent:
@@ -705,6 +872,10 @@ class OwnedBootstrapOperations:
         assert result.workspace_capture is not None
         return result.workspace_capture
 
+    def fence_pending(self) -> None:
+        """Fence IO while preserving the resources and open facade for disposal."""
+        self._fence_jobs(close_provider=False)
+
     def close(self, *, deadline: float) -> None:
         with _closed_owners_lock:
             _closed_owners[id(self)] = self
@@ -721,9 +892,10 @@ class OwnedBootstrapOperations:
             _closed_owners[id(self)] = self
         self._fence_jobs()
 
-    def _fence_jobs(self) -> None:
+    def _fence_jobs(self, *, close_provider: bool = True) -> None:
         with self._condition:
-            self._closed = True
+            if close_provider:
+                self._closed = True
             jobs = tuple(self._jobs.items())
             for ident, job in jobs:
                 if job.fenced:
@@ -747,7 +919,10 @@ class OwnedBootstrapOperations:
             resources = tuple(self._resources)
         for resource in resources:
             with self._condition:
-                while any(job.removal == resource for job in self._jobs.values()):
+                while any(
+                    job.removal == resource or job.uses_resource == resource
+                    for job in self._jobs.values()
+                ):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0 or (
                         self._worker is not None and self._worker.failed

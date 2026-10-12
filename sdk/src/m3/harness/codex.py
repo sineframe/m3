@@ -49,7 +49,7 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnRequest,
 )
-from .native import probe_help
+from .native import probe_help, probe_help_for_launch
 from .native_capabilities import NativeRuntimeIdentity
 from .native_settings import profile_definitions, selected_profile
 from .observations import (
@@ -445,6 +445,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         super().__init__(executable=executable, environment=environment)
         self._request_id = 0
         self._auth_operations: NativeAuthOperations | None = None
+        from .._startup_deadlines import StartupBudget
+
+        self._startup_clock: StartupBudget | None = None
+        self._owned_executable_identity: (
+            tuple[str, int | None, int | None, int | None, int | None] | None
+        ) = None
         self._auth_home: NativeAuthHome | None = None
         self._auth_home_available = False
         self._auth_deadline: float | None = None
@@ -485,7 +491,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         # loop. Until prepare_capabilities() has probed the current binary,
         # MRTR/elicitation is reported as unsupported.
         interaction = self._interaction_by_executable.get(
-            self._executable_identity(),
+            self._owned_executable_identity or self._executable_identity(),
             HarnessInteractionCapabilities(retry_owner="harness"),
         )
         return replace(self._capabilities, interaction=interaction)
@@ -511,16 +517,35 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             stat.st_size,
         )
 
-    async def prepare_capabilities(self) -> None:
+    async def prepare_capabilities(self, *, deadline: float | None = None) -> None:
         """Probe the current binary's version off the event loop.
 
         A successful probe is kept for that executable identity; a failed one
         (for example a timeout under load) is not, so the next call retries.
         """
-        identity = self._executable_identity()
-        if identity in self._interaction_by_executable:
+        if (
+            self._owned_executable_identity is not None
+            and self._owned_executable_identity in self._interaction_by_executable
+        ):
             return
-        version = await asyncio.to_thread(probe_help, self.executable, ("--version",))
+        identity: tuple[str, int | None, int | None, int | None, int | None]
+        version: str | None
+        if deadline is not None:
+            from .native_capabilities import probe_native_owned
+
+            probe = await probe_native_owned(
+                self.executable, ("--version",), deadline=deadline
+            )
+            identity = probe.identity
+            self._owned_executable_identity = identity
+            version = probe.output
+        else:
+            identity = self._executable_identity()
+            if identity in self._interaction_by_executable:
+                return
+            version = await asyncio.to_thread(
+                probe_help, self.executable, ("--version",)
+            )
         if version is None:
             return
         supported = (version.splitlines() or [""])[0].strip() == "codex-cli 0.156.1"
@@ -745,6 +770,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
 
     async def prepare_launch_credentials(self, launch: HarnessLaunch) -> HarnessLaunch:
         from ._native_auth import PinnedAuthPayload
+        from ._native_preparation import owned_native_preparation
 
         operations = (
             self._select_auth_operations(launch)
@@ -766,6 +792,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             credentials = self._credentials_for_preparation(launch)
         if (
             operations is not None
+            and not owned_native_preparation(launch)
             and not self._auth_home_available
             and credentials.login_bytes() is not None
         ):
@@ -795,6 +822,24 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._auth_home_available = False
         self._auth_deadline = None
 
+    def native_configuration_files(self, launch: HarnessLaunch) -> Mapping[str, bytes]:
+        credentials = self._credentials_for_preparation(launch)
+        root_settings = "check_for_update_on_startup = false\n"
+        if isinstance(launch.spec.harness, Codex) and any(
+            target in _CODEX_API_KEY_TARGETS
+            for target in launch.spec.harness.credential_references
+        ):
+            root_settings += 'cli_auth_credentials_store = "ephemeral"\n'
+        files = {
+            "codex-home/config.toml": (
+                root_settings + "\n" + render_codex_config(launch)
+            ).encode("utf-8")
+        }
+        auth = credentials.login_bytes()
+        if auth is not None:
+            files["codex-home/auth.json"] = auth
+        return files
+
     def environment_for_launch(
         self, launch: HarnessLaunch, root: Path
     ) -> Mapping[str, str]:
@@ -805,8 +850,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             else None
         )
         auth = credentials.login_bytes()
+        from ._native_preparation import owned_native_preparation
+
+        prepared = owned_native_preparation(launch)
         if (
-            operations is not None
+            not prepared
+            and operations is not None
             and auth is not None
             and not self._auth_home_available
         ):
@@ -819,7 +868,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             )
             self._authentication_deadline(launch)
             self._auth_home_available = True
-        if self._auth_home is not None:
+        if prepared:
+            home = root / "codex-home"
+        elif self._auth_home is not None:
             home = self._auth_home.root
             self._auth_home_available = False
         else:
@@ -833,16 +884,17 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         ):
             # account/login/start would otherwise write the key to auth.json.
             root_settings += 'cli_auth_credentials_store = "ephemeral"\n'
-        config.write_text(
-            root_settings + "\n" + render_codex_config(launch),
-            encoding="utf-8",
-        )
-        config.chmod(0o600)
+        if not prepared:
+            config.write_text(
+                root_settings + "\n" + render_codex_config(launch),
+                encoding="utf-8",
+            )
+            config.chmod(0o600)
         # Preserve an existing native ChatGPT login when no API-key mapping is
         # configured. The isolated home is temporary and cleaned with the
         # execution workspace; auth material never enters the serializable spec.
         login_registry_available = credentials.login_registry_available
-        if auth is not None and operations is None:
+        if not prepared and auth is not None and operations is None:
             target_auth = home / "auth.json"
             descriptor = -1
             created = False
@@ -940,20 +992,35 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         configurations: tuple[HarnessServerConfig, ...],
         *,
         runtime_identity: NativeRuntimeIdentity | None = None,
+        deadline: float | None = None,
     ) -> None:
         from .native_settings import validate_native_settings
 
         await validate_native_settings(
-            self.executable, spec, configurations, runtime_identity
+            self.executable, spec, configurations, runtime_identity, deadline=deadline
         )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        await self.prepare_capabilities()
+        from ._native_preparation import owned_native_preparation
+
+        deadline = None
+        if owned_native_preparation(launch):
+            from .._startup_deadlines import earliest
+
+            assert launch._startup_clock is not None
+            deadline = earliest(launch._startup_clock.deadline, time.monotonic() + 15.0)
+        await self.prepare_capabilities(deadline=deadline)
         ready = await super().preflight(launch)
         if not ready.ready:
             return ready
-        help_text = await asyncio.to_thread(
-            probe_help, self.executable, ("app-server", "--help")
+        help_text = (
+            await probe_help_for_launch(
+                launch, self.executable, ("app-server", "--help")
+            )
+            if owned_native_preparation(launch)
+            else await asyncio.to_thread(
+                probe_help, self.executable, ("app-server", "--help")
+            )
         )
         if help_text is None or "app-server" not in help_text.lower():
             return Readiness(
@@ -985,6 +1052,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     async def initialize(self, process: JsonRpcProcess, launch: HarnessLaunch) -> str:
         api_key, self._api_key_login = self._api_key_login, None
         self._request_id = 1
+        from .._startup_deadlines import native_phase
+
+        self._startup_clock = launch._startup_clock
+        initialize_phase = native_phase(launch._startup_clock, "initialize", 5.0)
         await self._write_frame(
             process,
             {
@@ -998,7 +1069,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             },
         )
         while True:
-            frame = await process.next(5.0)
+            frame = await process.next(initialize_phase.remaining())
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex App Server initialization failed")
             if frame.get("id") == self._request_id:
@@ -1056,10 +1127,20 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 "params": params,
             },
         )
+        session_phase = native_phase(
+            launch._startup_clock, "session", _THREAD_START_TIMEOUT_SECONDS
+        )
+        if launch._startup_clock is not None:
+            from .._startup_deadlines import PhaseDeadline, earliest
+
+            readiness = launch._startup_clock.phase("readiness", None)
+            session_phase = PhaseDeadline(
+                "session", earliest(session_phase.deadline, readiness.deadline)
+            )
         # thread/start replies only after Codex has started the thread's MCP
         # servers, which regularly takes several seconds for a stdio server.
         while True:
-            frame = await process.next(_THREAD_START_TIMEOUT_SECONDS)
+            frame = await process.next(session_phase.remaining())
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex thread could not be started")
             if frame.get("id") == self._request_id:
@@ -1106,6 +1187,11 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         initialize and thread/start.
         """
 
+        from .._startup_deadlines import native_phase
+
+        request_phase = native_phase(
+            self._startup_clock, "request", _ACCOUNT_REQUEST_TIMEOUT_SECONDS
+        )
         self._request_id += 1
         request_id = self._request_id
         await self._write_frame(
@@ -1114,7 +1200,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         )
         while True:
             try:
-                frame = await process.next(_ACCOUNT_REQUEST_TIMEOUT_SECONDS)
+                frame = await process.next(request_phase.remaining())
             except asyncio.TimeoutError:
                 raise HarnessStartupError(f"Codex {method} timed out") from None
             if frame is None or frame.get("__invalid_frame__"):
