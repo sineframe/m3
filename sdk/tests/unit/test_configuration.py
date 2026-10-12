@@ -24,7 +24,11 @@ def test_defaults_are_frozen_and_value_only() -> None:
 
 def test_direct_construction_infers_truthful_provenance() -> None:
     config = Config(artifact_policy="always", protocol_revision="2025-06-18")
-    assert all(info.source is ConfigSource.EXPLICIT for info in config.sources.values())
+    assert config.source_for("artifact_policy").source is ConfigSource.EXPLICIT
+    assert config.source_for("protocol_revision").source is ConfigSource.EXPLICIT
+    assert (
+        config.source_for("mcp_timeouts.startup_seconds").source is ConfigSource.DEFAULT
+    )
     assert config.source_for("artifact_policy").origin == "argument:artifact_policy"
     assert Config().source_for("artifact_policy").source is ConfigSource.DEFAULT
 

@@ -12,9 +12,7 @@ import math
 import os
 import secrets
 import socket
-import stat
 import struct
-import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -22,6 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+
+from ._bootstrap_operations import (
+    OwnedBootstrapOperations,
+    PrivateBytes,
+    PrivateOperationError,
+)
 
 _VERSION = 1
 _MAX_FRAME = 8 * 1024 * 1024
@@ -151,6 +155,16 @@ def _deadline(timeout_seconds: float) -> float:
     return time.monotonic() + timeout_seconds
 
 
+def _bootstrap_deadline(timeout_seconds: float, deadline: float | None) -> float:
+    phase_deadline = _deadline(timeout_seconds)
+    if deadline is not None:
+        if isinstance(deadline, bool) or not math.isfinite(deadline):
+            raise LiteralTransferError("invalid worker bootstrap deadline")
+        phase_deadline = min(phase_deadline, deadline)
+    _remaining(phase_deadline)
+    return phase_deadline
+
+
 def _remaining(deadline: float) -> float:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -201,38 +215,6 @@ def _send(channel: socket.socket, value: Mapping[str, Any], deadline: float) -> 
     channel.sendall(struct.pack("!I", len(encoded)) + encoded)
 
 
-def _check_private(info: os.stat_result, *, directory: bool) -> None:
-    expected = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
-    if not expected or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
-        raise LiteralTransferError("worker bootstrap path is not private")
-
-
-def _read_capsule(path: Path) -> dict[str, Any]:
-    _check_private(path.parent.stat(follow_symlinks=False), directory=True)
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try:
-        _check_private(os.fstat(fd), directory=False)
-        with os.fdopen(fd, "rb", closefd=False) as stream:
-            raw = stream.read(_MAX_FRAME + 1)
-        if len(raw) > _MAX_FRAME:
-            raise LiteralTransferError("invalid worker bootstrap capsule")
-        value = json.loads(raw, object_pairs_hook=_unique_object)
-        if not isinstance(value, dict):
-            raise LiteralTransferError("invalid worker bootstrap capsule")
-        # Unlink only the inode we opened; substitution cannot consume another
-        # worker's capsule. The parent is private to the current user.
-        opened = os.fstat(fd)
-        current = path.stat(follow_symlinks=False)
-        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
-            raise LiteralTransferError("worker bootstrap capsule changed")
-        path.unlink()
-        return value
-    except (UnicodeError, ValueError, RecursionError):
-        raise LiteralTransferError("invalid worker bootstrap capsule") from None
-    finally:
-        os.close(fd)
-
-
 class LiteralBootstrapBroker:
     """Invocation-owned POSIX broker; capabilities are scoped and single-use.
 
@@ -241,52 +223,43 @@ class LiteralBootstrapBroker:
     """
 
     def __init__(
-        self, store: RunLiteralStore, directory: Path, *, timeout_seconds: float = 30
+        self,
+        store: RunLiteralStore,
+        directory: Path | None = None,
+        *,
+        timeout_seconds: float = 30,
     ) -> None:
-        _deadline(timeout_seconds)
+        deadline = _deadline(timeout_seconds)
         if os.name != "posix":
             raise LiteralTransferError("local literal bootstrap backend unsupported")
-        _check_private(directory.stat(follow_symlinks=False), directory=True)
         self._store = store
-        self._directory = directory
         self._timeout = timeout_seconds
         self._capabilities: dict[str, Mapping[str, str]] = {}
         self._capsules: set[Path] = set()
-        self._pending_capsules: set[Path] = set()
+        self._pending_capsules: set[str] = set()
         self._lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
         self._finished = False
         self._closed = threading.Event()
         self._transfers: dict[threading.Thread, socket.socket] = {}
-        try:
-            self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        except OSError:
-            raise LiteralTransferError(
-                "worker bootstrap listener unavailable"
-            ) from None
-        socket_directory: Path | None = None
+        self._operations = OwnedBootstrapOperations()
         thread: threading.Thread | None = None
         try:
-            # Unix socket paths have a small platform-dependent limit. Project
-            # roots can exceed it, so use a separately owned short root.
-            socket_directory = Path(tempfile.mkdtemp(prefix="m3-lit-"))
-            self._socket_directory = socket_directory
-            self._endpoint = socket_directory / "ipc"
-            self._listener.bind(str(self._endpoint))
-            self._endpoint.chmod(0o600)
-            self._listener.listen()
+            endpoint = self._operations.create_endpoint(directory, deadline=deadline)
+            self._socket_directory = endpoint.resource.root
+            self._endpoint = endpoint.resource.path
+            self._listener = endpoint.channel
             self._listener.settimeout(0.1)
             thread = threading.Thread(target=self._serve, daemon=True)
             self._thread = thread
             thread.start()
         except BaseException as error:
             self._closed.set()
-            self._listener.close()
+            if hasattr(self, "_listener"):
+                self._listener.close()
             if thread is not None and thread.is_alive():
-                thread.join(timeout=1)
-            if socket_directory is not None:
-                (socket_directory / "ipc").unlink(missing_ok=True)
-                socket_directory.rmdir()
+                thread.join(timeout=max(0, deadline - time.monotonic()))
+            self._operations.close(deadline=time.monotonic() + 1)
             if isinstance(error, (OSError, RuntimeError)):
                 raise LiteralTransferError(
                     "worker bootstrap listener unavailable"
@@ -297,9 +270,17 @@ class LiteralBootstrapBroker:
     def cleanup_complete(self) -> bool:
         """Registry owners retain values until pending owned writes settle."""
         with self._lock:
-            return self._finished and not self._pending_capsules and not self._transfers
+            return (
+                self._finished
+                and not self._pending_capsules
+                and not self._transfers
+                and self._operations.cleanup_complete
+            )
 
-    def issue(self, handles: Sequence[LiteralHandle]) -> WorkerBootstrap:
+    def issue(
+        self, handles: Sequence[LiteralHandle], *, deadline: float | None = None
+    ) -> WorkerBootstrap:
+        deadline = _bootstrap_deadline(self._timeout, deadline)
         values = self._store.export(handles)
         # Reject before creating a capsule whose promised bundle cannot fit.
         bundle = {
@@ -311,7 +292,7 @@ class LiteralBootstrapBroker:
         if len(json.dumps(bundle, ensure_ascii=True).encode("utf-8")) > _MAX_FRAME:
             raise LiteralTransferError("worker bootstrap bundle too large")
         capability = secrets.token_hex(32)
-        capsule = self._directory / f"worker-{secrets.token_hex(16)}.json"
+        pending = secrets.token_hex(16)
         payload = {
             "version": _VERSION,
             "capability": capability,
@@ -322,25 +303,24 @@ class LiteralBootstrapBroker:
         with self._lock:
             if self._closed.is_set():
                 raise LiteralTransferError("worker bootstrap broker closed")
-            self._pending_capsules.add(capsule)
-        published = False
+            self._pending_capsules.add(pending)
         try:
-            # A filesystem wait must not hold the lock used to fence/revoke
-            # the broker. Pending writers retain their private path ownership.
-            fd = os.open(capsule, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(payload, stream, ensure_ascii=True)
+            resource = self._operations.create_capsule(
+                PrivateBytes(json.dumps(payload, ensure_ascii=True).encode("utf-8")),
+                deadline=deadline,
+            )
+            capsule = resource.path
             with self._lock:
                 if self._closed.is_set():
                     raise LiteralTransferError("worker bootstrap broker closed")
+                _remaining(deadline)
                 self._capabilities[capability] = values
                 self._capsules.add(capsule)
-                published = True
+        except PrivateOperationError:
+            raise LiteralTransferError("worker bootstrap capsule unavailable") from None
         finally:
-            if not published:
-                capsule.unlink(missing_ok=True)
             with self._lock:
-                self._pending_capsules.discard(capsule)
+                self._pending_capsules.discard(pending)
         return WorkerBootstrap(
             str(self._endpoint),
             str(capsule),
@@ -424,6 +404,7 @@ class LiteralBootstrapBroker:
     def close(self) -> None:
         with self._shutdown_lock:
             if self._finished:
+                self._operations.close(deadline=time.monotonic() + 1)
                 return
             self._closed.set()
             self._listener.close()
@@ -446,22 +427,29 @@ class LiteralBootstrapBroker:
                 self._capabilities.clear()
                 capsules = tuple(self._capsules)
                 self._capsules.clear()
-            for capsule in capsules:
-                capsule.unlink(missing_ok=True)
-            self._endpoint.unlink(missing_ok=True)
-            self._socket_directory.rmdir()
+            del capsules
+            self._operations.close(deadline=deadline)
             self._finished = True
 
 
 def bootstrap_worker(
-    descriptor: WorkerBootstrap, *, timeout_seconds: float = 30
+    descriptor: WorkerBootstrap,
+    *,
+    timeout_seconds: float = 30,
+    deadline: float | None = None,
 ) -> RunLiteralStore:
     """Accept a complete bundle atomically; future sessions use local memory."""
-    deadline = _deadline(timeout_seconds)
+    deadline = _bootstrap_deadline(timeout_seconds, deadline)
     if os.name != "posix":
         raise LiteralTransferError("local literal bootstrap backend unsupported")
+    operations = OwnedBootstrapOperations()
     try:
-        capsule = _read_capsule(Path(descriptor.capsule))
+        raw = operations.read_and_unlink(
+            Path(descriptor.capsule), deadline=deadline
+        ).consume()
+        capsule = json.loads(raw, object_pairs_hook=_unique_object)
+        if not isinstance(capsule, dict):
+            raise LiteralTransferError("invalid worker bootstrap capsule")
         expected = {
             "version": _VERSION,
             "run_id": descriptor.run_id,
@@ -475,9 +463,7 @@ def bootstrap_worker(
             or not isinstance(capsule.get("capability"), str)
         ):
             raise LiteralTransferError("worker bootstrap manifest mismatch")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
-            channel.settimeout(_remaining(deadline))
-            channel.connect(descriptor.endpoint)
+        with operations.connect(descriptor.endpoint, deadline=deadline) as channel:
             _send(channel, capsule, deadline)
             response = _receive(channel, deadline)
         values = response.get("values")
@@ -503,5 +489,11 @@ def bootstrap_worker(
             store.close()
             raise
         return store
+    except PrivateOperationError as error:
+        raise LiteralTransferError(str(error)) from None
     except (OSError, UnicodeError, ValueError):
         raise LiteralTransferError("worker bootstrap unavailable") from None
+    finally:
+        # This facade never adopts filesystem resources. Fence jobs within the
+        # caller budget; incomplete cleanup stays strongly owned for teardown.
+        operations.close(deadline=deadline)

@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from .harness.contracts import HarnessLaunch, HarnessSession
     from .harness.observations import TurnEvidence
     from .managed_runtime import ManagedInputRuntime
+    from .preparation import PreparationSupervisor
 
 
 class HarnessAdapter(Protocol):
@@ -416,6 +417,7 @@ class AsyncAgentSession:
         runtime_models_dir: str | Path | None = None,
         runtime_project_root: str | Path | None = None,
         managed_input_runtime: ManagedInputRuntime | None = None,
+        preparation_supervisor: PreparationSupervisor | None = None,
         _literal_registry: RunLiteralStore | None = None,
         _credential_deadline: float | None = None,
         _native_auth_operations: NativeAuthOperations | None = None,
@@ -442,6 +444,7 @@ class AsyncAgentSession:
             _require_elicitation_capability(adapter)
         self._harness_cache_dir = harness_cache_dir
         self._runtime_manager = runtime_manager
+        self._preparation_supervisor = preparation_supervisor
         self._runtime_invocation_dir = runtime_invocation_dir
         self._runtime_models_dir = runtime_models_dir
         self._runtime_project_root = (
@@ -653,7 +656,7 @@ class AsyncAgentSession:
             return self
         startup_error: MCPError | None = None
         try:
-            await asyncio.to_thread(self._workspace.create)
+            await self._workspace.create_async(self._preparation_supervisor)
             with _timing.span("session.start", key=self._policy_harness_name):
                 await self._start_adapter()
             async with self._state_lock:
@@ -3207,6 +3210,7 @@ class AsyncAgentSession:
             provenance=provenance,
             harness_cache_dir=self._harness_cache_dir,
             runtime_manager=self._runtime_manager,
+            preparation_supervisor=self._preparation_supervisor,
             runtime_invocation_dir=self._runtime_invocation_dir,
             runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,

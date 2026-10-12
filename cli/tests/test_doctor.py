@@ -315,3 +315,42 @@ def test_doctor_human_not_ready_has_direct_remediation(
     monkeypatch.delenv("CONDA_PREFIX", raising=False)
     assert main(["doctor", "--project-root", str(tmp_path)]) == 1
     assert "Next: m3 setup" in capsys.readouterr().out
+
+
+def test_native_config_is_checked_before_project_python_probe(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import m3_cli.supervisor as supervisor
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.m3.harness_timeouts]\nstartup_seconds="PRIVATE-CANARY"\n'
+    )
+
+    def unexpected_probe(*args, **kwargs):
+        pytest.fail("invalid configuration reached the project Python probe")
+
+    monkeypatch.setattr(supervisor, "resolve_project_python", unexpected_probe)
+    assert (
+        main(
+            ["doctor", "--project-root", str(tmp_path), "--require", "config", "--json"]
+        )
+        == 2
+    )
+    report = capsys.readouterr().out
+    assert "PRIVATE-CANARY" not in report
+    assert json.loads(report)["error"]["code"] == "invalid_configuration"
+
+
+def test_doctor_projects_native_settings_without_values(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.m3.harnesses.codex.permissions]\nprofile="PRIVATE-CANARY"\n'
+        "[tool.m3.servers.PRIVATE-CANARY.timeouts]\nstartup_seconds=75\n"
+    )
+    main(["doctor", "--project-root", str(tmp_path), "--require", "config", "--json"])
+    report = capsys.readouterr().out
+    assert "PRIVATE-CANARY" not in report
+    settings = json.loads(report)["configuration"]["settings"]
+    assert settings["artifact_policy"] == "failed"
+    assert settings["native_settings"]
