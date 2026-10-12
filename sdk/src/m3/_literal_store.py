@@ -23,6 +23,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from ._literal_transport import BootstrapChannel
+
 _VERSION = 1
 _MAX_FRAME = 8 * 1024 * 1024
 
@@ -158,7 +160,7 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
-def _receive_exact(channel: socket.socket, size: int, deadline: float) -> bytes:
+def _receive_exact(channel: BootstrapChannel, size: int, deadline: float) -> bytes:
     output = bytearray()
     while len(output) < size:
         channel.settimeout(_remaining(deadline))
@@ -178,7 +180,7 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _receive(channel: socket.socket, deadline: float) -> dict[str, Any]:
+def _receive(channel: BootstrapChannel, deadline: float) -> dict[str, Any]:
     size = struct.unpack("!I", _receive_exact(channel, 4, deadline))[0]
     if not 0 < size <= _MAX_FRAME:
         raise LiteralTransferError("invalid worker bootstrap frame size")
@@ -193,7 +195,7 @@ def _receive(channel: socket.socket, deadline: float) -> dict[str, Any]:
     return value
 
 
-def _send(channel: socket.socket, value: Mapping[str, Any], deadline: float) -> None:
+def _send(channel: BootstrapChannel, value: Mapping[str, Any], deadline: float) -> None:
     encoded = json.dumps(value, ensure_ascii=True, allow_nan=False).encode("utf-8")
     if not 0 < len(encoded) <= _MAX_FRAME:
         raise LiteralTransferError("worker bootstrap bundle too large")
@@ -376,7 +378,7 @@ class LiteralBootstrapBroker:
                     self._transfers.pop(thread)
                     channel.close()
 
-    def _transfer_owned(self, channel: socket.socket) -> None:
+    def _transfer_owned(self, channel: BootstrapChannel) -> None:
         with channel:
             try:
                 self._transfer(channel)
@@ -388,7 +390,7 @@ class LiteralBootstrapBroker:
                 with self._lock:
                     self._transfers.pop(threading.current_thread(), None)
 
-    def _transfer(self, channel: socket.socket) -> None:
+    def _transfer(self, channel: BootstrapChannel) -> None:
         deadline = _deadline(self._timeout)
         request = _receive(channel, deadline)
         capability = request.get("capability")

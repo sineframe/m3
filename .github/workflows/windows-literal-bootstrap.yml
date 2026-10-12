@@ -1,0 +1,49 @@
+name: Windows literal IPC
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-literal-ipc-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  ANTHROPIC_API_KEY: ""
+  OPENAI_API_KEY: ""
+  OPENROUTER_API_KEY: ""
+  OPENCODE_API_KEY: ""
+
+jobs:
+  native-ipc:
+    name: Windows native literal IPC (3.10)
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install locked workspace
+        run: >-
+          uv sync --locked --all-packages --extra pytest --extra storage
+          --group test --group typecheck
+      - name: Run real native IPC and private capsule tests
+        run: >-
+          uv run --locked --no-sync --project sdk pytest -q
+          sdk/tests/unit/test_literal_windows.py
+          sdk/tests/unit/test_literal_capsule.py
+      - name: Type check SDK on Windows
+        run: >-
+          uv run --locked --no-sync --project sdk
+          mypy --config-file sdk/pyproject.toml --strict sdk/src/m3
