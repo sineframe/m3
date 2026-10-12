@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from ._types.settings import UNSET, HarnessTimeouts
@@ -145,3 +146,30 @@ def native_phase(
     if name in {"session", "readiness"} and clock.settings.startup_seconds is not UNSET:
         fallback = clock.settings.startup_seconds
     return clock.phase(name, fallback)
+
+
+def retain_cleanup(close: Callable[[], Awaitable[None]]) -> asyncio.Task[None]:
+    """Retain one framework cleanup action before its first suspension."""
+
+    async def run_cleanup() -> None:
+        await close()
+
+    task = asyncio.create_task(run_cleanup())
+
+    def consume_failure(done: asyncio.Task[None]) -> None:
+        if not done.cancelled():
+            done.exception()
+
+    task.add_done_callback(consume_failure)
+    return task
+
+
+async def wait_cleanup(
+    task: asyncio.Task[None], clock: StartupBudget | None, *, cancelled: bool
+) -> bool:
+    deadline = clock.begin_cleanup() if clock is not None else time.monotonic() + 10.0
+    remaining = max(0.0, deadline - time.monotonic())
+    if cancelled:
+        remaining = min(3.0, remaining)
+    done, _ = await asyncio.wait((task,), timeout=remaining)
+    return bool(done) and not task.cancelled() and task.exception() is None
