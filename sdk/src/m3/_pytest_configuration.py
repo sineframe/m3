@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -43,9 +44,9 @@ def _redact_server_arguments(arguments: list[str]) -> list[str]:
             result.append(argument)
             result.extend(iterator)
             break
-        if argument == "--m3-server-selections":
+        if argument in {"--m3-server-selections", "--m3-config"}:
             next(iterator, None)
-        elif not argument.startswith("--m3-server-selections="):
+        elif not argument.startswith(("--m3-server-selections=", "--m3-config=")):
             result.append(argument)
     return result
 
@@ -133,6 +134,13 @@ def configure_invocation(config: Any) -> InvocationConfigurationPlugin:
         )
         if context.server_selections is not None:
             config.option.m3_server_selections = None
+        # xdist sends invocation_params.args separately from workerinput.
+        # These inputs have been consumed into the private snapshot; omit both
+        # copies so workers cannot reread the source or receive its literals.
+        config.invocation_params = replace(
+            config.invocation_params,
+            args=tuple(_redact_server_arguments(list(config.invocation_params.args))),
+        )
         config.pluginmanager.register(plugin, "m3-configuration")
         config.add_cleanup(plugin.close)
         complete = True

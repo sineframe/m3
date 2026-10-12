@@ -72,7 +72,9 @@ def wait_for_source_deletion(request):
         time.sleep(0.01)
 
 @pytest.mark.parametrize("trial", range(4))
-def test_frozen_settings(trial):
+def test_frozen_settings(trial, request):
+    assert "--m3-config" not in request.config.invocation_params.args
+    assert "--m3-config" not in request.config.workerinput["mainargv"]
     os.environ["M3_ARTIFACT_POLICY"] = "never"
     with MCPTestKit({"harness_timeouts": HarnessTimeouts(initialize_seconds=15)}) as kit:
         assert kit.config.artifact_policy == "always"
