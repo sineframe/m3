@@ -13,7 +13,6 @@ import pytest
 
 from m3._types.specs import AgentSpec
 from m3.agent_session import AdapterTurn, AsyncAgentSession
-from m3.errors import TransportError
 from m3.execution_trace import ExecutionTraceRecorder
 from m3.harness._native_errors import NativeHarnessStartupError, native_error_info
 from m3.harness._private_policy import PrivateToolCalls
@@ -327,10 +326,12 @@ async def test_projected_startup_cause_survives_exception_result_and_diagnostic(
 ):
     adapter = _ProjectedFailureHarness(startup=True)
     session = AsyncAgentSession(_launch().spec, adapter)
-    with pytest.raises(TransportError) as caught:
-        await session.__aenter__()
-    assert caught.value.details["native_code"] == -32000
-    assert caught.value.details["phase"] == "initialize"
+    await session.__aenter__()
+    turn = await session.send("start native harness")
+    assert turn.error is not None
+    assert turn.error.details["native_code"] == -32000
+    assert turn.error.details["phase"] == "initialize"
+    await session.aclose()
     assert session.result.error is not None
     assert (
         session.result.error.details["native_message"]
@@ -344,7 +345,7 @@ async def test_projected_startup_cause_survives_exception_result_and_diagnostic(
     ]
     assert len(diagnostics) == 1
     assert diagnostics[0].payload["details"]["native_code"] == -32000
-    assert "pinned-secret" not in repr(caught.value.details)
+    assert "pinned-secret" not in repr(turn.error.details)
     assert "pinned-secret" not in repr(diagnostics)
 
 
@@ -359,8 +360,12 @@ async def test_long_projected_startup_cause_stays_inside_public_message_limit() 
         redaction=RedactionConfig(include_environment=False),
     )
     session = AsyncAgentSession(_launch().spec, adapter)
-    with pytest.raises(TransportError):
-        await session.__aenter__()
+    await session.__aenter__()
+    turn = await session.send("start native harness")
+    await session.aclose()
+    assert turn.error is not None
+    assert len(turn.error.message) <= 4096
+    assert turn.error.details["cause_truncated"] is True
     assert session.result.error is not None
     assert len(session.result.error.message) <= 4096
     assert len(session.result.error.details["native_message"]) == 4096

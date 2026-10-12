@@ -368,6 +368,8 @@ class OpenCodeHarnessAdapter:
             interaction=self.interaction_capabilities,
         )
         self._owner: ProcessOwner | None = None
+        self._startup_cleanup_failed = False
+        self._startup_cleanup_task: asyncio.Task[None] | None = None
         self._client: httpx.AsyncClient | None = None
         self._base_url: str | None = None
         self._launch: HarnessLaunch | None = None
@@ -580,6 +582,7 @@ class OpenCodeHarnessAdapter:
         if self._session is not None:
             raise HarnessStartupError("OpenCode session is already open")
         launch = await self.prepare_launch_credentials(launch)
+        self._launch = launch
         from ._native_preparation import NativePreparation, owned_native_preparation
 
         preparation = None
@@ -600,6 +603,8 @@ class OpenCodeHarnessAdapter:
         else:
             root = Path(tempfile.mkdtemp(prefix="m3-opencode-"))
         owner = ProcessOwner(root)
+        self._owner = owner
+        self._root = root
         if preparation is not None:
             preparation.adopt(owner)
         client: httpx.AsyncClient | None = None
@@ -731,6 +736,7 @@ class OpenCodeHarnessAdapter:
                 timeout=httpx.Timeout(session_phase.remaining()),
                 headers={"x-opencode-directory": str(workspace)},
             )
+            self._client = client
             from .._startup_deadlines import PhaseDeadline, earliest
 
             request_phase = native_phase(launch._startup_clock, "request", 30.0)
@@ -770,15 +776,22 @@ class OpenCodeHarnessAdapter:
             if preparation is None:
                 config.unlink(missing_ok=True)
             return self._session
-        except BaseException:
-            self._runtime_secrets.clear()
-            self._native_error_redaction = None
-            if client is not None:
-                await client.aclose()
-            try:
+        except BaseException as failure:
+            from .._startup_deadlines import retain_cleanup, wait_cleanup
+
+            async def cleanup_failed_server() -> None:
+                # Native death precedes private root disposal, even if HTTP
+                # client cleanup itself fails.
                 await owner.close()
-            except BaseException:
-                pass
+                if client is not None:
+                    await client.aclose()
+
+            self._startup_cleanup_task = retain_cleanup(cleanup_failed_server)
+            self._startup_cleanup_failed = not await wait_cleanup(
+                self._startup_cleanup_task,
+                launch._startup_clock,
+                cancelled=isinstance(failure, asyncio.CancelledError),
+            )
             raise
 
     async def start(self, spec: Any) -> None:
@@ -815,12 +828,24 @@ class OpenCodeHarnessAdapter:
         )
 
     async def close(self) -> None:
+        pending = self._startup_cleanup_task
+        if pending is not None and not pending.done():
+            from .._startup_deadlines import wait_cleanup
+            from ..errors import CleanupError
+
+            clock = self._launch._startup_clock if self._launch is not None else None
+            if (
+                not await wait_cleanup(pending, clock, cancelled=False)
+                and not pending.done()
+            ):
+                raise CleanupError("native startup cleanup remains pending")
+        self._startup_cleanup_task = None
         session = self._session
-        self._session = None
         if session is not None:
             await session.close()
         elif self._owner is not None:
             await self._owner.close()
+        self._session = None
         if self._client is not None:
             await self._client.aclose()
         self._client = None

@@ -277,7 +277,6 @@ async def test_rejected_native_preflight_never_resolves_stdio_credentials(
 
     from m3._types.specs import AgentSpec
     from m3.async_api import AsyncMCPTestKit
-    from m3.errors import UnsupportedFeature
     from m3.harness.claude import ClaudeCodeHarnessAdapter
     from m3.harness.contracts import HarnessLaunch
     from m3.transport.capture_proxy import McpCaptureManager
@@ -312,9 +311,11 @@ async def test_rejected_native_preflight_never_resolves_stdio_credentials(
         session = kit.agent_session(
             spec, adapter=UnsupportedNativeAdapter(executable=executable)
         )
-        with pytest.raises(UnsupportedFeature, match="unsupported_fixture_capability"):
-            async with session:
-                pass
+        async with session:
+            turn = await session.send("start native harness")
+            assert turn.error is not None
+            assert "unsupported_fixture_capability" in turn.error.message
+            assert session.result.error is not None
 
 
 @pytest.mark.asyncio
@@ -668,9 +669,11 @@ async def test_worker_registry_and_native_permission_inputs_reach_session_launch
                 session = kit.agent_session(
                     spec, adapter=InspectLaunch(executable="fixture")
                 )
-                with pytest.raises(UnsupportedFeature, match="inspection complete"):
-                    async with session:
-                        pass
+                async with session:
+                    turn = await session.send("inspect native launch")
+                    assert turn.error is not None
+                    assert "inspection complete" in turn.error.message
+                    assert session.result.error is not None
             assert registry.resolve(handle) == "worker-frozen-value"
         assert len(launches) == 2
         for same_registry, secrets in launches:

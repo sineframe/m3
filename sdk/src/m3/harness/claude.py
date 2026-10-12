@@ -354,6 +354,8 @@ class ClaudeCodeHarnessAdapter:
         self._root: Path | None = None
         self._config: Path | None = None
         self._owner: ProcessOwner | None = None
+        self._startup_cleanup_failed = False
+        self._startup_cleanup_task: asyncio.Task[None] | None = None
         self._launch: HarnessLaunch | None = None
         self._startup_phase_deadline: float | None = None
         self._session: ClaudeCodeSession | None = None
@@ -501,6 +503,7 @@ class ClaudeCodeHarnessAdapter:
         if self._session is not None:
             raise HarnessStartupError("Claude Code session is already open")
         launch = await self.prepare_launch_credentials(launch)
+        self._launch = launch
         from ._native_preparation import NativePreparation, owned_native_preparation
 
         preparation = None
@@ -523,6 +526,8 @@ class ClaudeCodeHarnessAdapter:
         else:
             root = Path(tempfile.mkdtemp(prefix="m3-claude-"))
         owner = ProcessOwner(root)
+        self._owner = owner
+        self._root = root
         if preparation is not None:
             preparation.adopt(owner)
         try:
@@ -742,11 +747,15 @@ class ClaudeCodeHarnessAdapter:
                 self, owner, self._capabilities, "claude-" + uuid4().hex
             )
             return self._session
-        except BaseException:
-            try:
-                await owner.close()
-            except BaseException:
-                pass
+        except BaseException as failure:
+            from .._startup_deadlines import retain_cleanup, wait_cleanup
+
+            self._startup_cleanup_task = retain_cleanup(owner.close)
+            self._startup_cleanup_failed = not await wait_cleanup(
+                self._startup_cleanup_task,
+                launch._startup_clock,
+                cancelled=isinstance(failure, asyncio.CancelledError),
+            )
             raise
 
     async def _startup_ready(
@@ -820,12 +829,24 @@ class ClaudeCodeHarnessAdapter:
         )
 
     async def close(self) -> None:
+        pending = self._startup_cleanup_task
+        if pending is not None and not pending.done():
+            from .._startup_deadlines import wait_cleanup
+            from ..errors import CleanupError
+
+            clock = self._launch._startup_clock if self._launch is not None else None
+            if (
+                not await wait_cleanup(pending, clock, cancelled=False)
+                and not pending.done()
+            ):
+                raise CleanupError("native startup cleanup remains pending")
+        self._startup_cleanup_task = None
         session = self._session
-        self._session = None
         if session is not None:
             await session.close()
         elif self._owner is not None:
             await self._owner.close()
+        self._session = None
         if self._config is not None and (
             self._owner is None or self._owner._owned_preparation is None
         ):

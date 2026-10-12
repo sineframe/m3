@@ -1291,13 +1291,6 @@ class AsyncExecutionHandle:
         failure: BaseException | None = None
         try:
             async with session:
-                if managed_runtime is not None:
-                    harness_session = session._managed_harness_session
-                    if harness_session is None:
-                        raise UnsupportedFeature(
-                            "managed interaction requires an active harness session"
-                        )
-                    managed_runtime.bind_session(harness_session.session_id)
                 self._recorder.emit(
                     EventKind.DIAGNOSTIC,
                     payload={

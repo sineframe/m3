@@ -209,6 +209,30 @@ def _startup_failure_cause(error: BaseException) -> str:
     return "unexpected error"
 
 
+def _startup_error_info(error: BaseException) -> ErrorInfo:
+    """Use the same native projection at entry and lazy first-send failure."""
+    from .harness._native_errors import NativeHarnessStartupError
+
+    if isinstance(error, asyncio.CancelledError):
+        return ErrorInfo(code=ErrorCode.CANCELLED, message="session startup cancelled")
+    cause = _startup_failure_cause(error)
+    details: dict[str, Any] = {"cause": cause}
+    if isinstance(error, NativeHarnessStartupError):
+        details = {**error.error.details, "cause": cause}
+        if len(error.error.message) > len(cause):
+            details["cause_truncated"] = True
+    unsupported = isinstance(error, UnsupportedFeature)
+    return ErrorInfo(
+        code=ErrorCode.UNSUPPORTED if unsupported else ErrorCode.TRANSPORT_ERROR,
+        message=(
+            f"session startup unsupported: {cause}"
+            if unsupported
+            else f"session startup failed: {cause}"
+        ),
+        details=details,
+    )
+
+
 # How a terminal turn that was not a plain failure ends the execution, and the
 # error reported when the adapter gives no reason of its own.
 _TERMINAL_TURN_ENDINGS: dict[
@@ -687,6 +711,20 @@ class AsyncAgentSession:
             return self
         startup_error: MCPError | None = None
         try:
+            if self._startup_clock.bounded_preparation:
+                from .server_group import ServerGroupManager
+                from .types import InProcessServer
+
+                if any(
+                    isinstance(binding.server, InProcessServer)
+                    for binding in self.spec.servers
+                ):
+                    raise UnsupportedFeature(
+                        "bounded startup cannot own an in-process server factory; "
+                        "bind a stdio server or an already-running HTTP server"
+                    )
+                if isinstance(self._server_manager, ServerGroupManager):
+                    self._server_manager.validate_bounded_startup()
             if self._owned_startup_enabled():
                 self._workspace.validate_owned_capture()
             if self._startup_clock.requires_ownership:
@@ -767,28 +805,15 @@ class AsyncAgentSession:
             ):
                 cleanup_failure = True
             unsupported = isinstance(exc, UnsupportedFeature)
-            cause = (
-                None
-                if isinstance(exc, asyncio.CancelledError)
-                else _startup_failure_cause(exc)
+            startup_info = _startup_error_info(exc)
+            code, message, startup_details = (
+                startup_info.code,
+                startup_info.message,
+                startup_info.details,
             )
-            from .harness._native_errors import NativeHarnessStartupError
-
-            startup_details: dict[str, Any] | None = (
-                None if cause is None else {"cause": cause}
-            )
-            if isinstance(exc, NativeHarnessStartupError) and cause is not None:
-                startup_details = {**exc.error.details, "cause": cause}
-                if len(exc.error.message) > len(cause):
-                    startup_details["cause_truncated"] = True
+            cause = startup_details.get("cause")
             if outcome is ExecutionOutcome.CANCELLED:
                 code, message = ErrorCode.CANCELLED, "session startup cancelled"
-            elif unsupported:
-                code = ErrorCode.UNSUPPORTED
-                message = f"session startup unsupported: {cause}"
-            else:
-                code = ErrorCode.TRANSPORT_ERROR
-                message = f"session startup failed: {cause}"
             if cause is not None:
                 self._emit_event(
                     EventKind.DIAGNOSTIC,
@@ -1151,6 +1176,15 @@ class AsyncAgentSession:
                 raise UnsupportedFeature(
                     "harness adapter does not implement managed interaction contract"
                 )
+            active_session = self._adapter_session
+            if active_session is None:
+                raise UnsupportedFeature(
+                    "managed interaction requires an active harness session"
+                )
+            _require_elicitation_capability(active_session)
+            bind_session = getattr(self._managed_input_runtime, "bind_session", None)
+            if callable(bind_session):
+                bind_session(active_session.session_id)
             setter(self._managed_input_runtime)
         self._emit_captured_wire_events(None)
         async with self._state_lock:
@@ -1554,6 +1588,15 @@ class AsyncAgentSession:
                 cleanup_failed = True
                 if task.done():
                     self._server_manager_close_task = None
+
+        if (
+            cleanup_failed
+            and self._owned_startup_enabled()
+            and not self._server_manager_closed
+            and self._server_manager is not None
+        ):
+            # A server-manager descendant may still execute the pinned runtime.
+            raise CleanupError("server process cleanup incomplete")
 
         if self._runtime_lease is not None:
             task = self._runtime_lease_close_task
@@ -2057,7 +2100,21 @@ class AsyncAgentSession:
             capture = getattr(self._server_manager, "capture", None)
             flush = getattr(capture, "flush", None)
             if callable(flush):
-                await flush(deadline=caller_deadline)
+                try:
+                    await flush(deadline=caller_deadline)
+                except Exception:
+                    self._trace_limitations = tuple(
+                        dict.fromkeys((*self._trace_limitations, "capture_incomplete"))
+                    )
+                    self._emit_event(
+                        EventKind.DIAGNOSTIC,
+                        {
+                            "code": "capture_incomplete",
+                            "message": "MCP capture flush did not complete",
+                        },
+                        turn_id=turn_id,
+                        phase=LifecyclePhase.TURN,
+                    )
             captured_tool_calls = self._pending_captured_tool_calls()
             self._emit_captured_wire_events(turn_id)
             self._record_tool_outcomes(raw)
@@ -2176,22 +2233,50 @@ class AsyncAgentSession:
             )
             raise
         except Exception as exc:
-            terminal = bool(getattr(exc, "terminal", False)) or isinstance(
-                exc, (TransportError, OperationTimeout, OperationCancelled)
+            startup_failed = not self._adapter_started or (
+                self._owned_startup_enabled() and not self._startup_clock.finished
             )
+            error = (
+                _startup_error_info(exc)
+                if startup_failed
+                else ErrorInfo(
+                    code=self._code_for(exc), message=self._safe_failure_message(exc)
+                )
+            )
+            terminal = (
+                startup_failed
+                or bool(getattr(exc, "terminal", False))
+                or isinstance(
+                    exc, (TransportError, OperationTimeout, OperationCancelled)
+                )
+            )
+            if startup_failed:
+                self._emit_event(
+                    EventKind.DIAGNOSTIC,
+                    {
+                        "code": "startup_failed",
+                        "error_code": error.code.value,
+                        "message": error.message,
+                        "details": error.details,
+                    },
+                    turn_id=turn_id,
+                    phase=LifecyclePhase.STARTUP,
+                )
             result = self._failure_turn(
                 turn_id,
                 self._outcome_for(exc),
-                self._code_for(exc),
-                self._safe_failure_message(exc),
+                error.code,
+                error.message,
+                details=error.details,
             )
             self._emit_turn_finished(turn_id, result)
             self._turns.append(result)
             if terminal:
                 await self._finish(
                     self._execution_outcome_for(exc),
-                    self._code_for(exc),
-                    self._safe_failure_message(exc),
+                    error.code,
+                    error.message,
+                    details=error.details,
                 )
             elif self._snapshot.lifecycle is ExecutionStatus.RUNNING_TURN:
                 self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
@@ -3016,11 +3101,17 @@ class AsyncAgentSession:
         )
 
     def _failure_turn(
-        self, turn_id: TurnId, outcome: TurnOutcome, code: ErrorCode, message: str
+        self,
+        turn_id: TurnId,
+        outcome: TurnOutcome,
+        code: ErrorCode,
+        message: str,
+        *,
+        details: Mapping[str, Any] | None = None,
     ) -> TurnResult:
         return TurnResult(
             snapshot=self._turn_snapshot(turn_id, outcome),
-            error=ErrorInfo(code=code, message=message),
+            error=ErrorInfo(code=code, message=message, details=details or {}),
         )
 
     def _cancelled_turn(self, turn_id: TurnId) -> TurnResult:
@@ -3194,7 +3285,6 @@ class AsyncAgentSession:
         self._terminal_error = error
         self._terminal_result = result.model_copy(update={"error": error})
 
-    @_timing.timed("session.close")
     def _begin_cleanup_budget(self) -> None:
         self._cleanup_deadline = self._startup_clock.begin_cleanup()
 
@@ -3216,6 +3306,7 @@ class AsyncAgentSession:
             == "immutable-seed"
         )
 
+    @_timing.timed("session.close")
     async def _complete_close(self, outcome: ExecutionOutcome) -> None:
         await self._wait_for_startup()
         # Startup owns terminalization and cleanup when it loses a race with

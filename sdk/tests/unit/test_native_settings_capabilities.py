@@ -501,3 +501,50 @@ else: print('--allowedTools --disallowedTools\\n--permission-mode <mode> Mode\\n
     assert facts.permission_modes == frozenset(
         {"acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"}
     )
+
+
+@pytest.mark.process_lifecycle
+@pytest.mark.asyncio
+async def test_owned_facts_reuse_requires_current_executable_identity(
+    tmp_path: Path,
+) -> None:
+    import time
+
+    from m3.harness.native_capabilities import discover_native_support_owned
+
+    query_log = tmp_path / "native-queries"
+
+    def instrumented_probe(*, permission: bool = True) -> Path:
+        executable = _probe(tmp_path, permission=permission)
+        source = executable.read_text(encoding="utf-8")
+        header, body = source.split("\n", 1)
+        instrument = (
+            "from pathlib import Path\n"
+            f"with Path({str(query_log)!r}).open('a') as stream:\n"
+            "    stream.write('query\\n')\n"
+        )
+        executable.write_text(header + "\n" + instrument + body, encoding="utf-8")
+        return executable
+
+    executable = instrumented_probe()
+    identity = NativeRuntimeIdentity("b" * 64, "0.162.1", "fixture-target")
+    first = await discover_native_support_owned(
+        str(executable), "codex", identity, deadline=time.monotonic() + 5
+    )
+    assert query_log.read_text().splitlines() == ["query", "query"]
+    second = await discover_native_support_owned(
+        str(executable), "codex", identity, deadline=time.monotonic() + 5
+    )
+    assert second == first
+    assert query_log.read_text().splitlines() == ["query", "query"]
+
+    # Even a same-path replacement with restored mtime must invalidate facts.
+    previous = executable.stat()
+    instrumented_probe(permission=False)
+    os.utime(executable, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    changed = await discover_native_support_owned(
+        str(executable), "codex", identity, deadline=time.monotonic() + 5
+    )
+    assert changed.executable_digest != first.executable_digest
+    assert "permissions" not in changed.rpc_parameters
+    assert query_log.read_text().splitlines() == ["query"] * 4

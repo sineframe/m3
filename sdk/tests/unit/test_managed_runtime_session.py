@@ -199,6 +199,8 @@ async def test_managed_acquire_precedes_preflight_and_open_and_emits_resolution(
     assert manager.calls == [("claude", "1.2.3")]
     assert adapter.executable == str(manager.lease.executable)
     assert [kind for kind, _ in events if kind is EventKind.HARNESS_RUNTIME_RESOLVED]
+    assert "open" not in order
+    await session.send("start native harness")
     resolved = next(
         payload
         for kind, payload in events
@@ -241,8 +243,11 @@ async def test_system_runtime_never_calls_manager_and_startup_failure_releases_l
     session = AsyncAgentSession(
         _spec(runtime="system"), adapter, runtime_manager=manager
     )
-    with pytest.raises(TransportError):
-        await session.__aenter__()
+    await session.__aenter__()
+    turn = await session.send("start native harness")
+    assert turn.error is not None
+    assert session.result.error is not None
+    await session.aclose()
     assert manager.calls == []
     assert manager.lease.released == 0
     assert (await session.snapshot()).execution_id
@@ -300,6 +305,9 @@ async def test_each_managed_execution_gets_distinct_writable_workspace_and_clean
     )
     await first.__aenter__()
     await second.__aenter__()
+    assert first_adapter.root is None and second_adapter.root is None
+    await first.send("start first harness")
+    await second.send("start second harness")
     assert first_adapter.root is not None and second_adapter.root is not None
     assert first_adapter.root != second_adapter.root
     assert (first_adapter.root / "credential-scratch").read_text(
@@ -321,8 +329,11 @@ async def test_managed_open_failure_releases_lease_and_keeps_selector_event() ->
         runtime_manager=manager,
         event_sink=lambda kind, payload, *_: events.append((kind, dict(payload))),
     )
-    with pytest.raises(TransportError):
-        await session.__aenter__()
+    await session.__aenter__()
+    turn = await session.send("start native harness")
+    assert turn.error is not None
+    assert session.result.error is not None
+    await session.aclose()
     assert manager.lease.released == 1
     selection = next(
         payload for kind, payload in events if kind is EventKind.HARNESS_SELECTION

@@ -2139,7 +2139,6 @@ class MCPTestKit:
         spec = _timeout_override(
             _permission_override(spec, harness_permissions), harness_timeouts
         )
-        spec = _permission_override(spec, harness_permissions)
         spec = _admission_override(spec, admission)
         with self._state_lock:
             if self._closed:

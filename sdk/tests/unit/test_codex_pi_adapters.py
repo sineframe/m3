@@ -289,6 +289,9 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
     try:
         assert order[0] == "acquire:codex:0.156.1"
         assert probes == [managed_executable]
+        assert "server-start" not in order
+        assert "open" not in order
+        await session.send("start native harness")
         assert order.index(f"probe:{managed_executable}") < order.index("server-start")
         assert (
             order.index("server-start") < order.index("preflight") < order.index("open")
