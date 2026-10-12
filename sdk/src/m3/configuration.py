@@ -254,16 +254,14 @@ class Config(_FrozenModel):
     def _validate_effective_settings(self, info: _ValidationInfo) -> Config:
         if isinstance(info.context, dict) and info.context.get("m3_partial_layer"):
             return self
-        caches = (
-            self.cache,
+        merge_settings(self.cache)
+        harness_caches = (
             self.harnesses.codex.cache,
             self.harnesses.claude_code.cache,
             self.harnesses.opencode.cache,
         )
-        for cache in caches:
-            _CachePolicy.model_validate(
-                _explicit_values(cache), context={"m3_effective_settings": True}
-            )
+        for cache in harness_caches:
+            merge_settings(self.cache, cache)
         return self
 
     @_model_validator(mode="after")

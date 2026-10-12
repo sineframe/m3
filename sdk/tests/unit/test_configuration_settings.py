@@ -323,6 +323,28 @@ def test_root_only_cache_layer_inherits_opt_in_and_final_config_rejects_without_
         load_config({"cache": override}, env={}, cwd=Path("/tmp/no-project"))
 
 
+@pytest.mark.parametrize("harness", ["codex", "claude_code", "opencode"])
+def test_harness_cache_inherits_global_mode_before_validation(
+    tmp_path: Path, harness: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.m3.cache]\nmode="immutable-seed"\nroot="/shared"\n'
+        f'[tool.m3.harnesses.{harness}.cache]\nroot="/specific"\n'
+    )
+    config = load_config(env={}, cwd=tmp_path)
+    harness_cache = getattr(config.harnesses, harness).cache
+    effective = merge_settings(config.cache, harness_cache)
+    assert effective.mode == "immutable-seed"
+    assert effective.root == "/specific"
+    assert "mode" not in harness_cache.model_fields_set
+    with pytest.raises(ConfigError):
+        load_config(
+            {"harnesses": {harness: {"cache": {"mode": "isolated"}}}},
+            env={},
+            cwd=tmp_path,
+        )
+
+
 def test_empty_rule_map_clears_but_empty_nested_model_inherits() -> None:
     base = CodexPermissions(
         profile=CodexPermissionProfile(

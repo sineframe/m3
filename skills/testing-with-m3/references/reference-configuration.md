@@ -89,7 +89,7 @@ Every native phase budget is a positive finite number of seconds. `session_secon
 
 `merge_settings` overlays explicitly supplied leaves of the same type and validates the merged result. An initialization-only override preserves startup and total budgets. Sparse JSON exports omit `UNSET` and omitted fields, so JSON round trips preserve explicit overrides, including `None`. Nested settings models merge by explicit field. Map entries merge by key; an explicitly supplied empty map clears that map. An empty nested model inherits instead of clearing its fields. Changing only a defined profile's `name` retains earlier explicit filesystem and network leaves; supply explicit rule maps to change those permissions.
 
-A root-only `CachePolicy(root="/new")` is a partial override and can inherit `immutable-seed` mode. A final `Config` or `merge_settings` result rejects a root without that opt-in, and an explicit `mode="isolated"` with a root is always invalid.
+A root-only `CachePolicy(root="/new")` is a partial override and can inherit `immutable-seed` mode. Harness cache settings inherit global cache settings before validation. A final `Config` or `merge_settings` result rejects a root without that opt-in, and an explicit `mode="isolated"` with a root is always invalid.
 
 ```toml
 [tool.m3.harnesses.codex.timeouts]
