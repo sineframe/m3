@@ -507,6 +507,11 @@ def _supervise(
                 job.process.signal(signal.SIGTERM)
 
     def spawn_cleanup(job: Job) -> None:
+        if job.artifact_custody is not None:
+            selector.unregister(job.artifact_custody)
+            job.artifact_custody.close()
+            job.artifact_custody = None
+
         # Writer death precedes unregistering the exact owned worktree. Never
         # prune unrelated worktrees or delete the source repository.
         def remove_owned_root() -> None:

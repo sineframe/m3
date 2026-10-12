@@ -323,3 +323,27 @@ def test_download_rejects_unverified_artifact(
     )
     with pytest.raises(cache.ImmutableCacheError, match="verification failed"):
         cache.download_binary(timeout=1)
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or os.uname().machine != "arm64",
+    reason="native artifact is Darwin arm64",
+)
+def test_rejected_native_digest_has_zero_writers_and_completes_cleanup(
+    tmp_path: Path,
+) -> None:
+    from m3._bootstrap_operations import OwnedBootstrapOperations, PrivateOperationError
+
+    native = tmp_path / "unverified-native"
+    native.write_bytes(b"unverified executable bytes")
+    shared = tmp_path / "shared"
+    owner = OwnedBootstrapOperations()
+    try:
+        with pytest.raises(PrivateOperationError):
+            owner.materialize_immutable_cache(
+                CacheRequest(shared, native, "1.18.35"), deadline=time.monotonic() + 5
+            )
+        assert not shared.exists()
+    finally:
+        owner.close(deadline=time.monotonic() + 5)
+    assert owner.cleanup_complete

@@ -98,49 +98,53 @@ def execute_cache_guard(
     gate; the guardian is its waitable parent and retains the lease throughout
     cancellation. No external command or user callback can run in that child.
     """
-    request, unexpected = _receive_private(channel, deadline)
-    if unexpected is not None:
-        os.close(unexpected)
-        raise PrivateOperationError("invalid immutable cache request")
-    if (
-        set(request)
-        != {
-            "version",
-            "deadline",
-            "root",
-            "native_executable",
-            "harness_version",
-        }
-        or request["deadline"] != deadline
-    ):
-        raise PrivateOperationError("invalid immutable cache request")
-    if any(
-        not isinstance(request[key], str)
-        for key in ("root", "native_executable", "harness_version")
-    ):
-        raise PrivateOperationError("invalid immutable cache request")
-    inputs = CacheRequest(
-        Path(request["root"]),
-        Path(request["native_executable"]),
-        request["harness_version"],
-    )
-    validate_native(inputs)
-    _remaining(deadline)
-    inputs.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _private(inputs.root.stat(follow_symlinks=False), directory=True)
-    lock = os.open(
-        inputs.root / (RIPGREP.key + ".lock"),
-        os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
-        0o600,
-    )
-    candidate = inputs.root / (RIPGREP.key + ".pending-" + root.name)
-    seed = inputs.root / RIPGREP.key
-    destination = root / "cache" / "opencode" / "bin" / "rg"
     writer: _ForkJob | None = None
+    lock: int | None = None
+    inputs: CacheRequest | None = None
+    candidate: Path | None = None
+    seed: Path | None = None
     cold = False
     committed = False
     death_reported = False
     try:
+        request, unexpected = _receive_private(channel, deadline)
+        if unexpected is not None:
+            os.close(unexpected)
+            raise PrivateOperationError("invalid immutable cache request")
+        if (
+            set(request)
+            != {
+                "version",
+                "deadline",
+                "root",
+                "native_executable",
+                "harness_version",
+            }
+            or request["deadline"] != deadline
+        ):
+            raise PrivateOperationError("invalid immutable cache request")
+        if any(
+            not isinstance(request[key], str)
+            for key in ("root", "native_executable", "harness_version")
+        ):
+            raise PrivateOperationError("invalid immutable cache request")
+        inputs = CacheRequest(
+            Path(request["root"]),
+            Path(request["native_executable"]),
+            request["harness_version"],
+        )
+        validate_native(inputs)
+        _remaining(deadline)
+        inputs.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _private(inputs.root.stat(follow_symlinks=False), directory=True)
+        lock = os.open(
+            inputs.root / (RIPGREP.key + ".lock"),
+            os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+            0o600,
+        )
+        candidate = inputs.root / (RIPGREP.key + ".pending-" + root.name)
+        seed = inputs.root / RIPGREP.key
+        destination = root / "cache" / "opencode" / "bin" / "rg"
         _private(os.fstat(lock), directory=False)
         _acquire(lock, channel, deadline)
         _remaining(deadline)
@@ -227,8 +231,9 @@ def execute_cache_guard(
         # The lock is deliberately retained if filesystem cleanup stalls.
         # A late rename cannot become eligible to another reader meanwhile.
         if not committed:
-            if cold and seed.exists():
+            if cold and seed is not None and inputs is not None and seed.exists():
                 os.replace(seed, inputs.root / (RIPGREP.key + ".rejected-" + root.name))
-            if candidate.exists():
+            if candidate is not None and candidate.exists():
                 shutil.rmtree(candidate)
-        os.close(lock)
+        if lock is not None:
+            os.close(lock)
