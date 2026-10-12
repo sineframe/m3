@@ -598,10 +598,13 @@ time.sleep(60)
     assert ident not in worker._routes
 
 
-def test_helper_loss_kills_known_writer_and_retains_quarantine(tmp_path: Path) -> None:
+def test_helper_loss_fences_known_writer_without_signaling_unowned_groups(
+    tmp_path: Path,
+) -> None:
     # An isolated controller process avoids deliberately killing the helper
     # shared with unrelated tests. Its stdout reports only ownership evidence.
     ready = tmp_path / "ready"
+    stop = tmp_path / "stop"
     script = """
 import asyncio
 import json
@@ -625,7 +628,10 @@ import time
 
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 pathlib.Path({str(ready_path)!r}).write_text(str(os.getpid()))
-time.sleep(60)
+end = time.monotonic() + 5
+while not pathlib.Path({str(Path(STOP))!r}).exists() and time.monotonic() < end:
+    pathlib.Path('unpublished-write').write_text('private')
+    time.sleep(0.01)
 '''
     task = asyncio.create_task(
         supervisor.prepare("command", {"argv": [sys.executable, "-c", command]})
@@ -634,11 +640,21 @@ time.sleep(60)
         await asyncio.sleep(0.01)
     root = next(iter(supervisor._jobs.values())).root
     writer = int(Path(READY).read_text())
+    group_signals = []
+    os.killpg = lambda pid, sig: group_signals.append((pid, sig))
     os.kill(supervisor.helper_pid, signal.SIGKILL)
     try:
         await task
     except PreparationError:
         pass
+    assert root in supervisor.quarantined_roots
+    assert root.exists()
+    os.kill(writer, 0)
+    before = time.monotonic()
+    await supervisor.close()
+    assert time.monotonic() - before < 0.2
+    assert not group_signals
+    Path(STOP).touch()
     end = time.monotonic() + 3
     while True:
         try:
@@ -653,6 +669,7 @@ time.sleep(60)
                 "root": str(root),
                 "quarantine": root in supervisor.quarantined_roots,
                 "writer_dead": True,
+                "no_group_signals": not group_signals,
             }
         ),
         flush=True,
@@ -663,12 +680,13 @@ time.sleep(60)
 
 
 asyncio.run(main())
-""".replace("READY", repr(str(ready)))
+""".replace("READY", repr(str(ready))).replace("STOP", repr(str(stop)))
     completed = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, timeout=10, check=True
     )
     evidence = json.loads(completed.stdout)
     assert evidence["quarantine"] and evidence["writer_dead"]
+    assert evidence["no_group_signals"]
     root = Path(evidence["root"])
     assert root.exists()  # Helper loss retains ownership evidence, no deletion.
     import shutil
@@ -900,9 +918,10 @@ def test_router_runtime_error_fences_and_new_kit_recreates_helper(
 @pytest.mark.parametrize("loss", ["deadline", "controller_eof", "helper_loss"])
 def test_pre_group_child_is_owned_until_acknowledged(tmp_path: Path, loss: str) -> None:
     # Inject the boundary stall inside a real single-thread helper process.
-    # No pytest/controller process is forked; the ordinary router/start gate
-    # and TERM/KILL escalation remain responsible for the real child.
-    helper_script = """
+    # A live helper owns escalation. After helper loss, the closed start gate
+    # prevents mutation when the test peer releases its pre-group stall.
+    helper_script = (
+        """
 import os
 import pathlib
 import signal
@@ -919,15 +938,17 @@ def stalled_setsid():
     if pathlib.Path(ARMED).exists() and not marker.exists():
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         marker.write_text(str(os.getpid()))
-        while True:
+        end = time.monotonic() + 5
+        while not pathlib.Path(RELEASE).exists() and time.monotonic() < end:
             time.sleep(0.01)
     return original()
 
 
 os.setsid = stalled_setsid
 _supervise(int(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3]))
-""".replace("MARKER", repr(str(tmp_path / "pre-group"))).replace(
-        "ARMED", repr(str(tmp_path / "armed"))
+""".replace("MARKER", repr(str(tmp_path / "pre-group")))
+        .replace("ARMED", repr(str(tmp_path / "armed")))
+        .replace("RELEASE", repr(str(tmp_path / "release")))
     )
     controller_script = """
 import asyncio
@@ -990,6 +1011,8 @@ pathlib.Path({str(escaped)!r}).touch()
     root = job.root
     assert not root.exists()
     assert not supervisor._worker._groups  # No unacknowledged PGID recorded.
+    group_signals = []
+    os.killpg = lambda pid, sig: group_signals.append((pid, sig))
     if LOSS == "controller_eof":
         supervisor._worker.close(0.02)
     elif LOSS == "helper_loss":
@@ -1000,6 +1023,10 @@ pathlib.Path({str(escaped)!r}).touch()
         pass
     else:
         raise AssertionError("unacknowledged child was published")
+    if LOSS == "helper_loss":
+        assert root in supervisor.quarantined_roots
+        assert not group_signals
+        pathlib.Path(RELEASE).touch()
     end = time.monotonic() + 3
     while True:
         try:
@@ -1022,6 +1049,7 @@ asyncio.run(main())
         ("ARMED", str(tmp_path / "armed")),
         ("ESCAPED", str(tmp_path / "escaped")),
         ("LOSS", loss),
+        ("RELEASE", str(tmp_path / "release")),
     ):
         controller_script = controller_script.replace(name, repr(value))
     completed = subprocess.run(
@@ -1095,7 +1123,9 @@ def test_ownership_eof_never_opens_unacknowledged_cleanup(tmp_path: Path) -> Non
     shutil.rmtree(root)  # Safe fixture cleanup after proven writer death.
 
 
-def test_submission_eof_cleanup_remains_owned_after_helper_loss(tmp_path: Path) -> None:
+def test_submission_eof_cleanup_is_quarantined_when_helper_custody_is_lost(
+    tmp_path: Path,
+) -> None:
     helper_script = """
 import os
 import pathlib
@@ -1105,20 +1135,20 @@ import time
 
 from m3 import _preparation_worker as worker
 
-original = worker._remove
-
-
 def stalled_remove(root, source=None):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     (root / "cleanup-mutation").touch()
     pathlib.Path(MARKER).write_text(str(os.getpid()))
-    time.sleep(60)
-    original(root, source)
+    end = time.monotonic() + 5
+    while not pathlib.Path(RELEASE).exists() and time.monotonic() < end:
+        time.sleep(0.01)
 
 
 worker._remove = stalled_remove
 worker._supervise(int(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3]))
-""".replace("MARKER", repr(str(tmp_path / "cleanup-ready")))
+""".replace("MARKER", repr(str(tmp_path / "cleanup-ready"))).replace(
+        "RELEASE", repr(str(tmp_path / "release"))
+    )
     controller_script = """
 import asyncio
 import json
@@ -1189,8 +1219,13 @@ time.sleep(60)
     await wait(cleanup.exists)
     child = int(cleanup.read_text())
     assert child in owner._groups.values()  # Registered before cleanup mutation.
+    group_signals = []
+    os.killpg = lambda pid, sig: group_signals.append((pid, sig))
     os.kill(owner.helper_pid, signal.SIGKILL)
     await wait(lambda: not owner._thread.is_alive())
+    assert exists(child)
+    assert not group_signals
+    pathlib.Path(RELEASE).touch()
     await wait(lambda: not exists(child))
     try:
         await task
@@ -1217,6 +1252,7 @@ asyncio.run(main())
         ("HELPER", helper_script),
         ("READY", str(tmp_path / "writer-ready")),
         ("CLEANUP", str(tmp_path / "cleanup-ready")),
+        ("RELEASE", str(tmp_path / "release")),
     ):
         controller_script = controller_script.replace(name, repr(value))
     completed = subprocess.run(
