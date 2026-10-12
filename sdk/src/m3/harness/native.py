@@ -21,7 +21,7 @@ from typing import Any
 
 from .. import _timing
 from ..errors import CleanupError
-from ..types import ErrorCode, ErrorInfo, SecretReference
+from ..types import UNSET, ClaudeCode, ErrorCode, ErrorInfo, SecretReference
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessLaunch,
@@ -210,6 +210,15 @@ def _server_configuration(
                     else _redact_config_values(config.headers)
                 ),
             }
+        if (
+            isinstance(launch.spec.harness, ClaudeCode)
+            and config.timeouts.request_seconds is not UNSET
+        ):
+            from .native_settings import milliseconds
+
+            servers[config.key]["timeout"] = milliseconds(
+                config.timeouts.request_seconds, minimum=1000
+            )
     return {"mcpServers": servers}
 
 

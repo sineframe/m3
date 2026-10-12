@@ -510,6 +510,7 @@ agent_session(
     _artifact_store: _ArtifactStore | None = None,
     _managed_input_runtime: _Any = None,
     harness_cache_dir: str | _Path | None = None,
+    harness_permissions: _NativePermissions | _Unset = Unset.UNSET,
 ) -> AsyncAgentSession
 ```
 
