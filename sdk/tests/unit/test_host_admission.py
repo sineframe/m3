@@ -1,7 +1,10 @@
 """Kernel locks enforce FIFO/cancellation without process-id stale heuristics."""
 
 import asyncio
+import os
+import signal
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -187,3 +190,125 @@ async def test_default_process_spawn_has_no_guardian(tmp_path: Path) -> None:
     assert owner.process is not None and owner.process.stdout is not None
     assert await owner.process.stdout.readline() == b"direct\n"
     await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_real_controller_death_retains_slot_while_native_writer_lives(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "host"
+    controller = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(Path(__file__).parents[1] / "fixtures" / "admission_controller.py"),
+        str(root),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert controller.stdout is not None
+    writer = int(await asyncio.wait_for(controller.stdout.readline(), timeout=5))
+    controller.kill()
+    await controller.wait()
+    pending = asyncio.create_task(
+        HostAdmission(root).acquire(
+            StartupAdmission(enabled=True, slots=1, queue_timeout_seconds=3)
+        )
+    )
+    try:
+        await asyncio.sleep(0.075)
+        os.kill(writer, 0)
+        assert not pending.done()
+        lease = await pending
+        assert lease is not None
+        lease.close()
+    finally:
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        try:
+            os.kill(writer, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_exited_leader_stays_reserved_until_descendant_death(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "native"
+    root.mkdir()
+    lease = await HostAdmission(tmp_path / "host").acquire(
+        StartupAdmission(enabled=True, slots=1, queue_timeout_seconds=3)
+    )
+    assert lease is not None
+    guardian = await NativeGuardian.spawn(
+        lease,
+        [
+            sys.executable,
+            "-c",
+            "import os,signal,time; child=os.fork(); "
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+            "print('descendant-ready',flush=True) if child==0 else None; "
+            "time.sleep(60) if child==0 else os._exit(0)",
+        ],
+        {},
+        root,
+        limit=1024 * 1024,
+    )
+    assert guardian.process.stdout is not None
+    assert await guardian.process.stdout.readline() == b"descendant-ready\n"
+    try:
+        assert guardian.native_pid is not None
+        listing = await asyncio.create_subprocess_exec(
+            "/bin/ps",
+            "-p",
+            str(guardian.native_pid),
+            "-o",
+            "stat=",
+            stdout=asyncio.subprocess.PIPE,
+        )
+        status, _ = await listing.communicate()
+        assert status.strip().startswith(b"Z")
+        assert lease.descriptor == -1  # Only guardian owns the kernel slot.
+        await asyncio.wait_for(guardian.process.wait(), timeout=3)
+    finally:
+        await guardian.stop()
+
+
+@pytest.mark.asyncio
+async def test_expired_owned_deadline_never_executes_native(tmp_path: Path) -> None:
+    marker = tmp_path / "must-not-execute"
+    with pytest.raises(asyncio.TimeoutError):
+        await NativeGuardian.spawn(
+            None,
+            [sys.executable, "-c", f"open({str(marker)!r},'w').close()"],
+            {},
+            tmp_path,
+            limit=1024 * 1024,
+            deadline=time.monotonic() - 1,
+        )
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_guardian_autonomously_fences_at_shared_startup_deadline(
+    tmp_path: Path,
+) -> None:
+    guardian = await NativeGuardian.spawn(
+        None,
+        [
+            sys.executable,
+            "-c",
+            "import time; print('spawned',flush=True); time.sleep(60)",
+        ],
+        {},
+        tmp_path,
+        limit=1024 * 1024,
+        deadline=time.monotonic() + 0.2,
+    )
+    assert guardian.process.stdout is not None
+    assert await guardian.process.stdout.readline() == b"spawned\n"
+    try:
+        await asyncio.wait_for(guardian.process.wait(), timeout=3)
+        assert guardian.process.returncode != 0
+    finally:
+        await guardian.stop()

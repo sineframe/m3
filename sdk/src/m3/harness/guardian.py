@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import socket
 import struct
 import sys
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -20,13 +22,18 @@ _MAX_FRAME = 1024 * 1024
 
 class NativeGuardian:
     def __init__(
-        self, process: asyncio.subprocess.Process, channel: socket.socket
+        self,
+        process: asyncio.subprocess.Process,
+        channel: socket.socket,
+        deadline: float | None,
     ) -> None:
         self.process = process
         self._channel = channel
         self.native_pid: int | None = None
         self._commands = asyncio.Lock()
         self._closed = False
+        self._deadline = deadline
+        self._ready = False
 
     @classmethod
     async def spawn(
@@ -38,9 +45,15 @@ class NativeGuardian:
         *,
         limit: int,
         on_spawn: Callable[[NativeGuardian], None] | None = None,
+        deadline: float | None = None,
     ) -> NativeGuardian:
         if os.name != "posix" or not hasattr(os, "waitid"):
             raise UnsupportedFeature("owned native startup requires POSIX child status")
+        if deadline is not None:
+            if not math.isfinite(deadline):
+                raise ValueError("native ownership deadline is invalid")
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError
         parent, child = socket.socketpair()
         parent.setblocking(False)
         guardian: NativeGuardian | None = None
@@ -63,13 +76,18 @@ class NativeGuardian:
                 limit=limit,
             )
             child.close()
-            guardian = cls(process, parent)
+            guardian = cls(process, parent, deadline)
             if lease is not None:
                 lease.attach(guardian)
             if on_spawn is not None:
                 on_spawn(guardian)
             await guardian._send(
-                {"argv": argv, "environment": dict(environment), "cwd": str(cwd)}
+                {
+                    "argv": argv,
+                    "environment": dict(environment),
+                    "cwd": str(cwd),
+                    "deadline": deadline,
+                }
             )
             received = await guardian._receive()
             pid = received.get("pid")
@@ -106,7 +124,7 @@ class NativeGuardian:
             asyncio.get_running_loop().sock_sendall(
                 self._channel, struct.pack("!I", len(data)) + data
             ),
-            timeout=15,
+            timeout=self._remaining(),
         )
 
     async def _receive(self) -> dict[str, object]:
@@ -130,13 +148,25 @@ class NativeGuardian:
                 raise HarnessStartupError("native ownership frame is invalid")
             return value
 
-        return await asyncio.wait_for(receive(), timeout=15)
+        return await asyncio.wait_for(receive(), timeout=self._remaining())
+
+    def _remaining(self) -> float:
+        remaining = (
+            15.0 if self._deadline is None else self._deadline - time.monotonic()
+        )
+        if remaining <= 0:
+            raise asyncio.TimeoutError
+        return min(15.0, remaining)
 
     async def ready(self) -> None:
         async with self._commands:
+            if self._ready:
+                return
             await self._send({"action": "ready"})
             if await self._receive() != {"event": "ready"}:
                 raise HarnessStartupError("native readiness acknowledgement is invalid")
+            self._ready = True
+            self._deadline = None
 
     def disconnect(self) -> None:
         if not self._closed:

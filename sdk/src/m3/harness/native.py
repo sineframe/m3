@@ -40,16 +40,22 @@ if TYPE_CHECKING:
 class StartupSpawnOptions(TypedDict, total=False):
     startup_lease: StartupLease
     owned_startup: bool
+    startup_deadline: float
 
 
 def startup_spawn_options(
-    lease: StartupLease | None, *, owned_startup: bool = False
+    lease: StartupLease | None,
+    *,
+    owned_startup: bool = False,
+    startup_deadline: float | None = None,
 ) -> StartupSpawnOptions:
     options: StartupSpawnOptions = {}
     if lease is not None:
         options["startup_lease"] = lease
     if owned_startup:
         options["owned_startup"] = True
+    if startup_deadline is not None:
+        options["startup_deadline"] = startup_deadline
     return options
 
 
@@ -406,9 +412,14 @@ class ProcessOwner:
         cwd: Path | str | None = None,
         startup_lease: StartupLease | None = None,
         owned_startup: bool = False,
+        startup_deadline: float | None = None,
     ) -> None:
         try:
-            if startup_lease is not None or owned_startup:
+            if (
+                startup_lease is not None
+                or owned_startup
+                or startup_deadline is not None
+            ):
                 from .guardian import NativeGuardian
 
                 self._guardian = await NativeGuardian.spawn(
@@ -418,6 +429,7 @@ class ProcessOwner:
                     cwd if cwd is not None else self.root,
                     limit=MAX_FRAME_BYTES + 1,
                     on_spawn=self._attach_guardian,
+                    deadline=startup_deadline,
                 )
             else:
                 self.process = await asyncio.create_subprocess_exec(
@@ -458,6 +470,10 @@ class ProcessOwner:
     def _attach_guardian(self, guardian: NativeGuardian) -> None:
         self._guardian = guardian
         self.process = guardian.process
+
+    async def startup_ready(self) -> None:
+        if self._guardian is not None:
+            await self._guardian.ready()
 
     @_timing.timed("harness.terminate")
     async def terminate(self) -> None:

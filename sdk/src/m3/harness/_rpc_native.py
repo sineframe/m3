@@ -110,6 +110,7 @@ class JsonRpcProcess:
         root: Path | None = None,
         startup_lease: StartupLease | None = None,
         owned_startup: bool = False,
+        startup_deadline: float | None = None,
     ) -> None:
         self.root = root or Path(tempfile.mkdtemp(prefix="m3-native-"))
         self.owner = ProcessOwner(self.root)
@@ -118,7 +119,11 @@ class JsonRpcProcess:
             [self.executable, *self.argv],
             env,
             cwd=cwd,
-            **startup_spawn_options(startup_lease, owned_startup=owned_startup),
+            **startup_spawn_options(
+                startup_lease,
+                owned_startup=owned_startup,
+                startup_deadline=startup_deadline,
+            ),
         )
         self._reader = asyncio.create_task(self._read_stdout())
 
