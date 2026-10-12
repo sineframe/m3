@@ -29,11 +29,7 @@ from mcp.client.stdio import get_default_environment
 
 from .. import _timing
 from ..trace.capture import CaptureWriter, read_capture
-from ..trace.redaction import (
-    NativeTextSecrets,
-    is_sensitive_key,
-    mcp_configuration_secrets,
-)
+from ..trace.redaction import is_sensitive_key
 from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
 from .http_proxy import McpHttpProxy
 
@@ -567,11 +563,11 @@ class McpCaptureManager:
         self._observer_writers: set[asyncio.StreamWriter] = set()
         self._closing_observer = False
         self._observation_start_failures: dict[str, str] = {}
-        # What the original configurations hand a harness (literal values,
-        # endpoint paths and queries the proxy forwards, and ``${VAR}``
-        # values resolved here). The rewritten configurations no longer hold
-        # them, so harness adapters redact their native text with this.
-        self._native_text_secrets = NativeTextSecrets()
+        # Credentials resolved or classified while instrumenting (``${VAR}``
+        # values, sensitive literal env and header values). The rewritten
+        # configurations no longer hold them, so harness adapters redact
+        # their native text with these.
+        self._resolved_secrets: set[str] = set()
 
     def _target(self, connection_id: str, transport: str) -> _CaptureTarget:
         target = self._targets.get(connection_id)
@@ -901,9 +897,6 @@ class McpCaptureManager:
             if not getattr(configuration, "available", False):
                 output.append(configuration)
                 continue
-            self._native_text_secrets = self._native_text_secrets.union(
-                mcp_configuration_secrets((configuration,))
-            )
             key = str(configuration.connection_id)
             alias = str(getattr(configuration, "key", key))
             transport = str(
@@ -962,7 +955,7 @@ class McpCaptureManager:
                 )
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
-                    self._add_resolved(resolved_secrets)
+                    self._resolved_secrets.update(resolved_secrets)
                 args: tuple[str, ...] = (
                     "-m",
                     "m3.transport.stdio_proxy",
@@ -1046,7 +1039,7 @@ class McpCaptureManager:
                 )
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
-                    self._add_resolved(resolved_secrets)
+                    self._resolved_secrets.update(resolved_secrets)
 
                 def proxy_observation_failed(
                     reason: str, connection_id: str = key
@@ -1092,15 +1085,10 @@ class McpCaptureManager:
             output.append(self._instrumented[key])
         return tuple(output)
 
-    def _add_resolved(self, values: set[str]) -> None:
-        self._native_text_secrets = self._native_text_secrets.union(
-            NativeTextSecrets(known=frozenset(values))
-        )
+    def resolved_secrets(self) -> frozenset[str]:
+        """Return the credentials resolved for the instrumented servers."""
 
-    def native_text_secrets(self) -> NativeTextSecrets:
-        """Return what the instrumented servers' configurations hand a harness."""
-
-        return self._native_text_secrets
+        return frozenset(self._resolved_secrets)
 
     def writer_for(self, connection_id: str, transport: str = "stdio") -> CaptureWriter:
         """Return the redacting writer for a configured connection."""

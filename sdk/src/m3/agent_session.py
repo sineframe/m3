@@ -692,28 +692,24 @@ class AsyncAgentSession:
             else:
                 code = ErrorCode.TRANSPORT_ERROR
                 message = f"session startup failed: {cause}"
-            evidence_id = None if cause is None else self._record_startup_evidence()
-            failure_details: dict[str, Any] | None = (
-                None if cause is None else {"cause": cause}
-            )
-            if failure_details is not None and evidence_id is not None:
-                failure_details["evidence_observation"] = evidence_id
+            details: dict[str, Any] | None = None
             if cause is not None:
+                evidence_id = self._record_startup_evidence(exc)
+                reference = (
+                    {} if evidence_id is None else {"evidence_observation": evidence_id}
+                )
+                details = {"cause": cause, **reference}
                 self._emit_event(
                     EventKind.DIAGNOSTIC,
                     {
                         "code": "startup_failed",
                         "error_code": code.value,
                         "message": message,
-                        **(
-                            {}
-                            if evidence_id is None
-                            else {"evidence_observation": evidence_id}
-                        ),
+                        **reference,
                     },
                     phase=LifecyclePhase.STARTUP,
                 )
-            await self._finish(outcome, code, message, details=failure_details)
+            await self._finish(outcome, code, message, details=details)
             if cleanup_failure:
                 # Keep the terminal result and all unfinished owners visible
                 # for a later aclose()/kit close retry.  _record_cleanup_failure
@@ -737,7 +733,7 @@ class AsyncAgentSession:
             # bounded cause is surfaced; the original exception is raised
             # outside this handler so provider-controlled text does not
             # survive as ``__context__``.
-            details = dict(failure_details or {})
+            details = dict(details or {})
             startup_error = (
                 UnsupportedFeature(
                     f"session startup unsupported: {cause}", details=details
@@ -2461,68 +2457,57 @@ class AsyncAgentSession:
         except Exception:
             return {"evidence_state": "unavailable"}
 
-    def _record_startup_evidence(self) -> str | None:
+    def _record_startup_evidence(self, error: BaseException) -> str | None:
         """Persist what a failed startup left behind; return its observation ID.
 
-        Adapters that can (the child's stderr after a failed handshake) hand
-        over typed evidence once startup has failed. It is recorded in the
-        startup phase, outside any turn. The ID is a reference for the startup
-        diagnostic, returned only if the evidence was recorded; the evidence
-        text never enters an error.
+        Adapters that can (the child's stderr after a failed handshake)
+        attach typed evidence to the exception that ends startup. It is
+        recorded in the startup phase, outside any turn. The ID is a
+        reference for the startup diagnostic, returned only if the evidence
+        was recorded; the evidence text never enters an error.
         """
 
-        from .harness.observations import TurnEvidence
+        from .harness.observation_sink import HarnessObservationSink
+        from .harness.observations import startup_evidence
 
-        take = getattr(self.adapter, "take_startup_evidence", None)
-        if not callable(take):
+        evidence = startup_evidence(error)
+        if evidence is None or len(evidence.observations) != 1:
             return None
-        try:
-            evidence = take()
-        except Exception:
-            return None
-        if not isinstance(evidence, TurnEvidence) or not evidence.observations:
-            return None
-        reference = evidence.observations[0].observation_id
-        recorded = self._record_turn_evidence(
-            None, evidence, lifecycle_phase=LifecyclePhase.STARTUP
+        observation = evidence.observations[0]
+        sink = HarnessObservationSink(
+            self._trace_recorder,
+            monotonic_origin=evidence.monotonic_origin,
+            lifecycle_phase=LifecyclePhase.STARTUP,
         )
-        return reference if reference in recorded else None
+        recorded = sink.emit(observation)
+        for limitation in (*evidence.limitations, *sink.limitations):
+            if limitation not in self._trace_limitations:
+                self._trace_limitations = (*self._trace_limitations, limitation)
+        return observation.observation_id if recorded else None
 
-    def _record_turn_evidence(
-        self,
-        turn_id: TurnId | None,
-        typed_evidence: object,
-        *,
-        lifecycle_phase: LifecyclePhase | None = None,
-    ) -> frozenset[str]:
+    def _record_turn_evidence(self, turn_id: TurnId, typed_evidence: object) -> None:
         """Persist typed adapter observations through the failure-safe sink.
 
         Provider adapters use the typed boundary, so finalized TraceView
         contains provider output without making the session state machine
-        understand schemas. ``lifecycle_phase`` records evidence from outside
-        any turn. Returns the IDs of the observations actually recorded.
+        understand schemas.
         """
 
         from .harness.observation_sink import HarnessObservationSink
         from .harness.observations import TurnEvidence
 
         if not isinstance(typed_evidence, TurnEvidence):
-            return frozenset()
+            return
         sink = HarnessObservationSink(
             self._trace_recorder,
             turn_id=turn_id,
             monotonic_origin=typed_evidence.monotonic_origin,
-            lifecycle_phase=lifecycle_phase,
         )
-        recorded = frozenset(
-            observation.observation_id
-            for observation in typed_evidence.observations
-            if sink.emit(observation)
-        )
+        for observation in typed_evidence.observations:
+            sink.emit(observation)
         for limitation in (*typed_evidence.limitations, *sink.limitations):
             if limitation not in self._trace_limitations:
                 self._trace_limitations = (*self._trace_limitations, limitation)
-        return recorded
 
     def _record_partial_turn_evidence(self, turn_id: TurnId) -> None:
         """Keep what a timed-out or cancelled turn observed before it stopped.

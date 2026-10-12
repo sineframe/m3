@@ -211,30 +211,27 @@ def _protocol_error_details(error: ProtocolError) -> dict[str, Any]:
 
 
 def _cause_details(error: BaseException) -> dict[str, Any]:
-    """Carry the bounded cause of a startup failure into ``ErrorInfo.details``.
+    """Carry the cause of a startup failure into ``ErrorInfo.details``.
 
-    A session startup error already holds a sanitized ``details["cause"]``;
-    adapter and feature errors follow the session's ``_startup_failure_cause``
-    rule. Other transport errors keep no details: their messages are not
+    A session startup error already holds a bounded, sanitized
+    ``details["cause"]`` (and evidence reference); an adapter or feature
+    error raised before a session existed follows the session's cause rule.
+    Other transport errors keep no details: their messages are not
     guaranteed to be sanitized.
     """
 
-    from .agent_session import _bounded_cause, _startup_failure_cause
+    from .agent_session import _startup_failure_cause
 
     details = getattr(error, "details", {})
-    cause = details.get("cause")
-    if isinstance(cause, str):
-        cause = _bounded_cause(cause)
-    elif isinstance(error, (HarnessAdapterError, UnsupportedFeature)):
-        cause = _startup_failure_cause(error)
-    else:
-        return {}
-    if not cause:
-        return {}
-    evidence = details.get("evidence_observation")
-    return {"cause": cause} | (
-        {"evidence_observation": evidence} if isinstance(evidence, str) else {}
-    )
+    if isinstance(details.get("cause"), str):
+        return {
+            key: details[key]
+            for key in ("cause", "evidence_observation")
+            if isinstance(details.get(key), str)
+        }
+    if isinstance(error, (HarnessAdapterError, UnsupportedFeature)):
+        return {"cause": _startup_failure_cause(error)}
+    return {}
 
 
 def _error_info(error: BaseException) -> ErrorInfo:

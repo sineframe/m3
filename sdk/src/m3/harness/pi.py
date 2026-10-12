@@ -314,7 +314,7 @@ class PiHarnessAdapter(NativeRPCAdapter):
                     # This open's base handshake succeeded, so its own failure
                     # path never ran: keep the child's stderr (an extension
                     # stack trace, say) as evidence for this failed startup.
-                    await self._fail_startup(process)
+                    await self._fail_startup(process, error)
             finally:
                 await super().close()
                 await control.close("adapter_open_failed")

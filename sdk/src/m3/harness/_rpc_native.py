@@ -24,9 +24,8 @@ from pydantic import JsonValue
 from ..agent_session import AdapterTurn, _bounded_cause
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..trace.redaction import (
-    NativeTextSecrets,
     RedactionConfig,
-    native_text_redaction,
+    native_text_secrets,
     redact_for_api,
     redact_native_text,
 )
@@ -71,7 +70,12 @@ from .observations import (
     RawEvidenceInput,
     RawFrameObservation,
     TurnEvidence,
+    attach_startup_evidence,
 )
+
+# How much of a child's stderr becomes evidence: its end, where a startup or
+# crash reports its failure. The sink keeps at most its own preview of it.
+_STDERR_EVIDENCE_CHARS = 16 * 1024
 
 
 def _json_safe(value: Any, *, limit: int = 8_388_608) -> JsonValue | None:
@@ -261,10 +265,9 @@ class NativeRPCAdapter:
         self._runtime_secrets: set[str] = set()
         self._process_observed = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
-        self._startup_evidence: TurnEvidence | None = None
         # What the launch handed the child through its MCP configurations;
         # the child can echo it on stderr.
-        self._launch_secrets = NativeTextSecrets()
+        self._launch_secrets: frozenset[str] = frozenset()
 
     @property
     def name(self) -> str:
@@ -350,9 +353,6 @@ class NativeRPCAdapter:
         return self._capabilities.readiness()
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
-        # Evidence belongs to this open attempt only; never hand over an
-        # earlier failure's stderr for a later, unrelated startup failure.
-        self._startup_evidence = None
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
@@ -383,35 +383,39 @@ class NativeRPCAdapter:
             self._launch, self._process = effective_launch, process
             self._session = NativeRPCSession(self, process, session_id)
             return self._session
-        except Exception:
-            await self._fail_startup(process)
+        except Exception as error:
+            await self._fail_startup(process, error)
             raise
 
-    async def _fail_startup(self, process: JsonRpcProcess) -> None:
-        """Close a process whose startup failed; keep its stderr as evidence.
+    async def _fail_startup(
+        self, process: JsonRpcProcess, error: BaseException
+    ) -> None:
+        """Close a process whose startup failed; attach its stderr to ``error``.
 
-        Subclasses whose startup continues after ``open`` (Pi's control
-        channel) call this too, before closing the session. Closing waits a
-        bounded time for the stderr drain; a drain cancelled because a detached
-        descendant holds the pipe still leaves what it read.
+        The evidence belongs to this one failure, so it travels with the
+        exception rather than living on the adapter. Subclasses whose startup
+        continues after ``open`` (Pi's control channel) call this too, before
+        closing the session.
         """
 
         started_at = time.monotonic()
         try:
             await process.close()
         finally:
-            self._startup_evidence = self._startup_failure_evidence(process, started_at)
+            evidence = self._startup_failure_evidence(process, started_at)
+            if evidence is not None:
+                attach_startup_evidence(error, evidence)
 
     def _stderr_fields(self, process: JsonRpcProcess) -> dict[str, Any]:
         """Return stderr evidence once the bounded drain has stopped.
 
         A drain still running (the child is alive) is never awaited or read
-        here: this runs on the turn path. A finished or cancelled drain leaves
-        its bytes in the owner's buffer; cancellation happens between reads,
-        so only the size limit can cut a secret. Text is redacted with this
-        adapter's secrets and the launch's configured credentials before it
-        reaches the observation; the sink redacts again and applies the
-        capture policy.
+        here: this runs on the turn path. Only the end of what the drain kept
+        is used, where a failure is reported, in whole lines: a cut line could
+        hold part of a secret, and the drain is cut by its size limit or by
+        cancellation when a detached descendant holds the pipe. The text is
+        redacted before it reaches the observation; the sink redacts again
+        and applies the capture policy.
         """
 
         owner = process.owner
@@ -419,20 +423,26 @@ class NativeRPCAdapter:
         if owner is None or task is None or not task.done():
             return {"stderr_state": "unavailable"}
         retained = bytes(owner.stderr_retained)
+        text = retained.decode("utf-8", errors="replace")
+        if (task.cancelled() or len(retained) >= MAX_STDERR_BYTES) and not (
+            text.endswith("\n")
+        ):
+            text = text[: text.rfind("\n") + 1]
+        if len(text) > _STDERR_EVIDENCE_CHARS:
+            # Keep whole lines only: the cut first line could hold the end of
+            # a secret.
+            tail = text[-_STDERR_EVIDENCE_CHARS:]
+            text = tail[tail.find("\n") + 1 :] if "\n" in tail else ""
         try:
             text = redact_native_text(
-                retained.decode("utf-8", errors="replace"),
-                native_text_redaction(
-                    self._runtime_secrets | self._launch_secrets.known,
-                    guessed=self._launch_secrets.guessed,
-                ),
-                truncated=len(retained) >= MAX_STDERR_BYTES,
+                text,
+                native_text_secrets(self._runtime_secrets | self._launch_secrets),
             )
         except Exception:
             return {"stderr_state": "unavailable"}
         if retained and not text:
-            # Nothing is left once a cut secret is dropped; claiming an empty
-            # observation would misreport what the child wrote.
+            # Nothing whole was left; an empty observation would misreport
+            # what the child wrote.
             return {"stderr_state": "unavailable"}
         return {"stderr": text, "stderr_state": "observed"}
 
@@ -466,12 +476,6 @@ class NativeRPCAdapter:
             )
         except Exception:
             return None
-
-    def take_startup_evidence(self) -> TurnEvidence | None:
-        """Return the failed startup's process evidence, once."""
-
-        evidence, self._startup_evidence = self._startup_evidence, None
-        return evidence
 
     async def send(
         self,
@@ -782,5 +786,5 @@ class NativeRPCAdapter:
         self._session = None
         self._process = None
         self._runtime_secrets.clear()
-        self._launch_secrets = NativeTextSecrets()
+        self._launch_secrets = frozenset()
         self._process_observed = False

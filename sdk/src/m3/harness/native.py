@@ -22,7 +22,7 @@ from typing import Any
 
 from .. import _timing
 from ..errors import CleanupError
-from ..trace.redaction import NativeTextSecrets, mcp_configuration_secrets
+from ..trace.redaction import is_sensitive_key
 from ..types import ErrorCode, ErrorInfo, SecretReference
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -371,19 +371,27 @@ def _exception_kind(error: BaseException) -> str:
     return kind if symbol is None else f"{kind} ({symbol})"
 
 
-def launch_secrets(launch: HarnessLaunch) -> NativeTextSecrets:
-    """Collect what a harness can echo back from its MCP configurations.
+def launch_secrets(launch: HarnessLaunch) -> frozenset[str]:
+    """Return the MCP credentials a launch hands its harness.
 
     With capture, the launch holds rewritten configurations, so the capture
-    manager reports what the originals carried and what it resolved. Without
-    it, the launch's configurations are the originals.
+    manager reports what it resolved and classified from the originals.
+    Without it, the launch's configurations are the originals: their literal
+    env and header values under sensitive names.
     """
 
-    secrets = mcp_configuration_secrets(launch.configurations)
-    collected = getattr(launch.capture, "native_text_secrets", None)
-    if callable(collected):
-        secrets = secrets.union(collected())
-    return secrets
+    values: set[str] = set()
+    resolved = getattr(launch.capture, "resolved_secrets", None)
+    if callable(resolved):
+        values.update(resolved())
+    for configuration in launch.configurations:
+        for mapping in (configuration.environment, configuration.headers):
+            values.update(
+                value
+                for key, value in mapping.items()
+                if isinstance(value, str) and is_sensitive_key(key)
+            )
+    return frozenset(values)
 
 
 class ProcessOwner:

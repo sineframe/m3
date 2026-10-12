@@ -21,7 +21,8 @@ from m3.errors import MCPError, TransportError, UnsupportedFeature
 from m3.execution_runtime import _error_info
 from m3.harness._rpc_native import NativeRPCAdapter
 from m3.harness.contracts import HarnessLaunch, HarnessStartupError
-from m3.harness.native import MAX_STDERR_BYTES, ProcessOwner, launch_secrets
+from m3.harness.native import ProcessOwner, launch_secrets
+from m3.harness.observations import startup_evidence
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
@@ -175,22 +176,7 @@ async def test_startup_evidence_without_a_child_is_absent() -> None:
     assert "evidence_observation" not in error.details
 
 
-@pytest.mark.asyncio
-async def test_unclaimed_startup_evidence_is_not_reused_by_a_later_open() -> None:
-    adapter = _FailingHandshake("import sys; sys.exit(3)")
-    spec = _spec()
-    launch = HarnessLaunch(spec, ServerGroupSnapshot(), (), spec.tool_policy)
-    with pytest.raises(HarnessStartupError):
-        await adapter.open(launch)
-    # Nobody claimed that failure's evidence; a later failed open that never
-    # spawns a child must not hand it over as its own.
-    adapter.executable = "/nonexistent/m3-no-such-harness"
-    with pytest.raises(HarnessStartupError):
-        await adapter.open(launch)
-    assert adapter.take_startup_evidence() is None
-
-
-def test_launch_secrets_keep_ordinary_settings_readable() -> None:
+def test_launch_secrets_without_capture_take_sensitive_literals() -> None:
     spec = _spec()
     local = HarnessServerConfig(
         key="fs",
@@ -199,52 +185,25 @@ def test_launch_secrets_keep_ordinary_settings_readable() -> None:
         available=True,
         connection_id="fs",
         command="server",
-        environment={
-            "API_TOKEN": "4821",
-            "GITHUB_PAT": "ghp_patvalue",
-            "DB_PASS": "hunter-two",
-            "CONNECTION": "zx81Kq0vT3mN7pLw",
-            "NODE_ENV": "production",
-            "PYTHONPATH": "/srv/app/lib",
-            "RELEASE": "2025-06-18",
-            "SERVICE": "github-mcp-server-v2",
-        },
-    )
-    remote = HarnessServerConfig(
-        key="remote",
-        transport=TransportKind.STREAMABLE_HTTP,
-        required=True,
-        available=True,
-        connection_id="remote",
-        endpoint=(
-            "https://api.example.com/github-mcp-server/s/ZapKey9137abcdEF/mcp"
-            "?version=2025-06-18&mode=streamable-http-2025&api_key=k123"
-        ),
+        environment={"API_TOKEN": "literal-token-1", "NODE_ENV": "production"},
+        headers={"Authorization": "Bearer literal-header"},
     )
     secrets = launch_secrets(
-        HarnessLaunch(spec, ServerGroupSnapshot(), (local, remote), spec.tool_policy)
+        HarnessLaunch(spec, ServerGroupSnapshot(), (local,), spec.tool_policy)
     )
-    assert secrets.known == {"4821", "k123"}
-    # Credential-like names and token-shaped values only; ordinary settings,
-    # names, dates and versions are not collected, so they stay readable.
-    assert secrets.guessed == {
-        "ghp_patvalue",
-        "hunter-two",
-        "zx81Kq0vT3mN7pLw",
-        "ZapKey9137abcdEF",
-    }
+    assert secrets == {"literal-token-1", "Bearer literal-header"}
 
 
 @pytest.mark.asyncio
-async def test_startup_stderr_evidence_redacts_credentials_the_proxy_forwards(
+async def test_startup_stderr_evidence_redacts_what_the_capture_resolved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The adapter only sees configurations the capture manager rewrote: the
     # stdio environment is gone and the URL is the loopback proxy's, which
-    # still carries the original path. A literal Zapier-style path key, a
-    # resolved ${VAR} key and a literal GITHUB_PAT must all be redacted, also
-    # where the harness repeats them outside the URL.
-    monkeypatch.setenv("ZAPIER_MCP_KEY_TEST", "84736251")
+    # still carries the original path. Values the manager resolved or
+    # classified are redacted wherever the harness repeats them; the URL
+    # keeps only its origin, so a literal path key is hidden too.
+    monkeypatch.setenv("ZAPIER_MCP_KEY_TEST", "zapResolved-77aa")
     manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote", "local"})
     try:
         instrumented = await manager.instrument(
@@ -268,7 +227,7 @@ async def test_startup_stderr_evidence_redacts_credentials_the_proxy_forwards(
                     connection_id="local",
                     command=sys.executable,
                     environment={
-                        "GITHUB_PAT": "ghp_patvalue123",
+                        "API_TOKEN": "ghp_patvalue123",
                         "NODE_ENV": "production",
                     },
                 ),
@@ -279,8 +238,8 @@ async def test_startup_stderr_evidence_redacts_credentials_the_proxy_forwards(
         adapter = _FailingHandshake(
             "import sys; sys.stderr.write("
             f"'error sending request for url ({instrumented[0].endpoint}); "
-            "key ZapLiteralKey9137 / 84736251 rejected; pat ghp_patvalue123; "
-            "env production\\n'); sys.exit(3)"
+            "key zapResolved-77aa rejected; pat ghp_patvalue123; "
+            "Authorization: Bearer unknownXYZ; env production\\n'); sys.exit(3)"
         )
         spec = _spec()
         launch = HarnessLaunch(
@@ -290,35 +249,37 @@ async def test_startup_stderr_evidence_redacts_credentials_the_proxy_forwards(
             spec.tool_policy,
             capture=manager,
         )
-        with pytest.raises(HarnessStartupError):
+        with pytest.raises(HarnessStartupError) as exc_info:
             await adapter.open(launch)
     finally:
         await manager.close()
-    evidence = adapter.take_startup_evidence()
+    evidence = startup_evidence(exc_info.value)
     assert evidence is not None
     stderr = evidence.observations[0].stderr
     assert stderr is not None
-    for secret in ("ZapLiteralKey9137", "84736251", "ghp_patvalue123"):
+    for secret in ("ZapLiteralKey9137", "zapResolved-77aa", "ghp_patvalue123"):
         assert secret not in stderr
     assert stderr.startswith("error sending request for url (http://127.0.0.1:")
     assert stderr.endswith(
-        "/…); key [REDACTED] / [REDACTED] rejected; pat [REDACTED]; env production\n"
+        "/…); key [REDACTED] rejected; pat [REDACTED]; "
+        "Authorization: Bearer [REDACTED]; env production\n"
     )
 
 
 @pytest.mark.asyncio
-async def test_turn_process_observation_reads_only_a_stopped_drain(
+async def test_turn_process_observation_keeps_whole_lines_of_a_stopped_drain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Long ambient credentials (an SSH agent socket, a JWT) must not shorten
-    # evidence that was never cut.
+    # the evidence.
     monkeypatch.setenv("AUTH_TOKEN", "ambient-" + "x" * 120)
     adapter = NativeRPCAdapter(executable=sys.executable)
     adapter._runtime_secrets = {"adapter-secret-canary"}
     retained = bytearray(b"fatal: adapter-secret-canary rejected")
     drain: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
-    owner = SimpleNamespace(stderr_task=drain, stderr_retained=retained)
-    process = SimpleNamespace(owner=owner)
+    process = SimpleNamespace(
+        owner=SimpleNamespace(stderr_task=drain, stderr_retained=retained)
+    )
 
     # A running child's drain is never awaited or read.
     assert adapter._stderr_fields(process) == {"stderr_state": "unavailable"}  # type: ignore[arg-type]
@@ -329,22 +290,24 @@ async def test_turn_process_observation_reads_only_a_stopped_drain(
         "stderr_state": "observed",
     }
 
-    # A drain cancelled because a detached descendant held the pipe keeps what
-    # it read, whole: it stops between reads, so it cut nothing.
+    # A drain cancelled because a detached descendant held the pipe can stop
+    # inside a write: its unfinished last line, which could hold the start
+    # of a secret, is dropped.
     cancelled: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
     cancelled.cancel()
     owner = SimpleNamespace(
-        stderr_task=cancelled, stderr_retained=bytearray(b"fatal: auth failed\n")
+        stderr_task=cancelled,
+        stderr_retained=bytearray(b"fatal: auth failed\nkey adapter-secret-can"),
     )
     assert adapter._stderr_fields(SimpleNamespace(owner=owner)) == {  # type: ignore[arg-type]
         "stderr": "fatal: auth failed\n",
         "stderr_state": "observed",
     }
 
-    # Stderr cut at the size limit loses only a secret's start left at the end.
-    head = b"x" * (MAX_STDERR_BYTES - len(b" key adapter-sec"))
-    owner = SimpleNamespace(
-        stderr_task=drain, stderr_retained=bytearray(head + b" key adapter-sec")
-    )
-    fields = adapter._stderr_fields(SimpleNamespace(owner=owner))  # type: ignore[arg-type]
-    assert fields["stderr"] == head.decode() + " key "
+    # Long stderr keeps its end, in whole lines: the cut first line could
+    # hold the end of a secret.
+    long = b"x" * 40_000 + b"cret-canary\n" + b"line\n" * 3000 + b"fatal: last\n"
+    owner = SimpleNamespace(stderr_task=drain, stderr_retained=bytearray(long))
+    stderr = adapter._stderr_fields(SimpleNamespace(owner=owner))["stderr"]  # type: ignore[arg-type]
+    assert stderr.startswith("line\n") and stderr.endswith("fatal: last\n")
+    assert "cret-canary" not in stderr

@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import PurePath
 from types import MappingProxyType
 from typing import Any, Final, Literal
-from urllib.parse import parse_qsl, unquote_plus, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, quote_plus, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -71,36 +71,26 @@ _SENSITIVE_QUERY_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _URL_PREFIX: Final[tuple[str, ...]] = ("http://", "https://")
-# A URL inside free text, of any scheme (``wss://`` too) or a scheme a known
-# value replaced, ending before whitespace, quotes or parentheses.
+# A URL inside free text: a scheme of at most 32 characters (bounded, so a
+# long dotted run cannot make matching quadratic), then everything up to
+# whitespace, quotes or angle brackets.
 _URL_IN_TEXT: Final[re.Pattern[str]] = re.compile(
-    rf"(?:{re.escape(REDACTED)}|\b[A-Za-z][A-Za-z0-9+.\-]*)://[^\s\"'<>(){{}}]+"
+    r"(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]{0,31}://[^\s\"'<>]+"
 )
-# Sentence punctuation that ends a URL quoted in prose.
-_URL_TRAILING_PUNCTUATION: Final[str] = ".,;:!?"
-# Values a sensitive-looking name can hold without being a credential.
+# Punctuation that ends a URL quoted in prose or in parentheses.
+_URL_TRAILING_PUNCTUATION: Final[str] = ".,;:!?)]}"
+# Values a credential-named setting can hold without being a credential.
 _NON_SECRET_WORDS: Final[frozenset[str]] = frozenset(
-    {"true", "false", "yes", "no", "on", "off", "null", "none"}
+    {"true", "false", "yes", "no", "on", "off", "null", "none", "bearer", "basic"}
 )
-# Guessed values shorter than this are too likely to be ordinary words or
-# numbers (``TOKEN_LIMIT=1``, ``MODE=stream``) to replace everywhere.
-_GUESSED_SECRET_MIN_LENGTH: Final[int] = 8
-# Name parts that suggest a credential but escape the sensitive-key pattern
-# (``GITHUB_PAT``, ``STRIPE_KEY``, ``DB_PASS``).
-_CREDENTIAL_NAME_PART: Final[re.Pattern[str]] = re.compile(
-    r"(?:^|[_-])(?:key|pat|pass|passwd|pwd|secret|token|auth|creds?|credentials?|"
-    r"sig|signature|cookie|session|private)(?:[_-]|$)",
-    re.IGNORECASE,
-)
-# A value shaped like a generated token: long, unbroken, letters and digits.
-_TOKEN_SHAPED: Final[re.Pattern[str]] = re.compile(r"(?=\S*[A-Za-z])(?=\S*\d)\S{16,}")
-# Token-shaped values that are still ordinary identifiers: dates and versions
-# (``2025-06-18``, ``1.2.3-beta.4``) and lowercase hyphenated names whose
-# parts are words or carry at most four digits (``github-mcp-server-v2``,
-# ``streamable-http-2025``).
-_ORDINARY_IDENTIFIER: Final[re.Pattern[str]] = re.compile(
-    r"v?\d+(?:[._-]\d+)+(?:[-+.][0-9A-Za-z.]+)?"
-    r"|[a-z]+(?:[._-](?:[a-z]+|[a-z]*\d{1,4}[a-z]*))+"
+# Shorter values are too likely to be ordinary numbers or words
+# (``TOKEN_LIMIT=1``, ``TOKEN_TTL=3600``) to replace everywhere in free text.
+_NATIVE_SECRET_MIN_LENGTH: Final[int] = 6
+# Credential-shaped text: a bearer token (token characters, eight or more, so
+# prose such as "bearer auth" stays), or a credential-named assignment.
+CREDENTIAL_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?i)(bearer\s+)[A-Za-z0-9\-._~+/]{8,}=*"
+    r"|((?:api[_-]?key|token|secret|password|signature|credential)=)[^\s&;,]+"
 )
 _MAX_NESTING_DEPTH: Final[int] = 64
 _SAFE_PATH_COMPONENTS: Final[frozenset[str]] = frozenset(
@@ -753,118 +743,78 @@ def redact_for_api(
 def _plausible_secret(value: str) -> bool:
     stripped = value.strip()
     return (
-        len(stripped) >= _GUESSED_SECRET_MIN_LENGTH
+        len(stripped) >= _NATIVE_SECRET_MIN_LENGTH
         and not stripped.isdigit()
         and stripped.lower() not in _NON_SECRET_WORDS
     )
 
 
-def native_text_redaction(
-    known: Iterable[str] = (), *, guessed: Iterable[str] = ()
-) -> RedactionConfig:
-    """Build redaction for harness-authored free text (errors, stderr).
+def native_text_secrets(values: Iterable[str]) -> frozenset[str]:
+    """Return the values to redact from harness-authored free text.
 
-    ``known`` values are credentials M3 resolved or was given as such; they
-    are always redacted, however short or numeric. ``guessed`` values, and the
-    ambient environment, are only suspected from their names or position, so
-    values that are unlikely to be credentials (short, numeric or boolean)
-    are skipped: replacing them everywhere would garble the text being kept.
-    Each value also matches without surrounding whitespace, because harnesses
-    echo trimmed values.
+    ``values`` (adapter runtime secrets, values resolved for the MCP servers)
+    and the ambient environment's credential-named values are kept unless
+    they cannot be credentials and would garble the text if replaced
+    everywhere: shorter than six characters, numeric or boolean. Such forms
+    are left to the credential-text scrub. Each value also matches trimmed,
+    JSON-escaped and percent-encoded, as harnesses echo it.
     """
 
-    values: set[str] = set()
-    for value in known:
-        if isinstance(value, str):
-            values.update(item for item in (value, value.strip()) if item)
-    for value in (*guessed, *known_secret_values()):
-        if isinstance(value, str):
-            values.update(
-                item for item in (value, value.strip()) if _plausible_secret(item)
-            )
-    return RedactionConfig(secrets=frozenset(values), include_environment=False)
-
-
-@dataclass(frozen=True, slots=True)
-class NativeTextSecrets:
-    """Values a launch handed its harness, split for ``native_text_redaction``.
-
-    ``known`` values are credentials; ``guessed`` values only might be.
-    """
-
-    known: frozenset[str] = frozenset()
-    guessed: frozenset[str] = frozenset()
-
-    def union(self, other: NativeTextSecrets) -> NativeTextSecrets:
-        return NativeTextSecrets(self.known | other.known, self.guessed | other.guessed)
-
-
-def _token_like(value: str) -> bool:
-    return bool(_TOKEN_SHAPED.fullmatch(value)) and not _ORDINARY_IDENTIFIER.fullmatch(
-        value
-    )
-
-
-def mcp_configuration_secrets(configurations: Iterable[Any]) -> NativeTextSecrets:
-    """Collect what MCP server configurations can make a harness echo.
-
-    Pass configurations as written, before a capture proxy rewrites them:
-    the rewritten forms hold no environment or headers, but the proxy still
-    forwards the original endpoint path and query to the harness.
-
-    Known: literal env/header values under sensitive names, the endpoint's
-    password, and query values under sensitive query names. Guessed: other
-    literal env/header values whose name still suggests a credential
-    (``GITHUB_PAT``), and env/header values, path segments and query values
-    shaped like generated tokens. Ordinary settings, names, dates and
-    versions (``NODE_ENV=production``, ``github-mcp-server``,
-    ``version=2025-06-18``) are not collected.
-    """
-
-    known: set[str] = set()
-    guessed: set[str] = set()
-    for configuration in configurations:
-        for name in ("environment", "headers"):
-            mapping = getattr(configuration, name, None)
-            if not isinstance(mapping, Mapping):
-                continue
-            for key, value in mapping.items():
-                if not isinstance(key, str) or not isinstance(value, str) or not value:
-                    continue
-                if _is_sensitive_key(key, frozenset()):
-                    known.add(value)
-                elif _CREDENTIAL_NAME_PART.search(key) or _token_like(value):
-                    guessed.add(value)
-        endpoint = getattr(configuration, "endpoint", None)
-        if not isinstance(endpoint, str) or not endpoint:
+    secrets: set[str] = set()
+    for value in (*values, *known_secret_values()):
+        if not isinstance(value, str):
             continue
-        try:
-            parts = urlsplit(endpoint)
-            password = parts.password
-        except ValueError:
-            continue
-        if password:
-            known.add(password)
-        for pair in parts.query.split("&"):
-            key, _, raw = pair.partition("=")
-            values = {item for item in (raw, unquote_plus(raw)) if item}
-            if is_sensitive_query_key(unquote_plus(key)):
-                known.update(values)
-            else:
-                guessed.update(item for item in values if _token_like(item))
-        for segment in parts.path.split("/"):
-            guessed.update(
-                item for item in (segment, unquote_plus(segment)) if _token_like(item)
-            )
-    return NativeTextSecrets(frozenset(known), frozenset(guessed))
+        for item in (value, value.strip()):
+            if _plausible_secret(item):
+                secrets.update(
+                    (
+                        item,
+                        json.dumps(item)[1:-1],
+                        quote(item, safe=""),
+                        quote_plus(item),
+                    )
+                )
+    return frozenset(secrets)
+
+
+def _replace_known(text: str, secrets: Iterable[str]) -> str:
+    """Replace every occurrence of every secret, merging overlaps.
+
+    Replacing one secret at a time would leave the rest of an overlapping
+    one (``abcdef12`` then ``ef12ghij`` in ``abcdef12ghij``).
+    """
+
+    spans: list[tuple[int, int]] = []
+    for secret in secrets:
+        start = text.find(secret)
+        while start >= 0:
+            spans.append((start, start + len(secret)))
+            start = text.find(secret, start + 1)
+    if not spans:
+        return text
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    parts: list[str] = []
+    position = 0
+    for start, end in merged:
+        parts.extend((text[position:start], REDACTED))
+        position = end
+    parts.append(text[position:])
+    return "".join(parts)
 
 
 def _url_origin(url: str) -> str:
     """Keep a URL's scheme, host and port; mark anything after them.
 
     Paths, queries, fragments and userinfo can all carry credentials (a
-    Zapier-style ``/s/<key>/mcp`` path, an ``?api_key=`` query), and the
-    harness may print them percent-encoded, so none of them is kept.
+    Zapier-style ``/s/<key>/mcp`` path, an ``?api_key=`` query) that M3 never
+    knew, possibly percent-encoded, so none of them is kept. A plain local
+    ``file:`` URL (a Node stack frame) is the exception: it has no host,
+    userinfo, query or fragment, and its path is the useful part.
     """
 
     try:
@@ -874,10 +824,15 @@ def _url_origin(url: str) -> str:
         return REDACTED
     if not parts.scheme:
         return REDACTED
+    if (
+        parts.scheme.lower() == "file"
+        and not parts.netloc
+        and not parts.query
+        and not parts.fragment
+    ):
+        return url
     if not host:
-        # A local ``file:`` URL (a Node stack frame) has no host or userinfo
-        # to leak and its path is the useful part; keep it whole.
-        return url if "@" not in parts.netloc else f"{parts.scheme}://…"
+        return f"{parts.scheme}://…"
     netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc += f":{port}"
@@ -889,51 +844,25 @@ def _url_origin(url: str) -> str:
     return f"{parts.scheme}://{netloc}" + ("/…" if elided else "")
 
 
-def _drop_cut_secret(text: str, secrets: Iterable[str]) -> str:
-    """Drop the longest tail of ``text`` that is the start of a secret.
+def redact_native_text(text: str, secrets: Iterable[str]) -> str:
+    """Redact harness-authored free text (an error message, stderr).
 
-    A secret cut by a size limit leaves only its start, which no exact match
-    finds. Single characters are left alone: they reveal nothing.
+    Known values are replaced first, whole, as they appear; every embedded
+    URL is then reduced to its origin; credential-shaped text that remains
+    (``Bearer x``, ``token=x``) is scrubbed last. Whitespace is preserved:
+    callers normalize only afterwards, otherwise a secret containing a
+    newline or a double space would no longer match.
     """
-
-    cut = 1
-    for secret in secrets:
-        for length in range(min(len(secret) - 1, len(text)), cut, -1):
-            if text.endswith(secret[:length]):
-                cut = length
-                break
-    return text[: len(text) - cut] if cut > 1 else text
-
-
-def redact_native_text(
-    text: str, config: RedactionConfig, *, truncated: bool = False
-) -> str:
-    """Redact free text, reducing every embedded URL to its origin.
-
-    Known values are replaced first, whole and as they appear, so a value
-    containing URL delimiters (``p(ss'word``) or upper case cannot be split
-    or lowercased by URL handling. Every URL is then reduced to its origin;
-    the URL pattern also matches a scheme a known value has replaced. A final
-    pass replaces known values that only a reduction exposed. Whitespace is
-    preserved: callers normalize only afterwards, otherwise a secret
-    containing a newline or a double space would no longer match.
-
-    ``truncated`` marks text cut at a size limit, whose end may hold the
-    start of a secret; only that start is dropped.
-    """
-
-    if truncated:
-        text = _drop_cut_secret(
-            text, set(config.secrets).union(config.credential_file_contents)
-        )
 
     def reduce(match: re.Match[str]) -> str:
         url = match.group(0)
         trimmed = url.rstrip(_URL_TRAILING_PUNCTUATION)
         return _url_origin(trimmed) + url[len(trimmed) :]
 
-    replaced = _replace_secrets(text, config, "$", [])
-    return _replace_secrets(_URL_IN_TEXT.sub(reduce, replaced), config, "$", [])
+    reduced = _URL_IN_TEXT.sub(reduce, _replace_known(text, secrets))
+    return CREDENTIAL_TEXT_PATTERN.sub(
+        lambda match: f"{match.group(1) or match.group(2)}{REDACTED}", reduced
+    )
 
 
 def redact_for_ui(
@@ -999,10 +928,10 @@ def redact_repr(
 
 
 __all__ = [
+    "CREDENTIAL_TEXT_PATTERN",
     "REDACTED",
     "ArtifactBytesResult",
     "InProcessAssertionView",
-    "NativeTextSecrets",
     "Projection",
     "RedactionConfig",
     "RedactionError",
@@ -1011,8 +940,7 @@ __all__ = [
     "is_sensitive_key",
     "is_sensitive_query_key",
     "known_secret_values",
-    "mcp_configuration_secrets",
-    "native_text_redaction",
+    "native_text_secrets",
     "project_redacted",
     "redact",
     "redact_artifact_bytes",

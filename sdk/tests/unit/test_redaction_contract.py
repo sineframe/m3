@@ -16,7 +16,7 @@ from m3.trace.redaction import (
     RedactionConfig,
     RedactionError,
     assertion_view,
-    native_text_redaction,
+    native_text_secrets,
     project_redacted,
     redact,
     redact_artifact_bytes,
@@ -30,72 +30,77 @@ from m3.trace.redaction import (
 
 
 def test_native_text_reduces_embedded_urls_to_their_origin() -> None:
-    # Paths (Zapier-style keys), queries, percent-encoded values and userinfo
-    # can all carry credentials that M3 never resolved itself.
+    # Paths (Zapier-style keys), queries, percent-encoded values, userinfo and
+    # hostless URLs can all carry credentials that M3 never knew.
     text = (
         "remote: error sending request for url "
         "(http://127.0.0.1:5555/api/mcp/s/ZapPathSecret/mcp?zap=s%C3%A9cret), "
         "then https://user:pass-word@example.com, and https://example.com/. "
+        "db postgres:///app?password=hunter, sock unix:///run/x.sock?token=t1, "
+        "http:///mcp?api_key=SuperSecretKey, wss://h/x?q={x}&token=SECRET "
         "at load (file:///home/u/.pi/extensions/foo/dist/index.js:45:11)"
     )
-    # A hostless file URL (a Node stack frame) has nothing to leak; its path
-    # is the useful part, so it stays whole.
-    assert redact_native_text(text, native_text_redaction()) == (
+    # Only a plain local file URL (a Node stack frame) stays whole.
+    assert redact_native_text(text, native_text_secrets(())) == (
         "remote: error sending request for url (http://127.0.0.1:5555/…), "
         "then https://example.com/…, and https://example.com. "
+        "db postgres://…, sock unix://…, http://…, wss://h/… "
         "at load (file:///home/u/.pi/extensions/foo/dist/index.js:45:11)"
     )
 
 
-def test_native_text_keeps_urls_visible_when_a_known_value_matches_the_scheme() -> None:
-    config = native_text_redaction({"https"})
-    text = "failed: https://example.com/mcp?access_token=UNKNOWN-TOKEN"
-    redacted = redact_native_text(text, config)
-    assert "UNKNOWN-TOKEN" not in redacted
-    assert redacted == f"failed: {REDACTED}"
-
-
-def test_native_text_redacts_known_values_with_url_delimiters_or_case() -> None:
-    # Generated passwords contain quotes and parentheses that end a URL
-    # match, and hostnames are lowercased when a URL is reduced.
-    config = native_text_redaction({"p(ss9word", "s3cr3t'x", "AbCdEf123Tok"})
-    text = (
-        "connect https://u:p(ss9word@host.com/ failed; "
-        "https://u:s3cr3t'x@host.com/ failed; https://AbCdEf123Tok.ngrok.app/mcp"
-    )
-    redacted = redact_native_text(text, config)
-    for fragment in ("ss9word", "s3cr3t", "'x", "abcdef123tok", "AbCdEf123Tok"):
-        assert fragment not in redacted
-
-
-def test_native_text_matches_secrets_with_whitespace_before_normalizing() -> None:
+def test_native_text_redacts_known_values_whole_and_in_echoed_forms() -> None:
     pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----"
-    config = native_text_redaction({pem, "Bearer  XYZ-double", "tok-abc\n"})
-    text = f"bad key {pem}; header Bearer  XYZ-double; token tok-abc rejected"
-    assert redact_native_text(text, config) == (
+    quoted = 'pa"ss/wd 1'
+    secrets = native_text_secrets(
+        {pem, "Bearer  XYZ-double", "tok-abc\n", "p(ss9word", "AbCdEf123Tok", quoted}
+    )
+    text = (
+        f"bad key {pem}; header Bearer  XYZ-double; token tok-abc rejected; "
+        "connect https://u:p(ss9word@host.com/ ; https://AbCdEf123Tok.ngrok.app/mcp; "
+        'json "pa\\"ss/wd 1"; url pa%22ss%2Fwd%201; form pa%22ss%2Fwd+1'
+    )
+    redacted = redact_native_text(text, secrets)
+    for fragment in ("MIIEvQ", "XYZ-double", "tok-abc", "ss9word", "AbCdEf123Tok"):
+        assert fragment not in redacted
+    assert "ss/wd" not in redacted and "ss%2Fwd" not in redacted
+    assert redacted.startswith(
         f"bad key {REDACTED}; header {REDACTED}; token {REDACTED} rejected"
     )
 
 
-def test_native_text_redacts_known_values_always_and_guessed_values_plausibly(
+def test_native_text_merges_overlapping_secrets() -> None:
+    secrets = native_text_secrets({"abcdef12", "ef12ghij"})
+    assert redact_native_text("x abcdef12ghij y", secrets) == f"x {REDACTED} y"
+
+
+def test_native_text_skips_values_too_short_or_plain_to_be_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TOKEN_LIMIT", "1")
-    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("TOKEN_TTL", "3600")
+    monkeypatch.setenv("AUTH_TYPE", "bearer")
     monkeypatch.setenv("AUTH_TOKEN", "ambient-auth-secret")
-    # Known credentials are redacted however short or numeric; guessed ones
-    # (and the ambient environment) only when they could be credentials.
-    config = native_text_redaction(
-        {"4821", "20240117"}, guessed={"stream", "12345678", "ghp_guessed_pat"}
-    )
+    secrets = native_text_secrets({"18081", "true", "4821"})
     text = (
-        "expected id 1; auth true; stream closed; pin 4821 on 20240117; "
-        "seq 12345678; ghp_guessed_pat; ambient-auth-secret"
+        "retry 1 of 3 after 3600ms; using bearer auth on port 18081; "
+        "ambient-auth-secret; token=4821 and Bearer abc.def.ghi"
     )
-    assert redact_native_text(text, config) == (
-        f"expected id 1; auth true; stream closed; pin {REDACTED} on {REDACTED}; "
-        f"seq 12345678; {REDACTED}; {REDACTED}"
+    # Short or plain values stay readable; credential-shaped text is
+    # scrubbed regardless.
+    assert redact_native_text(text, secrets) == (
+        "retry 1 of 3 after 3600ms; using bearer auth on port 18081; "
+        f"{REDACTED}; token={REDACTED} and Bearer {REDACTED}"
     )
+
+
+def test_native_text_url_matching_stays_linear() -> None:
+    import time
+
+    # A quadratic scan of this 256 KiB dotted run took about a minute.
+    started = time.monotonic()
+    redact_native_text("a." * 128 * 1024, native_text_secrets(()))
+    assert time.monotonic() - started < 5.0
 
 
 def test_nested_shapes_exact_secrets_keys_headers_and_urls_are_redacted() -> None:
