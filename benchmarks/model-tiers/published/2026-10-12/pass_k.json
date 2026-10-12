@@ -1,0 +1,1352 @@
+{
+  "columns": {
+    "claude_code/claude-haiku-5-5@2.1.296": {
+      "good": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.990385,
+            "pass_hat": 0.990385,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.980769,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.971154,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.961538,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.951923,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.942308,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.932692,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-C": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.984615,
+            "pass_hat": 0.984615,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.969231,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.953846,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.938462,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-D": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.953846,
+            "pass_hat": 0.953846,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.992308,
+            "pass_hat": 0.915385,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.884615,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.861538,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.846154,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-E": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.953846,
+            "pass_hat": 0.953846,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.992308,
+            "pass_hat": 0.915385,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.884615,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.861538,
+            "tasks": 13
+          },
+          "5": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 0.833333,
+            "tasks": 12
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-P": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.857692,
+            "pass_hat": 0.857692,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.969231,
+            "pass_hat": 0.746154,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.992308,
+            "pass_hat": 0.657692,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.584615,
+            "tasks": 13
+          },
+          "5": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 0.583333,
+            "tasks": 12
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-S": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.969231,
+            "pass_hat": 0.969231,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.992308,
+            "pass_hat": 0.946154,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.930769,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "5": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 0.916667,
+            "tasks": 12
+          }
+        },
+        "n_tasks": 13
+      },
+      "naive": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.644231,
+            "pass_hat": 0.644231,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.741758,
+            "pass_hat": 0.546703,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.781593,
+            "pass_hat": 0.489011,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.802198,
+            "pass_hat": 0.450549,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 0.815934,
+            "pass_hat": 0.424451,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 0.826923,
+            "pass_hat": 0.406593,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 0.836538,
+            "pass_hat": 0.394231,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 0.846154,
+            "pass_hat": 0.384615,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      }
+    },
+    "claude_code/claude-opus-5-5@2.1.296": {
+      "good": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "naive": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.990385,
+            "pass_hat": 0.990385,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.980769,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.971154,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.961538,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.951923,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.942308,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.932692,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      }
+    },
+    "claude_code/claude-sonnet-5-5@2.1.296": {
+      "good": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-C": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.984615,
+            "pass_hat": 0.984615,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.969231,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.953846,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.938462,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-D": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.938462,
+            "pass_hat": 0.938462,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.953846,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.969231,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.984615,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-E": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-P": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.946154,
+            "pass_hat": 0.946154,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.987179,
+            "pass_hat": 0.905128,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.876923,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.861538,
+            "tasks": 13
+          },
+          "5": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 0.916667,
+            "tasks": 12
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-S": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "naive": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.682692,
+            "pass_hat": 0.682692,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.774725,
+            "pass_hat": 0.590659,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.826923,
+            "pass_hat": 0.550824,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.868132,
+            "pass_hat": 0.521978,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 0.90522,
+            "pass_hat": 0.5,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 0.93956,
+            "pass_hat": 0.483516,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 0.971154,
+            "pass_hat": 0.471154,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.461538,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      }
+    },
+    "codex/gpt-6-astra@0.162.1": {
+      "good": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.961538,
+            "pass_hat": 0.961538,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.983516,
+            "pass_hat": 0.93956,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.994505,
+            "pass_hat": 0.928571,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.998901,
+            "pass_hat": 0.924176,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "naive": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.990385,
+            "pass_hat": 0.990385,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.980769,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.971154,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.961538,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.951923,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.942308,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.932692,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      }
+    },
+    "codex/gpt-6-luna@0.162.1": {
+      "good": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.855769,
+            "pass_hat": 0.855769,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.950549,
+            "pass_hat": 0.760989,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.980769,
+            "pass_hat": 0.696429,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.993407,
+            "pass_hat": 0.649451,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 0.998626,
+            "pass_hat": 0.612637,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.582418,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.557692,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.538462,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-C": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.815385,
+            "pass_hat": 0.815385,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.9,
+            "pass_hat": 0.730769,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.915385,
+            "pass_hat": 0.661538,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.923077,
+            "pass_hat": 0.6,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 0.923077,
+            "pass_hat": 0.538462,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-D": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.815385,
+            "pass_hat": 0.815385,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.930769,
+            "pass_hat": 0.7,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.969231,
+            "pass_hat": 0.623077,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.984615,
+            "pass_hat": 0.569231,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.538462,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-E": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.8,
+            "pass_hat": 0.8,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.907692,
+            "pass_hat": 0.692308,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.953846,
+            "pass_hat": 0.630769,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.984615,
+            "pass_hat": 0.584615,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.538462,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-P": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.646154,
+            "pass_hat": 0.646154,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.753846,
+            "pass_hat": 0.538462,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.8,
+            "pass_hat": 0.476923,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.830769,
+            "pass_hat": 0.430769,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 0.846154,
+            "pass_hat": 0.384615,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-S": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.830769,
+            "pass_hat": 0.830769,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.953846,
+            "pass_hat": 0.707692,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.992308,
+            "pass_hat": 0.623077,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.569231,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.538462,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "naive": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.5,
+            "pass_hat": 0.5,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.587912,
+            "pass_hat": 0.412088,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.638736,
+            "pass_hat": 0.375,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.674725,
+            "pass_hat": 0.352747,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 0.703297,
+            "pass_hat": 0.337912,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 0.728022,
+            "pass_hat": 0.326923,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 0.75,
+            "pass_hat": 0.317308,
+            "tasks": 13
+          },
+          "8": {
+            "complete": true,
+            "pass_at": 0.769231,
+            "pass_hat": 0.307692,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      }
+    },
+    "codex/gpt-6.1-sol@0.162.1": {
+      "good": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.989011,
+            "pass_hat": 0.989011,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.978022,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.967033,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.956044,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.945055,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.934066,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "8": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 11
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-C": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.969231,
+            "pass_hat": 0.969231,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.992308,
+            "pass_hat": 0.946154,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.930769,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "5": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 0.916667,
+            "tasks": 12
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-D": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.984615,
+            "pass_hat": 0.984615,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.969231,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.953846,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.938462,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-E": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 13
+          },
+          "4": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 12
+          },
+          "5": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 1.0,
+            "tasks": 11
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-P": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.969231,
+            "pass_hat": 0.969231,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.992308,
+            "pass_hat": 0.946154,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.930769,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          }
+        },
+        "n_tasks": 13
+      },
+      "good-S": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.984615,
+            "pass_hat": 0.984615,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.969231,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.953846,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.938462,
+            "tasks": 13
+          },
+          "5": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 0.916667,
+            "tasks": 12
+          }
+        },
+        "n_tasks": 13
+      },
+      "naive": {
+        "k": {
+          "1": {
+            "complete": true,
+            "pass_at": 0.951923,
+            "pass_hat": 0.951923,
+            "tasks": 13
+          },
+          "2": {
+            "complete": true,
+            "pass_at": 0.972527,
+            "pass_hat": 0.931319,
+            "tasks": 13
+          },
+          "3": {
+            "complete": true,
+            "pass_at": 0.986264,
+            "pass_hat": 0.924451,
+            "tasks": 13
+          },
+          "4": {
+            "complete": true,
+            "pass_at": 0.994505,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "5": {
+            "complete": true,
+            "pass_at": 0.998626,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "6": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "7": {
+            "complete": true,
+            "pass_at": 1.0,
+            "pass_hat": 0.923077,
+            "tasks": 13
+          },
+          "8": {
+            "complete": false,
+            "pass_at": 1.0,
+            "pass_hat": 0.888889,
+            "tasks": 9
+          }
+        },
+        "n_tasks": 13
+      }
+    }
+  }
+}

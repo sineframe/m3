@@ -1,0 +1,5 @@
+id: T08
+suite: everyday
+slug: create-nested-issues
+band: nested_args
+prompt: Create a bug in PAY titled "Checkout 500 on retry {nonce}" with high priority, labels regression and payments, due 2026-11-30, and customer impact enterprise.

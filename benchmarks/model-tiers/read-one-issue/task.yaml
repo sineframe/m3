@@ -1,0 +1,5 @@
+id: T01
+suite: hard
+slug: read-one-issue
+band: read
+prompt: What's the current status of PAY-142, and what's its audit code?

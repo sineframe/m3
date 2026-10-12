@@ -1,0 +1,6 @@
+id: H09
+suite: hard
+slug: follow-up-fan-out
+band: create_link_fanout
+prompt: >-
+  For each open PAY regression bug assigned to someone on the Platform team, create an INF task titled "Follow-up: <original title>" and link it to the original as related.

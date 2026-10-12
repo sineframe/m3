@@ -1,0 +1,5 @@
+id: H10
+suite: hard
+slug: partial-failure-missing-issue
+band: partial_failure
+prompt: "Assign PAY-150, PAY-9998 and PAY-151 to Priya."

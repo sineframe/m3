@@ -1,0 +1,49 @@
+# USD per 1M tokens. Keys under `models` are bare model ids (analyze.py strips
+# "anthropic/" / "openai/" provider prefixes before lookup).
+source: "Project-supplied planning price table for the 2026 models (not scraped from vendor pages)"
+as_of: 2026-10-12
+
+providers:
+  anthropic:
+    # Cache multipliers are applied to the model's (tier-adjusted) input rate.
+    cache_read_multiplier: 0.1
+    cache_write_multiplier: 1.25
+    # false: output_tokens already includes reasoning/thinking tokens.
+    reasoning_billed_separately: false
+    assumed: true   # cache multipliers not verified for the 2026 models
+  openai:
+    cache_read_multiplier: 0.1
+    cache_write_multiplier: 1.0   # no separate cache-write charge; billed as plain input
+    reasoning_billed_separately: false
+    assumed: true   # cached-input discount not verified for the 2026 models
+
+models:
+  claude-opus-5-5:
+    provider: anthropic
+    input: 4.0
+    output: 20.0
+  claude-sonnet-5-5:
+    provider: anthropic
+    input: 2.0
+    output: 10.0
+  claude-haiku-5-5:
+    provider: anthropic
+    input: 0.10
+    output: 0.50
+    # A turn whose prompt exceeds `threshold` tokens is billed at these rates.
+    long_context: {threshold: 100000, input: 0.50, output: 2.50}
+  gpt-6-astra:
+    provider: openai
+    input: 10.0
+    output: 50.0
+    long_context: {threshold: 272000, multiplier: 2}
+  gpt-6.1-sol:
+    provider: openai
+    input: 2.0
+    output: 10.0
+    long_context: {threshold: 272000, multiplier: 2}
+  gpt-6-luna:
+    provider: openai
+    input: 0.10
+    output: 0.50
+    long_context: {threshold: 272000, multiplier: 2}

@@ -1,0 +1,5 @@
+id: T06
+suite: everyday
+slug: oldest-open
+band: pagination
+prompt: Add the comment `triaged-{nonce}` to the oldest open issue in OPS.

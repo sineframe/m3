@@ -1,0 +1,5 @@
+id: H02
+suite: hard
+slug: team-urgent-aggregate
+band: aggregate_join
+prompt: "Which team has the most open urgent issues assigned to its members right now? Give me the team name and how many."

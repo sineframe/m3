@@ -1,0 +1,5 @@
+id: T11
+suite: everyday
+slug: aggregate-reassign
+band: aggregate_chain
+prompt: Find the Platform engineer with the most open urgent issues, and reassign their oldest open urgent issue to the Platform team lead.

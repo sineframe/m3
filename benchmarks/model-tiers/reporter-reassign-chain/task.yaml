@@ -1,0 +1,5 @@
+id: H04
+suite: hard
+slug: reporter-reassign-chain
+band: long_chain
+prompt: "PAY-142's reporter has filed a bunch of urgent issues that are still open in Oct-W3, across several projects. Reassign all of them to that reporter's team lead."

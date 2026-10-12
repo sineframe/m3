@@ -1,0 +1,5 @@
+id: H06
+suite: hard
+slug: close-named-duplicates
+band: read_then_write
+prompt: "Close every open GRO issue labelled duplicate-candidate as a duplicate of the issue its description says it duplicates."

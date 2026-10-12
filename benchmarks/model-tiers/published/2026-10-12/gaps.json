@@ -1,0 +1,795 @@
+{
+  "gap_closed": [
+    {
+      "big": "claude-opus-5-5",
+      "big_good": 1.0,
+      "ci95": [
+        0.856969,
+        1.0
+      ],
+      "definition": "(small_good - small_naive) / (big_good - small_naive)",
+      "gap_closed": 0.972973,
+      "n_tasks": 13,
+      "small": "claude-haiku-5-5",
+      "small_good": 0.990385,
+      "small_naive": 0.644231,
+      "status": "ok",
+      "valid_resamples": 1999
+    },
+    {
+      "big": "gpt-6-astra",
+      "big_good": 0.961538,
+      "ci95": [
+        0.548881,
+        1.214881
+      ],
+      "definition": "(small_good - small_naive) / (big_good - small_naive)",
+      "gap_closed": 0.770833,
+      "n_tasks": 13,
+      "small": "gpt-6-luna",
+      "small_good": 0.855769,
+      "small_naive": 0.5,
+      "status": "ok",
+      "valid_resamples": 1998
+    }
+  ],
+  "pairs": [
+    {
+      "a": "claude-haiku-5-5|good",
+      "b": "gpt-6-luna|good",
+      "ci90": [
+        0.038462,
+        0.25
+      ],
+      "ci95": [
+        0.028846,
+        0.278846
+      ],
+      "diff": 0.134615,
+      "kind": "same_price",
+      "label": "claude-haiku-5-5 vs gpt-6-luna [good]",
+      "n_tasks": 13,
+      "rate_a": 0.990385,
+      "rate_b": 0.855769,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "claude-sonnet-5-5|good",
+      "b": "gpt-6.1-sol|good",
+      "ci90": [
+        0.0,
+        0.043956
+      ],
+      "ci95": [
+        0.0,
+        0.054945
+      ],
+      "diff": 0.010989,
+      "kind": "same_price",
+      "label": "claude-sonnet-5-5 vs gpt-6.1-sol [good]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 0.989011,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-sonnet-5-5|good",
+      "b": "claude-haiku-5-5|good",
+      "ci90": [
+        0.0,
+        0.038462
+      ],
+      "ci95": [
+        0.0,
+        0.048077
+      ],
+      "diff": 0.009615,
+      "kind": "tier_step",
+      "label": "claude-sonnet-5-5 - claude-haiku-5-5 [good]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 0.990385,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-opus-5-5|good",
+      "b": "claude-sonnet-5-5|good",
+      "ci90": [
+        0.0,
+        0.0
+      ],
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "diff": 0.0,
+      "kind": "tier_step",
+      "label": "claude-opus-5-5 - claude-sonnet-5-5 [good]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 1.0,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "gpt-6.1-sol|good",
+      "b": "gpt-6-luna|good",
+      "ci90": [
+        0.035646,
+        0.246016
+      ],
+      "ci95": [
+        0.017857,
+        0.269231
+      ],
+      "diff": 0.133242,
+      "kind": "tier_step",
+      "label": "gpt-6.1-sol - gpt-6-luna [good]",
+      "n_tasks": 13,
+      "rate_a": 0.989011,
+      "rate_b": 0.855769,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "gpt-6-astra|good",
+      "b": "gpt-6.1-sol|good",
+      "ci90": [
+        -0.086538,
+        0.0
+      ],
+      "ci95": [
+        -0.111264,
+        0.002747
+      ],
+      "diff": -0.027473,
+      "kind": "tier_step",
+      "label": "gpt-6-astra - gpt-6.1-sol [good]",
+      "n_tasks": 13,
+      "rate_a": 0.961538,
+      "rate_b": 0.989011,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-haiku-5-5|naive",
+      "b": "gpt-6-luna|naive",
+      "ci90": [
+        0.038462,
+        0.269231
+      ],
+      "ci95": [
+        0.019231,
+        0.288702
+      ],
+      "diff": 0.144231,
+      "kind": "same_price",
+      "label": "claude-haiku-5-5 vs gpt-6-luna [naive]",
+      "n_tasks": 13,
+      "rate_a": 0.644231,
+      "rate_b": 0.5,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "claude-sonnet-5-5|naive",
+      "b": "gpt-6.1-sol|naive",
+      "ci90": [
+        -0.442308,
+        -0.105769
+      ],
+      "ci95": [
+        -0.480769,
+        -0.086538
+      ],
+      "diff": -0.269231,
+      "kind": "same_price",
+      "label": "claude-sonnet-5-5 vs gpt-6.1-sol [naive]",
+      "n_tasks": 13,
+      "rate_a": 0.682692,
+      "rate_b": 0.951923,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "claude-sonnet-5-5|naive",
+      "b": "claude-haiku-5-5|naive",
+      "ci90": [
+        -0.057692,
+        0.125
+      ],
+      "ci95": [
+        -0.076923,
+        0.153846
+      ],
+      "diff": 0.038462,
+      "kind": "tier_step",
+      "label": "claude-sonnet-5-5 - claude-haiku-5-5 [naive]",
+      "n_tasks": 13,
+      "rate_a": 0.682692,
+      "rate_b": 0.644231,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-opus-5-5|naive",
+      "b": "claude-sonnet-5-5|naive",
+      "ci90": [
+        0.144231,
+        0.480769
+      ],
+      "ci95": [
+        0.115385,
+        0.509615
+      ],
+      "diff": 0.307692,
+      "kind": "tier_step",
+      "label": "claude-opus-5-5 - claude-sonnet-5-5 [naive]",
+      "n_tasks": 13,
+      "rate_a": 0.990385,
+      "rate_b": 0.682692,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "gpt-6.1-sol|naive",
+      "b": "gpt-6-luna|naive",
+      "ci90": [
+        0.269231,
+        0.634615
+      ],
+      "ci95": [
+        0.240385,
+        0.673077
+      ],
+      "diff": 0.451923,
+      "kind": "tier_step",
+      "label": "gpt-6.1-sol - gpt-6-luna [naive]",
+      "n_tasks": 13,
+      "rate_a": 0.951923,
+      "rate_b": 0.5,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "gpt-6-astra|naive",
+      "b": "gpt-6.1-sol|naive",
+      "ci90": [
+        0.0,
+        0.115385
+      ],
+      "ci95": [
+        0.0,
+        0.134615
+      ],
+      "diff": 0.038462,
+      "kind": "tier_step",
+      "label": "gpt-6-astra - gpt-6.1-sol [naive]",
+      "n_tasks": 13,
+      "rate_a": 0.990385,
+      "rate_b": 0.951923,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-haiku-5-5|good-D",
+      "b": "gpt-6-luna|good-D",
+      "ci90": [
+        0.015385,
+        0.276923
+      ],
+      "ci95": [
+        -0.015385,
+        0.307692
+      ],
+      "diff": 0.138462,
+      "kind": "same_price",
+      "label": "claude-haiku-5-5 vs gpt-6-luna [good-D]",
+      "n_tasks": 13,
+      "rate_a": 0.953846,
+      "rate_b": 0.815385,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-D",
+      "b": "gpt-6.1-sol|good-D",
+      "ci90": [
+        -0.153846,
+        0.046154
+      ],
+      "ci95": [
+        -0.2,
+        0.061538
+      ],
+      "diff": -0.046154,
+      "kind": "same_price",
+      "label": "claude-sonnet-5-5 vs gpt-6.1-sol [good-D]",
+      "n_tasks": 13,
+      "rate_a": 0.938462,
+      "rate_b": 0.984615,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-D",
+      "b": "claude-haiku-5-5|good-D",
+      "ci90": [
+        -0.092308,
+        0.046154
+      ],
+      "ci95": [
+        -0.123077,
+        0.061538
+      ],
+      "diff": -0.015385,
+      "kind": "tier_step",
+      "label": "claude-sonnet-5-5 - claude-haiku-5-5 [good-D]",
+      "n_tasks": 13,
+      "rate_a": 0.938462,
+      "rate_b": 0.953846,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-opus-5-5|good-D",
+      "b": "claude-sonnet-5-5|good-D",
+      "kind": "tier_step",
+      "label": "claude-opus-5-5 - claude-sonnet-5-5 [good-D]",
+      "status": "no_data"
+    },
+    {
+      "a": "gpt-6.1-sol|good-D",
+      "b": "gpt-6-luna|good-D",
+      "ci90": [
+        0.046154,
+        0.307692
+      ],
+      "ci95": [
+        0.030769,
+        0.338462
+      ],
+      "diff": 0.169231,
+      "kind": "tier_step",
+      "label": "gpt-6.1-sol - gpt-6-luna [good-D]",
+      "n_tasks": 13,
+      "rate_a": 0.984615,
+      "rate_b": 0.815385,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "gpt-6-astra|good-D",
+      "b": "gpt-6.1-sol|good-D",
+      "kind": "tier_step",
+      "label": "gpt-6-astra - gpt-6.1-sol [good-D]",
+      "status": "no_data"
+    },
+    {
+      "a": "claude-haiku-5-5|good-C",
+      "b": "gpt-6-luna|good-C",
+      "ci90": [
+        0.030769,
+        0.323077
+      ],
+      "ci95": [
+        0.015385,
+        0.353846
+      ],
+      "diff": 0.169231,
+      "kind": "same_price",
+      "label": "claude-haiku-5-5 vs gpt-6-luna [good-C]",
+      "n_tasks": 13,
+      "rate_a": 0.984615,
+      "rate_b": 0.815385,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-C",
+      "b": "gpt-6.1-sol|good-C",
+      "ci90": [
+        -0.046154,
+        0.092308
+      ],
+      "ci95": [
+        -0.046154,
+        0.107692
+      ],
+      "diff": 0.015385,
+      "kind": "same_price",
+      "label": "claude-sonnet-5-5 vs gpt-6.1-sol [good-C]",
+      "n_tasks": 13,
+      "rate_a": 0.984615,
+      "rate_b": 0.969231,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-C",
+      "b": "claude-haiku-5-5|good-C",
+      "ci90": [
+        -0.046154,
+        0.046154
+      ],
+      "ci95": [
+        -0.061538,
+        0.061538
+      ],
+      "diff": 0.0,
+      "kind": "tier_step",
+      "label": "claude-sonnet-5-5 - claude-haiku-5-5 [good-C]",
+      "n_tasks": 13,
+      "rate_a": 0.984615,
+      "rate_b": 0.984615,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-opus-5-5|good-C",
+      "b": "claude-sonnet-5-5|good-C",
+      "kind": "tier_step",
+      "label": "claude-opus-5-5 - claude-sonnet-5-5 [good-C]",
+      "status": "no_data"
+    },
+    {
+      "a": "gpt-6.1-sol|good-C",
+      "b": "gpt-6-luna|good-C",
+      "ci90": [
+        0.0,
+        0.323077
+      ],
+      "ci95": [
+        -0.030769,
+        0.353846
+      ],
+      "diff": 0.153846,
+      "kind": "tier_step",
+      "label": "gpt-6.1-sol - gpt-6-luna [good-C]",
+      "n_tasks": 13,
+      "rate_a": 0.969231,
+      "rate_b": 0.815385,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "gpt-6-astra|good-C",
+      "b": "gpt-6.1-sol|good-C",
+      "kind": "tier_step",
+      "label": "gpt-6-astra - gpt-6.1-sol [good-C]",
+      "status": "no_data"
+    },
+    {
+      "a": "claude-haiku-5-5|good-S",
+      "b": "gpt-6-luna|good-S",
+      "ci90": [
+        0.030769,
+        0.261538
+      ],
+      "ci95": [
+        0.015385,
+        0.277308
+      ],
+      "diff": 0.138462,
+      "kind": "same_price",
+      "label": "claude-haiku-5-5 vs gpt-6-luna [good-S]",
+      "n_tasks": 13,
+      "rate_a": 0.969231,
+      "rate_b": 0.830769,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-S",
+      "b": "gpt-6.1-sol|good-S",
+      "ci90": [
+        0.0,
+        0.061538
+      ],
+      "ci95": [
+        0.0,
+        0.061538
+      ],
+      "diff": 0.015385,
+      "kind": "same_price",
+      "label": "claude-sonnet-5-5 vs gpt-6.1-sol [good-S]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 0.984615,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-S",
+      "b": "claude-haiku-5-5|good-S",
+      "ci90": [
+        0.0,
+        0.092308
+      ],
+      "ci95": [
+        0.0,
+        0.107692
+      ],
+      "diff": 0.030769,
+      "kind": "tier_step",
+      "label": "claude-sonnet-5-5 - claude-haiku-5-5 [good-S]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 0.969231,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-opus-5-5|good-S",
+      "b": "claude-sonnet-5-5|good-S",
+      "kind": "tier_step",
+      "label": "claude-opus-5-5 - claude-sonnet-5-5 [good-S]",
+      "status": "no_data"
+    },
+    {
+      "a": "gpt-6.1-sol|good-S",
+      "b": "gpt-6-luna|good-S",
+      "ci90": [
+        0.046154,
+        0.276923
+      ],
+      "ci95": [
+        0.030769,
+        0.307692
+      ],
+      "diff": 0.153846,
+      "kind": "tier_step",
+      "label": "gpt-6.1-sol - gpt-6-luna [good-S]",
+      "n_tasks": 13,
+      "rate_a": 0.984615,
+      "rate_b": 0.830769,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "gpt-6-astra|good-S",
+      "b": "gpt-6.1-sol|good-S",
+      "kind": "tier_step",
+      "label": "gpt-6-astra - gpt-6.1-sol [good-S]",
+      "status": "no_data"
+    },
+    {
+      "a": "claude-haiku-5-5|good-E",
+      "b": "gpt-6-luna|good-E",
+      "ci90": [
+        0.0,
+        0.323077
+      ],
+      "ci95": [
+        -0.030769,
+        0.353846
+      ],
+      "diff": 0.153846,
+      "kind": "same_price",
+      "label": "claude-haiku-5-5 vs gpt-6-luna [good-E]",
+      "n_tasks": 13,
+      "rate_a": 0.953846,
+      "rate_b": 0.8,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-E",
+      "b": "gpt-6.1-sol|good-E",
+      "ci90": [
+        0.0,
+        0.0
+      ],
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "diff": 0.0,
+      "kind": "same_price",
+      "label": "claude-sonnet-5-5 vs gpt-6.1-sol [good-E]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 1.0,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-E",
+      "b": "claude-haiku-5-5|good-E",
+      "ci90": [
+        0.0,
+        0.123077
+      ],
+      "ci95": [
+        0.0,
+        0.138462
+      ],
+      "diff": 0.046154,
+      "kind": "tier_step",
+      "label": "claude-sonnet-5-5 - claude-haiku-5-5 [good-E]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 0.953846,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-opus-5-5|good-E",
+      "b": "claude-sonnet-5-5|good-E",
+      "kind": "tier_step",
+      "label": "claude-opus-5-5 - claude-sonnet-5-5 [good-E]",
+      "status": "no_data"
+    },
+    {
+      "a": "gpt-6.1-sol|good-E",
+      "b": "gpt-6-luna|good-E",
+      "ci90": [
+        0.076923,
+        0.353846
+      ],
+      "ci95": [
+        0.061538,
+        0.384615
+      ],
+      "diff": 0.2,
+      "kind": "tier_step",
+      "label": "gpt-6.1-sol - gpt-6-luna [good-E]",
+      "n_tasks": 13,
+      "rate_a": 1.0,
+      "rate_b": 0.8,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "gpt-6-astra|good-E",
+      "b": "gpt-6.1-sol|good-E",
+      "kind": "tier_step",
+      "label": "gpt-6-astra - gpt-6.1-sol [good-E]",
+      "status": "no_data"
+    },
+    {
+      "a": "claude-haiku-5-5|good-P",
+      "b": "gpt-6-luna|good-P",
+      "ci90": [
+        0.007692,
+        0.415385
+      ],
+      "ci95": [
+        -0.030769,
+        0.461538
+      ],
+      "diff": 0.211538,
+      "kind": "same_price",
+      "label": "claude-haiku-5-5 vs gpt-6-luna [good-P]",
+      "n_tasks": 13,
+      "rate_a": 0.857692,
+      "rate_b": 0.646154,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-P",
+      "b": "gpt-6.1-sol|good-P",
+      "ci90": [
+        -0.115385,
+        0.076923
+      ],
+      "ci95": [
+        -0.134712,
+        0.092308
+      ],
+      "diff": -0.023077,
+      "kind": "same_price",
+      "label": "claude-sonnet-5-5 vs gpt-6.1-sol [good-P]",
+      "n_tasks": 13,
+      "rate_a": 0.946154,
+      "rate_b": 0.969231,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-sonnet-5-5|good-P",
+      "b": "claude-haiku-5-5|good-P",
+      "ci90": [
+        0.007692,
+        0.188462
+      ],
+      "ci95": [
+        -0.007788,
+        0.211538
+      ],
+      "diff": 0.088462,
+      "kind": "tier_step",
+      "label": "claude-sonnet-5-5 - claude-haiku-5-5 [good-P]",
+      "n_tasks": 13,
+      "rate_a": 0.946154,
+      "rate_b": 0.857692,
+      "status": "ok",
+      "verdict": "inconclusive"
+    },
+    {
+      "a": "claude-opus-5-5|good-P",
+      "b": "claude-sonnet-5-5|good-P",
+      "kind": "tier_step",
+      "label": "claude-opus-5-5 - claude-sonnet-5-5 [good-P]",
+      "status": "no_data"
+    },
+    {
+      "a": "gpt-6.1-sol|good-P",
+      "b": "gpt-6-luna|good-P",
+      "ci90": [
+        0.123077,
+        0.523077
+      ],
+      "ci95": [
+        0.091923,
+        0.569231
+      ],
+      "diff": 0.323077,
+      "kind": "tier_step",
+      "label": "gpt-6.1-sol - gpt-6-luna [good-P]",
+      "n_tasks": 13,
+      "rate_a": 0.969231,
+      "rate_b": 0.646154,
+      "status": "ok",
+      "verdict": "different"
+    },
+    {
+      "a": "gpt-6-astra|good-P",
+      "b": "gpt-6.1-sol|good-P",
+      "kind": "tier_step",
+      "label": "gpt-6-astra - gpt-6.1-sol [good-P]",
+      "status": "no_data"
+    },
+    {
+      "a": "claude-haiku-5-5|good",
+      "b": "claude-opus-5-5|naive",
+      "ci90": [
+        -0.019231,
+        0.019231
+      ],
+      "ci95": [
+        -0.028846,
+        0.028846
+      ],
+      "diff": 0.0,
+      "kind": "headline",
+      "label": "claude-haiku-5-5 (good) vs claude-opus-5-5 (naive)",
+      "n_tasks": 13,
+      "rate_a": 0.990385,
+      "rate_b": 0.990385,
+      "status": "ok",
+      "verdict": "equivalent"
+    },
+    {
+      "a": "gpt-6-luna|good",
+      "b": "gpt-6-astra|naive",
+      "ci90": [
+        -0.240385,
+        -0.048077
+      ],
+      "ci95": [
+        -0.259615,
+        -0.028846
+      ],
+      "diff": -0.134615,
+      "kind": "headline",
+      "label": "gpt-6-luna (good) vs gpt-6-astra (naive)",
+      "n_tasks": 13,
+      "rate_a": 0.855769,
+      "rate_b": 0.990385,
+      "status": "ok",
+      "verdict": "different"
+    }
+  ],
+  "settings": {
+    "bootstrap_resamples": 2000,
+    "diff": "first config minus second config",
+    "equivalence_margin": 0.1,
+    "rate": "macro mean over tasks of per-task success rate (non-pi columns, versions pooled)",
+    "seed": 0
+  }
+}
