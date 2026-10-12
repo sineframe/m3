@@ -1069,6 +1069,7 @@ agent_session(
     runtime_servers: _Iterable[_Any] = (),
     interaction_handlers: InteractionHandlers | None = None,
     harness_cache_dir: str | _Path | None = None,
+    harness_permissions: _NativePermissions | _Unset = Unset.UNSET,
 ) -> AgentSession
 ```
 

@@ -24,8 +24,10 @@ from typing import Any, Literal, NamedTuple, cast
 
 import httpx
 
+from .._types.specs import AgentSpec
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
+from ..server_group import HarnessServerConfig
 from ..trace.redaction import (
     RedactionConfig,
     RedactionError,
@@ -34,6 +36,7 @@ from ..trace.redaction import (
     redact_for_api,
 )
 from ..types import (
+    UNSET,
     Capability,
     CapabilityStatus,
     ErrorCode,
@@ -77,6 +80,8 @@ from .native import (
     run_probe,
     workspace_for_launch,
 )
+from .native_capabilities import NativeRuntimeIdentity
+from .native_settings import milliseconds
 from .observations import (
     HarnessObservation,
     MessageChunkObservation,
@@ -171,6 +176,15 @@ def opencode_configuration(
                     for key, raw in headers.items()
                 },
             }
+        if source is not None:
+            budgets = source.timeouts
+            timeout = (
+                budgets.startup_seconds
+                if budgets.startup_seconds is not UNSET
+                else budgets.request_seconds
+            )
+            if timeout is not UNSET:
+                item["timeout"] = milliseconds(timeout)
         servers[name] = item
     policy = launch.tool_policy
     if isinstance(policy, NativeToolPolicy):
@@ -211,11 +225,15 @@ def opencode_configuration(
     else:
         tools = {}
         permissions = {}
+    harness = launch.spec.harness
+    if isinstance(harness, OpenCode):
+        permissions.update(harness.permissions.rules)
     if dialect == "v2":
         return {
             "$schema": "https://opencode.ai/config.json",
             "mcp": {"servers": servers},
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            **({"permission": permissions} if permissions else {}),
         }
     if dialect == "legacy":
         return {
@@ -223,7 +241,8 @@ def opencode_configuration(
             "mcp": {
                 name: {**value, "enabled": True} for name, value in servers.items()
             },
-            **({"tools": tools, "permission": permissions} if tools else {}),
+            **({"tools": tools} if tools else {}),
+            **({"permission": permissions} if permissions else {}),
         }
     raise HarnessStartupError("unsupported OpenCode configuration dialect")
 
@@ -371,6 +390,19 @@ class OpenCodeHarnessAdapter:
     @property
     def supported_content_kinds(self) -> frozenset[str]:
         return self._capabilities.supported_content_kinds
+
+    async def validate_native_settings(
+        self,
+        spec: AgentSpec,
+        configurations: tuple[HarnessServerConfig, ...],
+        *,
+        runtime_identity: NativeRuntimeIdentity | None = None,
+    ) -> None:
+        from .native_settings import validate_native_settings
+
+        await validate_native_settings(
+            self.executable, spec, configurations, runtime_identity
+        )
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
         if (
