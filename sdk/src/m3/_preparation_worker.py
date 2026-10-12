@@ -25,6 +25,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Literal, cast
 
+from ._process_group_custody import (
+    exited_status,
+    group_snapshot,
+    has_unreaped_status,
+    members_alive,
+    ownership_supported,
+)
+
 MAX_FRAME = 16 * 1024 * 1024
 TERM_GRACE = 0.3
 
@@ -225,6 +233,8 @@ class _ForkJob:
     ) -> None:
         import resource
 
+        if not ownership_supported():
+            raise RuntimeError("preparation requires unreaped child ownership")
         if threading.active_count() != 1:
             raise RuntimeError("preparation helper must remain single-threaded")
         read_fd, write_fd = os.pipe()
@@ -233,6 +243,7 @@ class _ForkJob:
         self.group_established = False
         self._gate_fd: int | None = gate_write if gated else None
         self.returncode: int | None = None
+        self._reaped = False
         self.pid = os.fork()
         if self.pid == 0:
             try:
@@ -274,6 +285,8 @@ class _ForkJob:
             self.stdout = None
 
     def signal(self, sig: int) -> None:
+        if self._reaped:
+            return
         if self.group_established:
             _signal_group(self.pid, sig)
         elif self.poll() is None:
@@ -285,7 +298,11 @@ class _ForkJob:
                 pass
 
     def alive(self) -> bool:
-        return _group_alive(self.pid) if self.group_established else self.poll() is None
+        if self._reaped:
+            return False
+        if self.returncode is None:
+            return True
+        return self.group_established and members_alive(self.pid)
 
     def begin(self) -> None:
         if self._gate_fd is not None and self.group_established:
@@ -297,9 +314,27 @@ class _ForkJob:
             self._gate_fd = None
 
     def poll(self) -> int | None:
+        if not self._reaped and not has_unreaped_status():
+            # Python builds without waitid still retain their waitable child.
+            # Both proofs are needed: a running leader could fork after a
+            # member query. A zombie leader cannot create a new writer.
+            zombie, descendants = group_snapshot(self.pid)
+            if zombie and not descendants:
+                pid, status = os.waitpid(self.pid, 0)
+                assert pid == self.pid
+                self._reaped = True
+                self.returncode = os.waitstatus_to_exitcode(status)
+                if self._gate_fd is not None:
+                    os.close(self._gate_fd)
+                    self._gate_fd = None
+            return self.returncode
         if self.returncode is None:
-            pid, status = os.waitpid(self.pid, os.WNOHANG)
-            if pid:
+            self.returncode = exited_status(self.pid)
+        if self.returncode is not None and not self._reaped:
+            if not self.group_established or not members_alive(self.pid):
+                pid, status = os.waitpid(self.pid, 0)
+                assert pid == self.pid
+                self._reaped = True
                 if self._gate_fd is not None:
                     os.close(self._gate_fd)
                     self._gate_fd = None
