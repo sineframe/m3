@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 
 
 def ownership_supported() -> bool:
@@ -35,8 +36,16 @@ def group_snapshot(pid: int) -> tuple[bool, bool]:
     ownership. This never discovers a process by command name or PID age.
     """
     try:
+        # Darwin's documented -g selector accepts process-group leaders; -p
+        # also includes our child before its setsid acknowledgement. Other
+        # platforms retain the portable full listing because -g differs there.
+        command = (
+            ["/bin/ps", "-g", str(pid), "-p", str(pid), "-o", "pid=,pgid=,stat="]
+            if sys.platform == "darwin"
+            else ["/bin/ps", "-axo", "pid=,pgid=,stat="]
+        )
         result = subprocess.run(
-            ["/bin/ps", "-axo", "pid=,pgid=,stat="],
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=1,
