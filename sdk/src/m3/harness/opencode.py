@@ -27,6 +27,7 @@ import httpx
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..trace.redaction import (
+    NativeTextSecrets,
     RedactionConfig,
     is_sensitive_key,
     native_text_redaction,
@@ -61,7 +62,6 @@ from .contracts import (
 )
 from .native import (
     MAX_FRAME_BYTES,
-    LaunchSecrets,
     NativeSessionBase,
     ProcessOwner,
     _executable,
@@ -372,7 +372,7 @@ class OpenCodeHarnessAdapter:
         # What the launch handed OpenCode through its MCP configurations
         # (resolved and literal values). Kept apart from runtime secrets: it
         # only redacts OpenCode's error text, not captures.
-        self._launch_secrets = LaunchSecrets()
+        self._launch_secrets = NativeTextSecrets()
         self.last_policy_evidence: Any = None
 
     @property
@@ -657,7 +657,7 @@ class OpenCodeHarnessAdapter:
             return self._session
         except BaseException:
             self._runtime_secrets.clear()
-            self._launch_secrets = LaunchSecrets()
+            self._launch_secrets = NativeTextSecrets()
             if client is not None:
                 await client.aclose()
             try:
@@ -713,7 +713,7 @@ class OpenCodeHarnessAdapter:
         self._launch = None
         self._root = None
         self._runtime_secrets.clear()
-        self._launch_secrets = LaunchSecrets()
+        self._launch_secrets = NativeTextSecrets()
 
     async def cancel(self) -> None:
         if self._session is not None:
