@@ -2859,8 +2859,7 @@ async def test_opencode_turn_reason_redacts_urls_and_launch_credentials(
                     endpoint=endpoint,
                     environment={
                         "PRIVATE_KEY": pem,
-                        "API_TOKEN": "4821",
-                        "GITHUB_PAT": "ghp_literal_canary",
+                        "API_TOKEN": "ghp_literal_canary",
                         "MODE": "stream",
                     },
                 ),
@@ -2874,7 +2873,7 @@ async def test_opencode_turn_reason_redacts_urls_and_launch_credentials(
             "name": "UnknownError",
             "data": {
                 "message": f"fetch {endpoint} failed (id 1); bad key {pem}, "
-                "pin 4821, pat ghp_literal_canary, stream closed"
+                "pat ghp_literal_canary, token=4821, stream closed"
             },
         },
     )
@@ -2888,7 +2887,8 @@ async def test_opencode_turn_reason_redacts_urls_and_launch_credentials(
         assert canary not in message and canary not in repr(details)
     assert message == (
         "OpenCode turn failed: UnknownError: fetch http://127.0.0.1:5555/… failed "
-        "(id 1); bad key [REDACTED], pin [REDACTED], pat [REDACTED], stream closed"
+        "(id 1); bad key [REDACTED], pat [REDACTED], token=[REDACTED], "
+        "stream closed"
     )
 
 

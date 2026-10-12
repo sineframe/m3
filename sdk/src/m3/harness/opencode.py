@@ -27,10 +27,9 @@ import httpx
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..trace.redaction import (
-    NativeTextSecrets,
     RedactionConfig,
     is_sensitive_key,
-    native_text_redaction,
+    native_text_secrets,
     redact_for_api,
     redact_native_text,
 )
@@ -369,10 +368,10 @@ class OpenCodeHarnessAdapter:
         # are used to protect adapter results before they reach the public
         # session boundary; they are never included in a launch descriptor.
         self._runtime_secrets: set[str] = set()
-        # What the launch handed OpenCode through its MCP configurations
-        # (resolved and literal values). Kept apart from runtime secrets: it
-        # only redacts OpenCode's error text, not captures.
-        self._launch_secrets = NativeTextSecrets()
+        # The launch's MCP credentials (resolved and literal). Kept apart from
+        # runtime secrets: they only redact OpenCode's error text, not
+        # captures.
+        self._launch_secrets: frozenset[str] = frozenset()
         self.last_policy_evidence: Any = None
 
     @property
@@ -657,7 +656,7 @@ class OpenCodeHarnessAdapter:
             return self._session
         except BaseException:
             self._runtime_secrets.clear()
-            self._launch_secrets = NativeTextSecrets()
+            self._launch_secrets = frozenset()
             if client is not None:
                 await client.aclose()
             try:
@@ -713,7 +712,7 @@ class OpenCodeHarnessAdapter:
         self._launch = None
         self._root = None
         self._runtime_secrets.clear()
-        self._launch_secrets = NativeTextSecrets()
+        self._launch_secrets = frozenset()
 
     async def cancel(self) -> None:
         if self._session is not None:
@@ -1915,11 +1914,9 @@ class OpenCodeHarnessAdapter:
         data = error.get("data")
         text = data.get("message") if isinstance(data, Mapping) else None
         if isinstance(text, str):
-            config = native_text_redaction(
-                self._runtime_secrets | self._launch_secrets.known,
-                guessed=self._launch_secrets.guessed,
+            redacted = redact_native_text(
+                text, native_text_secrets(self._runtime_secrets | self._launch_secrets)
             )
-            redacted = redact_native_text(text, config)
             reason = " ".join(redacted[: 4 * _NATIVE_ERROR_REASON_LIMIT].split())
             if reason:
                 # Truncate only after redaction so a cut cannot split a secret.
