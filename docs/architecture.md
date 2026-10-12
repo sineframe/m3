@@ -214,11 +214,24 @@ observer tasks and proxy processes, but its synchronous handoff/config writes
 also need that integration audit. Arbitrary uncancellable callbacks are not a
 bounded preparation contract.
 
-Private capability capsule creation, protected reads/unlink and synchronous
-IPC setup require a typed owned-operation provider on both POSIX and Windows
-to enforce finite bootstrap deadlines. Those operations currently lack that
-provider. The generic preparation result dictionary must not carry capability
-bytes. Late filesystem completion must not publish a capability after fencing.
+Private POSIX bootstrap operations use the same worker helper and process-group
+ownership. `OwnedBootstrapOperations` owns capsule creation, protected read/unlink,
+Unix listener/connection setup and resource removal. Each job receives a one-use
+socket over a separate descriptor-transfer channel; bounded private frames carry
+capsule bytes and typed resources. Generic preparation metadata and lifecycle
+results never contain those bytes. Both descriptor transfers retain the sender's
+handle until receipt is acknowledged. Native handles become active only after
+writer/group death and accepted ownership; one caller absolute deadline covers
+all stages. Facade close fences only its own jobs and retains quarantine until
+writers die. Resource deletion checks the exact owned inode identities.
+
+`LiteralBootstrapBroker` can allocate its complete protected endpoint/capsule
+roots through that provider; callers need no temporary-directory filesystem work.
+A supplied directory is validated inside an owned job. Existing Codex auth files
+can be read without unlinking and staged as opaque bytes in a private native home;
+missing files have a distinct absent result. Native processes must stop before
+that home's resource owner removes it. No broker or helper is allocated when no
+invocation literals require transfer. Windows private bootstrap remains unsupported.
 
 Equivalent descendant ownership on Windows requires native Job Objects and
 is currently unsupported. Existing default Windows workspace behavior is retained;

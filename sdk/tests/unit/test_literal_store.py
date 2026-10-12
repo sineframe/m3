@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -210,22 +211,17 @@ def test_late_bundle_is_never_published_after_parse_deadline(
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX IPC backend")
 def test_pending_capsule_writer_cannot_hold_teardown_or_publish_after_close(
-    private_directory: Path, monkeypatch: pytest.MonkeyPatch
+    private_directory: Path, blocked_helper: Any
 ) -> None:
-    import m3._literal_store as literals
+    from m3._preparation_worker import _group_alive
 
+    _worker, arm, marker, _fifo, _late = blocked_helper()
+    arm.unlink()
     store = RunLiteralStore("run")
     handle = store.freeze("private-literal")
     broker = LiteralBootstrapBroker(store, private_directory)
-    writing = threading.Event()
-    release = threading.Event()
-    original_dump = literals.json.dump
+    arm.touch()
     failures: list[BaseException] = []
-
-    def stalled_dump(*args: object, **kwargs: object) -> None:
-        writing.set()
-        assert release.wait(5)
-        original_dump(*args, **kwargs)
 
     def issue() -> None:
         try:
@@ -233,26 +229,32 @@ def test_pending_capsule_writer_cannot_hold_teardown_or_publish_after_close(
         except BaseException as error:
             failures.append(error)
 
-    monkeypatch.setattr(literals.json, "dump", stalled_dump)
     writer = threading.Thread(target=issue)
     writer.start()
+    deadline = time.monotonic() + 5
+    while not marker.exists():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    state = json.loads(marker.read_text())
+    assert _group_alive(state["pid"])
     try:
-        assert writing.wait(5)
         start = time.monotonic()
         broker.close()
         assert time.monotonic() - start < 1.5
-        assert not broker.cleanup_complete
         assert not broker._capabilities
+        writer.join(timeout=2)
+        assert not writer.is_alive()
+        assert not _group_alive(state["pid"])
+        assert not Path(state["root"]).exists()
+        assert broker.cleanup_complete
     finally:
-        release.set()
+        arm.unlink(missing_ok=True)
         writer.join(timeout=5)
         broker.close()
         store.close()
-    assert not writer.is_alive()
     assert len(failures) == 1
     assert isinstance(failures[0], LiteralTransferError)
     assert "private-literal" not in str(failures[0])
-    assert broker.cleanup_complete
     assert list(private_directory.iterdir()) == []
 
 
@@ -291,15 +293,16 @@ def test_constructor_rolls_back_all_owned_resources(
     private_directory: Path, monkeypatch: pytest.MonkeyPatch, allocation: str
 ) -> None:
     import m3._literal_store as literals
+    from m3._bootstrap_operations import OwnedBootstrapOperations
 
     store = RunLiteralStore("run")
-    owned_roots: list[Path] = []
-    original_mkdtemp = literals.tempfile.mkdtemp
+    endpoints: list[Any] = []
+    original_create = OwnedBootstrapOperations.create_endpoint
 
-    def record_root(*args: object, **kwargs: object) -> str:
-        root = original_mkdtemp(*args, **kwargs)
-        owned_roots.append(Path(root))
-        return root
+    def create(provider: OwnedBootstrapOperations, *args: Any, **kwargs: Any) -> Any:
+        endpoint = original_create(provider, *args, **kwargs)
+        endpoints.append(endpoint)
+        return endpoint
 
     def fail_start(*args: object, **kwargs: object) -> None:
         raise RuntimeError("resource failure")
@@ -307,7 +310,11 @@ def test_constructor_rolls_back_all_owned_resources(
     def fail_socket(*args: object, **kwargs: object) -> None:
         raise OSError("resource failure")
 
-    monkeypatch.setattr(literals.tempfile, "mkdtemp", record_root)
+    # Start the reusable helper before intentionally failing broker resources.
+    warm = OwnedBootstrapOperations()
+    warm.create_capsule(literals.PrivateBytes(b"warm"), deadline=time.monotonic() + 5)
+    warm.close(deadline=time.monotonic() + 2)
+    monkeypatch.setattr(OwnedBootstrapOperations, "create_endpoint", create)
     if allocation == "thread":
         monkeypatch.setattr(literals.threading.Thread, "start", fail_start)
     else:
@@ -315,7 +322,8 @@ def test_constructor_rolls_back_all_owned_resources(
     try:
         with pytest.raises(LiteralTransferError, match="listener unavailable"):
             LiteralBootstrapBroker(store, private_directory)
-        assert all(not root.exists() for root in owned_roots)
+        assert all(endpoint.channel.fileno() == -1 for endpoint in endpoints)
+        assert all(not endpoint.resource.root.exists() for endpoint in endpoints)
         assert not list(private_directory.iterdir())
     finally:
         store.close()

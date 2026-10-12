@@ -7,6 +7,7 @@ requesting event loop. Closing a kit cannot tear down another kit's helper.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import atexit
 import json
@@ -41,7 +42,9 @@ class PreparationWorker:
         self._outgoing: deque[bytes] = deque()
         self._acknowledgements: deque[bytes] = deque()
         self._queued_bytes = 0
-        self._routes: dict[str, tuple[asyncio.AbstractEventLoop, Callback]] = {}
+        self._private_packets: deque[tuple[bytes, socket.socket]] = deque()
+        self._private_sent: dict[str, socket.socket] = {}
+        self._routes: dict[str, tuple[asyncio.AbstractEventLoop | None, Callback]] = {}
         self._groups: dict[str, int] = {}
         self._abandoned: set[str] = set()
         self._closing = False
@@ -71,12 +74,29 @@ class PreparationWorker:
         return self._process.pid if self._process is not None else None
 
     def register(
-        self, ident: str, loop: asyncio.AbstractEventLoop, callback: Callback
+        self, ident: str, loop: asyncio.AbstractEventLoop | None, callback: Callback
     ) -> None:
         with self._lock:
             if self._failed or self._closing:
                 raise RuntimeError("preparation worker is unavailable")
             self._routes[ident] = (loop, callback)
+
+    def bind_private(self, ident: str, channel: socket.socket) -> None:
+        """Transfer a one-use private job channel; never carry its contents here."""
+        duplicate = channel.dup()
+        with self._lock:
+            if (
+                self._failed
+                or self._closing
+                or len(self._private_packets) + len(self._private_sent) >= 64
+            ):
+                duplicate.close()
+                raise RuntimeError("preparation worker is unavailable")
+            self._private_packets.append((ident.encode("ascii"), duplicate))
+        try:
+            self._wake_write.send(b"x")
+        except (BlockingIOError, OSError):
+            pass
 
     def forget(self, ident: str, *, published: bool = False) -> None:
         with self._lock:
@@ -110,6 +130,10 @@ class PreparationWorker:
         ident = frame["id"]
         with self._lock:
             route = self._routes.get(ident)
+            if frame["event"] in {"private_bound", "private_unbound", "rejected"}:
+                transferred = self._private_sent.pop(ident, None)
+                if transferred is not None:
+                    transferred.close()
             if frame["event"] in {"started", "cleanup_started"}:
                 self._groups[ident] = frame["pid"]
             elif frame["event"] in {"removed", "rejected"}:
@@ -122,7 +146,10 @@ class PreparationWorker:
             return
         loop, callback = route
         try:
-            loop.call_soon_threadsafe(callback, frame)
+            if loop is None:
+                callback(frame)
+            else:
+                loop.call_soon_threadsafe(callback, frame)
         except RuntimeError:
             # Loop loss cannot drop ownership. Fence through the still-live
             # helper; it owns all unfinished groups even without a recipient.
@@ -142,7 +169,13 @@ class PreparationWorker:
         ownership_read: int | None = None
         ownership_write: int | None = None
         process: subprocess.Popen[bytes] | None = None
+        private_parent: socket.socket | None = None
+        private_child: socket.socket | None = None
         try:
+            private_parent, private_child = socket.socketpair(
+                socket.AF_UNIX, socket.SOCK_DGRAM
+            )
+            private_parent.setblocking(False)
             ownership_read, ownership_write = os.pipe()
             os.set_blocking(ownership_write, False)
             process = subprocess.Popen(
@@ -156,14 +189,18 @@ class PreparationWorker:
                     str(self.root),
                     "--ownership-fd",
                     str(ownership_read),
+                    "--private-fd",
+                    str(private_child.fileno()),
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
-                pass_fds=(ownership_read,),
+                pass_fds=(ownership_read, private_child.fileno()),
                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             )
+            private_child.close()
+            private_child = None
             os.close(ownership_read)
             ownership_read = None
             self._process = process
@@ -187,12 +224,33 @@ class PreparationWorker:
                     abandoned = [
                         ident
                         for ident, (loop, _callback) in self._routes.items()
-                        if loop.is_closed() and ident not in self._abandoned
+                        if loop is not None
+                        and loop.is_closed()
+                        and ident not in self._abandoned
                     ]
                     self._abandoned.update(abandoned)
                 for ident in abandoned:
                     if not closing:
                         self.send("discard", ident)
+                with self._lock:
+                    if self._private_packets:
+                        packet, channel = self._private_packets[0]
+                        try:
+                            private_parent.sendmsg(
+                                [packet],
+                                [
+                                    (
+                                        socket.SOL_SOCKET,
+                                        socket.SCM_RIGHTS,
+                                        array.array("i", [channel.fileno()]),
+                                    )
+                                ],
+                            )
+                        except BlockingIOError:
+                            pass
+                        else:
+                            self._private_packets.popleft()
+                            self._private_sent[packet.decode("ascii")] = channel
                 if closing:
                     # Lifetime EOF fences every unfinished job. The helper
                     # retains blocked groups/root ownership beyond our join.
@@ -242,6 +300,17 @@ class PreparationWorker:
                     process.stdin.close()
                 if process.stdout is not None:
                     process.stdout.close()
+            if private_parent is not None:
+                private_parent.close()
+            if private_child is not None:
+                private_child.close()
+            with self._lock:
+                while self._private_packets:
+                    _packet, channel = self._private_packets.popleft()
+                    channel.close()
+                for channel in self._private_sent.values():
+                    channel.close()
+                self._private_sent.clear()
             if ownership_read is not None:
                 os.close(ownership_read)
             if ownership_write is not None:

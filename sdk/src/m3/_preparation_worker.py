@@ -8,11 +8,13 @@ start acknowledgements. Ownership EOF never permits new mutation.
 
 from __future__ import annotations
 
+import array
 import json
 import os
 import selectors
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -214,7 +216,12 @@ class _ForkJob:
     """One waitable child of the single-thread helper, with a private group."""
 
     def __init__(
-        self, function: Callable[[], None], *, output: bool, gated: bool = False
+        self,
+        function: Callable[[], None],
+        *,
+        output: bool,
+        gated: bool = False,
+        keep_fds: tuple[int, ...] = (),
     ) -> None:
         import resource
 
@@ -236,10 +243,10 @@ class _ForkJob:
                 os.dup2(null_fd, 0)
                 os.dup2(null_fd, 2)
                 # Drop controller lease, sibling output pipes and selector FD.
-                # Only private job stdout and null stdin/stderr survive fork.
+                # Retain only job stdout, null input/error and explicit private channels.
                 limit = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
                 end = int(limit) if limit != resource.RLIM_INFINITY else 1048576
-                keep = sorted((gate_read, ready_write))
+                keep = sorted((gate_read, ready_write, *keep_fds))
                 start = 3
                 for descriptor in keep:
                     os.closerange(start, descriptor)
@@ -301,13 +308,26 @@ class _ForkJob:
 
 
 def _fork_job(
-    operation: str, root: Path, payload: dict[str, Any], *, create_root: bool = False
+    operation: str,
+    root: Path,
+    payload: dict[str, Any],
+    *,
+    create_root: bool = False,
+    private_channel: socket.socket | None = None,
 ) -> _ForkJob:
     def execute() -> None:
         try:
             if create_root:
                 root.mkdir(mode=0o700)
-            result = _job(operation, root, payload)
+            if private_channel is not None:
+                from ._bootstrap_operations import execute_private_operation
+
+                execute_private_operation(
+                    private_channel, root, operation, payload["deadline"]
+                )
+                result = {}
+            else:
+                result = _job(operation, root, payload)
             frame = json.dumps({"ok": True, "data": result}).encode() + b"\n"
             if len(frame) > MAX_FRAME:
                 raise ValueError("preparation result exceeds limit")
@@ -320,7 +340,12 @@ def _fork_job(
             sent = os.write(1, view)
             view = view[sent:]
 
-    return _ForkJob(execute, output=True, gated=True)
+    return _ForkJob(
+        execute,
+        output=True,
+        gated=True,
+        keep_fds=(private_channel.fileno(),) if private_channel is not None else (),
+    )
 
 
 @dataclass
@@ -343,6 +368,7 @@ def _supervise(
     max_jobs: int = 64,
     owned_root: Path | None = None,
     ownership_fd: int | None = None,
+    private_fd: int | None = None,
 ) -> None:
     if os.name != "posix":
         raise RuntimeError("owned preparation requires POSIX process groups")
@@ -363,6 +389,12 @@ def _supervise(
     controller_open = True
     ownership_open = True
     ownership_input = bytearray()
+    private_channels: dict[str, socket.socket] = {}
+    private_transport = (
+        socket.socket(fileno=private_fd) if private_fd is not None else None
+    )
+    if private_transport is not None:
+        selector.register(private_transport, selectors.EVENT_READ, "private")
     if ownership_fd is not None:
         os.set_blocking(ownership_fd, False)
         selector.register(ownership_fd, selectors.EVENT_READ, "ownership")
@@ -406,19 +438,46 @@ def _supervise(
         action = request["action"]
         if action == "submit":
             root = Path(request["root"])
+            private_operation = request["operation"] in {
+                "private_capsule",
+                "private_endpoint",
+                "private_read",
+                "private_connect",
+                "private_remove",
+                "private_native_auth",
+                "private_read_auth",
+            }
+            short_endpoint = request[
+                "operation"
+            ] == "private_endpoint" and root == Path("/tmp") / ("m3-lit-" + ident)
             if (
                 ident in jobs
                 or len(jobs) >= max_jobs
-                or (owned_root is not None and root.parent != owned_root)
+                or (
+                    owned_root is not None
+                    and root.parent != owned_root
+                    and not short_endpoint
+                )
+                or (
+                    private_operation
+                    and (ident not in private_channels or owned_root is None)
+                )
             ):
+                rejected_channel = private_channels.pop(ident, None)
+                if rejected_channel is not None:
+                    rejected_channel.close()
                 emit(ident, "rejected")
                 return
+            private_channel = private_channels.pop(ident, None)
             process = _fork_job(
                 request["operation"],
                 root,
                 request["payload"],
                 create_root=owned_root is not None,
+                private_channel=private_channel,
             )
+            if private_channel is not None:
+                private_channel.close()
             assert process.stdout is not None
             os.set_blocking(process.stdout.fileno(), False)
             job = Job(ident, root, process)
@@ -439,6 +498,10 @@ def _supervise(
             }:
                 candidate.process.begin()
         elif action in {"cancel", "discard"}:
+            unsubmitted = private_channels.pop(ident, None)
+            if unsubmitted is not None:
+                unsubmitted.close()
+                emit(ident, "private_unbound")
             candidate = jobs.get(ident)
             if candidate is not None:
                 stop(candidate)
@@ -465,6 +528,43 @@ def _supervise(
                 outgoing.clear()
             for job in jobs.values():
                 stop(job)
+
+    def receive_private_channel() -> None:
+        assert private_transport is not None
+        packet, ancillary, flags, _address = private_transport.recvmsg(
+            128, socket.CMSG_SPACE(array.array("i").itemsize * 64)
+        )
+        received: list[int] = []
+        for level, kind, data in ancillary:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                descriptors = array.array("i")
+                descriptors.frombytes(
+                    data[: len(data) - len(data) % descriptors.itemsize]
+                )
+                received.extend(descriptors)
+        try:
+            ident = packet.decode("ascii")
+            if (
+                flags
+                or len(received) != 1
+                or len(ident) != 32
+                or not all(c in "0123456789abcdef" for c in ident)
+            ):
+                raise ValueError("invalid private preparation channel")
+            if ident in private_channels or ident in jobs:
+                raise ValueError("duplicate private preparation channel")
+            if (
+                not controller_open
+                or not ownership_open
+                or len(private_channels) >= max_jobs
+            ):
+                emit(ident, "rejected")
+                return
+            private_channels[ident] = socket.socket(fileno=received.pop())
+            emit(ident, "private_bound")
+        finally:
+            for descriptor in received:
+                os.close(descriptor)
 
     def read_ownership_acknowledgements() -> None:
         nonlocal controller_open, ownership_open
@@ -642,7 +742,9 @@ def _supervise(
         while controller_open or jobs or outgoing:
             flush_events()
             for key, _mask in selector.select(timeout=0.02):
-                if key.data == "ownership":
+                if key.data == "private":
+                    receive_private_channel()
+                elif key.data == "ownership":
                     read_ownership_acknowledgements()
                 elif key.data == "controller":
                     read_controller_requests()
@@ -657,6 +759,10 @@ def _supervise(
         for job in jobs.values():
             job.process.signal(signal.SIGKILL)
         selector.close()
+        for channel in private_channels.values():
+            channel.close()
+        if private_transport is not None:
+            private_transport.close()
         if ownership_fd is not None:
             os.close(ownership_fd)
         if owned_root is not None:
@@ -673,5 +779,8 @@ if __name__ == "__main__":
     parser.add_argument("--max-jobs", type=int, default=64)
     parser.add_argument("--root", type=Path)
     parser.add_argument("--ownership-fd", type=int)
+    parser.add_argument("--private-fd", type=int)
     arguments = parser.parse_args()
-    _supervise(arguments.max_jobs, arguments.root, arguments.ownership_fd)
+    _supervise(
+        arguments.max_jobs, arguments.root, arguments.ownership_fd, arguments.private_fd
+    )
