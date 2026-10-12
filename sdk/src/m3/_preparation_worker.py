@@ -24,11 +24,15 @@ from pathlib import Path
 from typing import IO, Any, Literal, cast
 
 from ._process_group_custody import (
+    ExitNotification,
+    GroupInventory,
+    ProcessStatusUnavailable,
     exited_status,
-    group_snapshot,
+    fallback_exited,
     has_unreaped_status,
-    members_alive,
     ownership_supported,
+    seal_group,
+    validate_process_status,
 )
 
 MAX_FRAME = 16 * 1024 * 1024
@@ -230,6 +234,7 @@ class _ForkJob:
             raise RuntimeError("preparation requires unreaped child ownership")
         if threading.active_count() != 1:
             raise RuntimeError("preparation helper must remain single-threaded")
+        validate_process_status()
         read_fd, write_fd = os.pipe()
         gate_read, gate_write = os.pipe()
         ready_read, ready_write = os.pipe()
@@ -238,6 +243,8 @@ class _ForkJob:
         self.returncode: int | None = None
         self._reaped = False
         self.exited = False
+        self._sealed_inventory: GroupInventory | None = None
+        self._exit_notification: ExitNotification | None = None
         self.pid = os.fork()
         if self.pid == 0:
             try:
@@ -260,18 +267,39 @@ class _ForkJob:
                 os.setsid()
                 os.write(ready_write, b"s")
                 os.close(ready_write)
-                if gated and os.read(gate_read, 1) != b"g":
+                if os.read(gate_read, 1) != b"g":
                     os._exit(0)
                 os.close(gate_read)
                 function()
                 os._exit(0)
             except BaseException:
                 os._exit(1)
+        try:
+            if not has_unreaped_status() and sys.platform == "darwin":
+                self._exit_notification = ExitNotification(self.pid)
+        except BaseException:
+            # Even ungated callers cannot start their function until exit
+            # observation is installed. Failed registration leaves no writers.
+            try:
+                os.kill(self.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                # No user function has run: the owned child is gated or has
+                # already exited. Darwin refuses signals to zombie children.
+                pass
+            os.close(gate_write)
+            os.waitpid(self.pid, 0)
+            for descriptor in (read_fd, write_fd, gate_read, ready_read, ready_write):
+                os.close(descriptor)
+            raise
         os.close(write_fd)
         os.close(ready_write)
         self.ready: IO[bytes] = os.fdopen(ready_read, "rb", buffering=0)
         os.close(gate_read)
         if not gated:
+            try:
+                os.write(gate_write, b"g")
+            except BrokenPipeError:
+                pass
             os.close(gate_write)
         self.stdout: IO[bytes] | None = os.fdopen(read_fd, "rb", buffering=0)
         if not output:
@@ -292,11 +320,9 @@ class _ForkJob:
                 pass
 
     def alive(self) -> bool:
-        if self._reaped:
-            return False
-        if self.returncode is None:
-            return True
-        return self.group_established and members_alive(self.pid)
+        # poll() alone observes death and reaps. A second query here could
+        # report death while leaving the reserved zombie permanently unreaped.
+        return not self._reaped
 
     def begin(self) -> None:
         if self._gate_fd is not None and self.group_established:
@@ -307,34 +333,40 @@ class _ForkJob:
             os.close(self._gate_fd)
             self._gate_fd = None
 
-    def poll(self) -> int | None:
-        if not self._reaped and not has_unreaped_status():
-            # Python builds without waitid still retain their waitable child.
-            # Both proofs are needed: a running leader could fork after a
-            # member query. A zombie leader cannot create a new writer.
-            zombie, descendants = group_snapshot(self.pid)
-            self.exited = self.exited or zombie
-            if zombie and not descendants:
-                pid, status = os.waitpid(self.pid, 0)
-                assert pid == self.pid
-                self._reaped = True
-                self.returncode = os.waitstatus_to_exitcode(status)
-                if self._gate_fd is not None:
-                    os.close(self._gate_fd)
-                    self._gate_fd = None
+    def poll(self, inventory: GroupInventory | None = None) -> int | None:
+        if self._reaped:
             return self.returncode
-        if self.returncode is None:
-            self.returncode = exited_status(self.pid)
-            self.exited = self.returncode is not None
-        if self.returncode is not None and not self._reaped:
-            if not self.group_established or not members_alive(self.pid):
-                pid, status = os.waitpid(self.pid, 0)
-                assert pid == self.pid
-                self._reaped = True
-                if self._gate_fd is not None:
-                    os.close(self._gate_fd)
-                    self._gate_fd = None
-                self.returncode = os.waitstatus_to_exitcode(status)
+        if not self.exited:
+            if has_unreaped_status():
+                self.returncode = exited_status(self.pid)
+                self.exited = self.returncode is not None
+            else:
+                self.exited = fallback_exited(self.pid, self._exit_notification)
+        if not self.exited:
+            return self.returncode
+        if self.group_established:
+            current = inventory if inventory is not None else GroupInventory()
+            zombie, descendants = current.snapshot(self.pid)
+            if not zombie or descendants:
+                return self.returncode
+            if sys.platform.startswith("linux"):
+                if self._sealed_inventory is None:
+                    seal_group(self.pid)
+                    self._sealed_inventory = current
+                    return self.returncode
+                if current is self._sealed_inventory:
+                    return self.returncode
+        pid, status = os.waitpid(self.pid, 0)
+        assert pid == self.pid
+        self._reaped = True
+        self.returncode = os.waitstatus_to_exitcode(status)
+        if self._gate_fd is not None:
+            os.close(self._gate_fd)
+            self._gate_fd = None
+        if self._exit_notification is not None:
+            self._exit_notification.close()
+            self._exit_notification = None
+        self._sealed_inventory = None
         return self.returncode
 
 
@@ -384,6 +416,11 @@ def _supervise(
 ) -> None:
     if os.name != "posix":
         raise RuntimeError("owned preparation requires POSIX process groups")
+    try:
+        validate_process_status()
+        status_available = True
+    except ProcessStatusUnavailable:
+        status_available = False
     if owned_root is not None:
         owned_root.mkdir(mode=0o700)
     # Preload framework-owned operations once, in this isolated helper only.
@@ -443,6 +480,9 @@ def _supervise(
         ident = request["id"]
         action = request["action"]
         if action == "submit":
+            if not status_available:
+                emit(ident, "rejected", reason="process_status_unavailable")
+                return
             root = Path(request["root"])
             if (
                 ident in jobs
@@ -594,6 +634,7 @@ def _supervise(
 
     def progress_jobs() -> None:
         now = time.monotonic()
+        inventory = GroupInventory()
         for ident, job in tuple(jobs.items()):
             if job.state == "released":
                 if not controller_open:
@@ -603,7 +644,7 @@ def _supervise(
                 # Provisional acceptance is not publication. Only release
                 # transfers ownership; EOF fences unreleased material.
                 continue
-            job.process.poll()
+            job.process.poll(inventory)
             exited = job.process.exited
             alive = job.process.alive()
             if job.state == "running" and exited and not job.stream_open:

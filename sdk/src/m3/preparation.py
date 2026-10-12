@@ -117,15 +117,19 @@ class PreparationSupervisor:
             if event == "lost":
                 job.fenced = True
                 job.quarantined = True
+            if frame.get("reason") == "unsupported_git_extensions":
+                error: Exception = UnsupportedFeature(
+                    "bounded git worktree preparation cannot execute project hooks, filters or external helpers"
+                )
+            elif frame.get("reason") == "process_status_unavailable":
+                error = PreparationError(
+                    "owned preparation requires an available process status backend"
+                )
+            else:
+                error = PreparationError("preparation job failed")
             for future in (job.ready, job.accepted, job.released):
                 if not future.done():
-                    future.set_exception(
-                        UnsupportedFeature(
-                            "bounded git worktree preparation cannot execute project hooks, filters or external helpers"
-                        )
-                        if frame.get("reason") == "unsupported_git_extensions"
-                        else PreparationError("preparation job failed")
-                    )
+                    future.set_exception(error)
         elif event == "cleanup_failed":
             job.quarantined = True
             if not job.removed.done():
@@ -251,9 +255,9 @@ class PreparationSupervisor:
             except PreparationError:
                 pass
         if self._worker is not None and self._worker.failed:
-            # A lost helper cannot send a cleanup receipt. Its worker owner
-            # still retains/fences groups and quarantine; waiting here cannot
-            # advance safe deletion and needlessly consumes the stop budget.
+            # A lost helper cannot prove writer death. Roots stay quarantined;
+            # waiting here cannot establish safe deletion, and the worker
+            # owner must not signal process groups whose identities expired.
             return
         end = time.monotonic() + 3.0
         if deadline is not None:
