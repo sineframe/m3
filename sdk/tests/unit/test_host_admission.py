@@ -504,6 +504,9 @@ async def test_killed_guardian_cannot_authorize_native_root_cleanup(
     root.mkdir()
     sentinel = root / "must-remain"
     sentinel.write_text("native resources")
+    admission = HostAdmission(tmp_path / "host")
+    lease = await admission.acquire(StartupAdmission(enabled=True, slots=1))
+    assert lease is not None
     owner = ProcessOwner(root)
     await owner.spawn(
         [
@@ -514,7 +517,7 @@ async def test_killed_guardian_cannot_authorize_native_root_cleanup(
             "print('finished',flush=True)",
         ],
         {},
-        owned_startup=True,
+        startup_lease=lease,
     )
     guardian = owner._guardian
     assert guardian is not None and owner.process is not None
@@ -525,5 +528,9 @@ async def test_killed_guardian_cannot_authorize_native_root_cleanup(
         await owner.close()
     assert sentinel.exists()
     assert guardian in _OWNED_GUARDIANS
+    with pytest.raises(OperationTimeout):
+        await admission.acquire(
+            StartupAdmission(enabled=True, slots=1, queue_timeout_seconds=0.1)
+        )
     assert await owner.process.stdout.readline() == b"finished\n"
     assert (root / "late-write").exists()
