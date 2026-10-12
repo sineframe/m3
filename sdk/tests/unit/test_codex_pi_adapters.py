@@ -994,42 +994,41 @@ def _mcp_configuration(key: str, **extra: object) -> HarnessServerConfig:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "configuration",
-    (
-        _mcp_configuration("filesystem"),
-        # A literal credential in the MCP server's environment.
-        _mcp_configuration("filesystem", environment={"API_TOKEN": "CANARY"}),
-        # A literal credential in an MCP header.
-        _mcp_configuration("filesystem", headers={"Authorization": "CANARY"}),
-    ),
-)
-async def test_codex_thread_start_error_never_includes_provider_text(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: object
+async def test_codex_thread_start_error_keeps_mcp_reason_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Any credential Codex was started with (adapter environment, native
-    # login, MCP configuration) can come back in its error text, so the error
-    # is built only from M3-known values: the code and configured server names.
+    # Codex can echo any credential it was started with (adapter environment,
+    # native login, literal MCP environment or headers) in its error text.
     source = tmp_path / "source-home"
     source.mkdir()
     (source / "auth.json").write_text(
-        json.dumps({"tokens": {"access_token": "CANARY"}}), encoding="utf-8"
+        json.dumps({"tokens": {"access_token": "LOGIN-CANARY"}}), encoding="utf-8"
     )
     monkeypatch.setenv("CODEX_HOME", str(source))
     adapter = CodexHarnessAdapter(
-        executable=str(CODEX_FIXTURE), environment={"OPENAI_API_KEY": "CANARY"}
+        executable=str(CODEX_FIXTURE), environment={"OPENAI_API_KEY": "ENV-CANARY"}
     )
     launch = _launch(
         Codex(model="fixture", executable=str(CODEX_FIXTURE)),
-        configurations=(configuration,),  # type: ignore[arg-type]
+        configurations=(
+            _mcp_configuration(
+                "filesystem",
+                environment={"API_TOKEN": "MCP-ENV-CANARY", "RETRIES": "1"},
+                headers={"Authorization": "MCP-HEADER-CANARY"},
+            ),
+        ),
     )
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    adapter.environment_for_launch(launch, runtime_root)
     process = _ThreadStartErrorProcess(
         {
             "code": -32603,
             "message": (
                 "error creating thread: Fatal error: Failed to initialize session: "
                 "required MCP servers failed to initialize: filesystem: handshaking "
-                "with MCP server failed: auth failed for CANARY secret  with\tspaces"
+                "with MCP server failed: auth failed for ENV-CANARY LOGIN-CANARY "
+                "MCP-ENV-CANARY  MCP-HEADER-CANARY\tafter 1 attempt"
             ),
         }
     )
@@ -1037,7 +1036,38 @@ async def test_codex_thread_start_error_never_includes_provider_text(
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
     assert str(exc_info.value) == (
         "Codex thread/start failed (JSON-RPC -32603): "
-        "required MCP server failed to initialize: filesystem"
+        "required MCP server failed to initialize: filesystem: handshaking with "
+        "MCP server failed: auth failed for [REDACTED] [REDACTED] [REDACTED] "
+        "[REDACTED] after 1 attempt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_codex_thread_start_error_drops_repeated_error_chain() -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(_mcp_configuration("slow"),),
+    )
+    process = _ThreadStartErrorProcess(
+        {
+            "code": -32603,
+            "message": (
+                "error creating thread: Fatal error: Failed to initialize session: "
+                "required MCP servers failed to initialize: slow: handshaking with "
+                "MCP server failed: uncorrelated error response: expected id 1, "
+                "error response carried 0: uncorrelated error response: expected "
+                "id 1, error response carried 0"
+            ),
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == (
+        "Codex thread/start failed (JSON-RPC -32603): "
+        "required MCP server failed to initialize: slow: handshaking with MCP "
+        "server failed: uncorrelated error response: expected id 1, error "
+        "response carried 0"
     )
 
 
