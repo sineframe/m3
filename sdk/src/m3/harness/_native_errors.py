@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Literal, get_args, get_origin
 
 from pydantic import ValidationError
@@ -15,8 +15,10 @@ from .contracts import HarnessLaunch, HarnessStartupError, HarnessTurnResult
 from .observations import HarnessObservation, MetadataObservedObservation
 
 _MESSAGE_LIMIT = 4096
+_SUMMARY_LIMIT = 512
 _INPUT_LIMIT = 65536
 _CODE_LIMIT = 128
+_MCP_INITIALIZATION_FAILURE = "required_mcp_failed_to_initialize"
 
 
 class NativeErrorInfo(ErrorInfo):
@@ -58,6 +60,103 @@ def launch_error_redaction(
     return RedactionConfig(secrets=frozenset(values), include_environment=False)
 
 
+def _bounded_integer(value: object, minimum: int, maximum: int) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        if minimum <= value <= maximum:
+            return value
+    return None
+
+
+def _bounded_text(value: object, limit: int) -> str | None:
+    return value if isinstance(value, str) and len(value) <= limit else None
+
+
+@dataclass(frozen=True, repr=False)
+class _NativeDiagnostic:
+    """Selected provider scalars; never retain the provider's entire body."""
+
+    summary: str
+    message: str | None
+    code: str | int | None
+    reason: str | None
+    oversized: bool
+
+    @classmethod
+    def parse(cls, native: object, summary: str, reason: object) -> _NativeDiagnostic:
+        message: object = native
+        code: object = None
+        if isinstance(native, Mapping):
+            message = native.get("message")
+            code = native.get("code", native.get("name"))
+            data = native.get("data")
+            if not isinstance(message, str) and isinstance(data, Mapping):
+                message = data.get("message")
+        return cls(
+            summary=summary,
+            message=_bounded_text(message, _INPUT_LIMIT),
+            code=(
+                _bounded_text(code, _INPUT_LIMIT)
+                if isinstance(code, str)
+                else _bounded_integer(code, -(2**63), 2**63 - 1)
+            ),
+            reason=_bounded_text(reason, _CODE_LIMIT),
+            oversized=isinstance(message, str) and len(message) > _INPUT_LIMIT,
+        )
+
+    def redacted(self, config: RedactionConfig) -> _NativeDiagnostic:
+        # Redact complete bounded strings before applying output limits.
+        # Slicing first could expose a credential that crosses the boundary.
+        def redact(value: str | None) -> str | None:
+            return redact_for_api(value, config=config) if value is not None else None
+
+        summary = _bounded_text(self.summary, _INPUT_LIMIT)
+        if summary is None:
+            summary = "Native harness failed"
+        return replace(
+            self,
+            summary=redact_for_api(summary, config=config),
+            message=redact(self.message),
+            code=redact(self.code) if isinstance(self.code, str) else self.code,
+            reason=redact(self.reason),
+        )
+
+
+def _diagnostic_evidence(
+    diagnostic: _NativeDiagnostic,
+    harness: str,
+    phase: str,
+    http_status: object,
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {"harness": harness, "phase": phase}
+    status = _bounded_integer(http_status, 100, 599)
+    if status is not None:
+        evidence["http_status"] = status
+    if isinstance(diagnostic.code, int):
+        evidence["native_code"] = diagnostic.code
+    return evidence
+
+
+def _assemble_native_error(
+    diagnostic: _NativeDiagnostic, code: ErrorCode, evidence: dict[str, Any]
+) -> NativeErrorInfo:
+    message = diagnostic.summary[:_SUMMARY_LIMIT]
+    if isinstance(diagnostic.code, str):
+        evidence["native_code"] = diagnostic.code[:_CODE_LIMIT]
+    if diagnostic.reason is not None:
+        evidence["reason"] = diagnostic.reason
+    if diagnostic.message:
+        native_message = diagnostic.message[:_MESSAGE_LIMIT]
+        evidence["native_message"] = native_message
+        if len(diagnostic.message) > _MESSAGE_LIMIT:
+            evidence["native_message_truncated"] = True
+        message += ": " + native_message
+    if len(message) > _MESSAGE_LIMIT:
+        evidence["message_truncated"] = True
+    return NativeErrorInfo(
+        code=code, message=message[:_MESSAGE_LIMIT], details=evidence
+    )
+
+
 def native_error_info(
     native: object,
     *,
@@ -68,79 +167,30 @@ def native_error_info(
     code: ErrorCode = ErrorCode.TRANSPORT_ERROR,
     details: Mapping[str, Any] | None = None,
 ) -> NativeErrorInfo:
-    """Keep selected native scalar evidence, never an unchecked native body.
+    """Parse selected native fields, redact them, then bound the public error."""
 
-    No registry means no free text. Redact whole input before truncating so a
-    credential crossing the output boundary cannot leak a prefix. Oversized
-    input is omitted rather than sliced before redaction. The fixed evidence
-    shape bounds both projection work and serialized output.
-    """
-
-    evidence: dict[str, Any] = {"harness": harness, "phase": phase}
-    # Only bounded, known diagnostic fields may accompany native text. Never
-    # carry arbitrary caller/provider mappings into a fail-closed envelope.
     supplied = details or {}
-    http_status = supplied.get("http_status")
-    if isinstance(http_status, int) and not isinstance(http_status, bool):
-        if 100 <= http_status <= 599:
-            evidence["http_status"] = http_status
-    message: object = native if isinstance(native, str) else None
-    native_code: object = None
-    if isinstance(native, Mapping):
-        message = native.get("message")
-        native_code = native.get("code", native.get("name"))
-        data = native.get("data")
-        if not isinstance(message, str) and isinstance(data, Mapping):
-            message = data.get("message")
-    if isinstance(native_code, int) and not isinstance(native_code, bool):
-        # JSON integers can be arbitrarily large; do not serialize unbounded
-        # provider-controlled numeric evidence.
-        if -(2**63) <= native_code < 2**63:
-            evidence["native_code"] = native_code
+    diagnostic = _NativeDiagnostic.parse(native, summary, supplied.get("reason"))
+    evidence = _diagnostic_evidence(
+        diagnostic, harness, phase, supplied.get("http_status")
+    )
     if redaction is None:
-        if supplied.get("reason") == "required_mcp_failed_to_initialize":
-            evidence["reason"] = "required_mcp_failed_to_initialize"
+        if diagnostic.reason == _MCP_INITIALIZATION_FAILURE:
+            evidence["reason"] = _MCP_INITIALIZATION_FAILURE
         evidence["native_diagnostic"] = "unavailable_registry"
-        return NativeErrorInfo(code=code, message=summary[:512], details=evidence)
-    projection: dict[str, str] = {
-        "summary": summary if len(summary) <= _INPUT_LIMIT else "Native harness failed"
-    }
-    reason = supplied.get("reason")
-    if isinstance(reason, str) and len(reason) <= _CODE_LIMIT:
-        projection["reason"] = reason
-    if isinstance(message, str):
-        if len(message) > _INPUT_LIMIT:
-            evidence["native_diagnostic"] = "oversized"
-        else:
-            projection["native_message"] = message
-    if isinstance(native_code, str) and len(native_code) <= _INPUT_LIMIT:
-        projection["native_code"] = native_code
+        return NativeErrorInfo(
+            code=code, message=summary[:_SUMMARY_LIMIT], details=evidence
+        )
+    if diagnostic.oversized:
+        evidence["native_diagnostic"] = "oversized"
     try:
-        safe = {
-            key: redact_for_api(value, config=redaction)
-            for key, value in projection.items()
-        }
+        diagnostic = diagnostic.redacted(redaction)
     except RedactionError:
         evidence["native_diagnostic"] = "redaction_failed"
         return NativeErrorInfo(
             code=code, message="Native harness diagnostic unavailable", details=evidence
         )
-    safe_summary = safe["summary"][:512]
-    if "native_code" in safe:
-        evidence["native_code"] = safe["native_code"][:_CODE_LIMIT]
-    if "reason" in safe:
-        evidence["reason"] = safe["reason"]
-    safe_message = safe.get("native_message")
-    if isinstance(safe_message, str) and safe_message:
-        evidence["native_message"] = safe_message[:_MESSAGE_LIMIT]
-        if len(safe_message) > _MESSAGE_LIMIT:
-            evidence["native_message_truncated"] = True
-        safe_summary += ": " + evidence["native_message"]
-    if len(safe_summary) > _MESSAGE_LIMIT:
-        evidence["message_truncated"] = True
-    return NativeErrorInfo(
-        code=code, message=safe_summary[:_MESSAGE_LIMIT], details=evidence
-    )
+    return _assemble_native_error(diagnostic, code, evidence)
 
 
 def project_native_observation(
