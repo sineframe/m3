@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import functools
 import json
 import os
-import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -16,10 +17,33 @@ class CodexUnavailable(RuntimeError):
     pass
 
 
+CODEX_VERSION = "0.156.1"
+_SDK_ROOT = Path(__file__).parents[2]
+
+
+@functools.cache
 def require_codex() -> tuple[str, str]:
-    executable = os.environ.get("M3_CODEX_EXECUTABLE") or shutil.which("codex")
-    if executable is None:
-        raise CodexUnavailable("Codex is unavailable; set M3_CODEX_EXECUTABLE")
+    """Return the pinned Codex from the managed runtime cache.
+
+    The MRTR suites are characterized against exactly this version, so they
+    never use whatever ``codex`` happens to be on ``PATH``. The cache honours
+    ``M3_HARNESS_CACHE_DIR``; the lease is held for the rest of the process.
+    """
+
+    from m3.runtime import RuntimeManager
+
+    manager = RuntimeManager(project_root=_SDK_ROOT)
+    # Callers may already be inside an event loop.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            lease = pool.submit(
+                asyncio.run, manager.acquire("codex", CODEX_VERSION)
+            ).result()
+        except Exception as exc:
+            raise CodexUnavailable(
+                f"could not acquire managed Codex {CODEX_VERSION}: {exc}"
+            ) from exc
+    executable = str(lease.executable)
     try:
         version = subprocess.run(
             [executable, "--version"],
@@ -30,7 +54,7 @@ def require_codex() -> tuple[str, str]:
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         raise CodexUnavailable("Codex could not be executed") from exc
-    expected = "codex-cli 0.156.1"
+    expected = f"codex-cli {CODEX_VERSION}"
     if version != expected:
         raise CodexUnavailable(f"expected {expected!r}, found {version!r}")
     return executable, version

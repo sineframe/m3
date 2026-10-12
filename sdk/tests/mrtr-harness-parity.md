@@ -18,11 +18,10 @@ mismatched Codex fails the suites instead of skipping them. The canonical
 limits and ownership model are in the
 [Codex App Server section of the API reference](https://m3.sineframe.com/docs/reference/python/m3/elicitation).
 
-Run the local Codex gates with no paid provider call:
+Run the local Codex gates with no paid provider call. The suites acquire Codex
+0.156.1 through the managed runtime cache, not from `PATH`:
 
 ```bash
-npm install --global @openai/codex@0.156.1
-test "$(codex --version)" = "codex-cli 0.156.1"
 uv run --project sdk --all-extras pytest -q \
   sdk/tests/e2e/test_real_codex_native_mrtr.py \
   sdk/tests/e2e/test_real_codex_managed_mrtr.py \
@@ -31,7 +30,7 @@ uv run --project sdk --all-extras pytest -q \
   sdk/examples/tests/test_modern_mrtr_codex_approval_spoof.py
 ```
 
-The binary must report `codex-cli 0.156.1` by default. The native suite
+The native suite
 characterizes Codex; the managed suite exercises M3's real action and storage
 path; the Codex example suite exercises the same plans shown in the public
 guide; the action-scope suite covers response actions and repeated planned

@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 import sys
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -14,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.fixtures.codex_app_server_harness import CodexUnavailable, require_codex
 from tests.fixtures.codex_responses_provider import (
     ModelOutput,
     ResponsesRun,
@@ -30,27 +28,13 @@ from m3.types import Codex, HarnessSpec, StdioServer
 
 SDK_ROOT = Path(__file__).parents[2]
 EXAMPLES_ROOT = SDK_ROOT / "examples"
-_EXPECTED_CODEX_VERSION = "codex-cli 0.156.1"
 
 
 def _require_codex() -> str:
-    executable = os.environ.get("M3_CODEX_EXECUTABLE") or shutil.which("codex")
-    if executable is None:
-        pytest.fail("Codex 0.156.1 is required; set M3_CODEX_EXECUTABLE")
     try:
-        version = subprocess.run(
-            [executable, "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        pytest.fail("Codex 0.156.1 could not be executed")
-    expected = _EXPECTED_CODEX_VERSION
-    if version != expected:
-        pytest.fail(f"expected {expected!r}, found {version!r}")
-    return executable
+        return require_codex()[0]
+    except CodexUnavailable as exc:
+        pytest.fail(str(exc), pytrace=False)
 
 
 class FixtureCodexHarnessAdapter(CodexHarnessAdapter):

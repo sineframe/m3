@@ -20,6 +20,7 @@ from test_real_codex_managed_mrtr import (
     FixtureCodexHarnessAdapter,
     ModelOutput,
     ResponsesRun,
+    _require_codex,
     function_tools,
     open_codex_responses_provider,
 )
@@ -39,20 +40,10 @@ PAGE = ROOT / "docs" / "site" / "reference" / "python" / "m3" / "managed-input.m
 def test_managed_input_reference_fence_against_native_codex_and_local_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    executable = os.environ.get("M3_DOCS_CODEX_EXECUTABLE") or shutil.which("codex")
     cache_root = os.environ.get("M3_HARNESS_CACHE_DIR") or str(
         tmp_path.parent / f"{tmp_path.name}-managed-runtime-cache"
     )
-    if executable is None:
-        pytest.fail("install Codex CLI 0.156.1 or set M3_DOCS_CODEX_EXECUTABLE")
-    version = subprocess.run(
-        [executable, "--version"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    ).stdout.strip()
-    assert version == "codex-cli 0.156.1"
+    executable = _require_codex()
 
     monkeypatch.setenv("M3_DOCS_CODEX_MODEL", "m3-fixture-model")
     monkeypatch.chdir(tmp_path)
@@ -171,20 +162,10 @@ def test_managed_input_reference_fence_against_native_codex_and_local_provider(
 def test_managed_input_project_test_against_native_codex_and_local_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    executable = os.environ.get("M3_DOCS_CODEX_EXECUTABLE") or shutil.which("codex")
     cache_root = os.environ.get("M3_HARNESS_CACHE_DIR") or str(
         tmp_path / "managed-runtime-cache"
     )
-    if executable is None:
-        pytest.fail("install Codex CLI 0.156.1 or set M3_DOCS_CODEX_EXECUTABLE")
-    version = subprocess.run(
-        [executable, "--version"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    ).stdout.strip()
-    assert version == "codex-cli 0.156.1"
+    executable = _require_codex()
 
     project = tmp_path / "elicitation-managed-input"
     project.mkdir()
