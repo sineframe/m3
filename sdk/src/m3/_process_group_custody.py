@@ -98,6 +98,11 @@ def group_snapshot(pid: int) -> tuple[bool, bool]:
     return GroupInventory().snapshot(pid)
 
 
+def members_alive(pid: int) -> bool:
+    """Query live members while the caller retains its waitable leader."""
+    return group_snapshot(pid)[1]
+
+
 @lru_cache(maxsize=1)
 def validate_process_status() -> None:
     if sys.platform.startswith("linux"):

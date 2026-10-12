@@ -438,3 +438,36 @@ def test_linux_empty_inventory_cannot_publish_a_missed_live_writer(
             assert time.monotonic() < deadline
             time.sleep(0.01)
         job.stdout.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX custody module")
+def test_standalone_guardian_can_load_custody_callables() -> None:
+    import runpy
+    import time
+
+    import m3._process_group_custody as custody
+    from m3._preparation_worker import _ForkJob
+
+    # Native guardians execute without package imports and load these symbols
+    # directly. Exercise that loading path against an actual reserved child.
+    assert custody.__file__ is not None
+    symbols = runpy.run_path(custody.__file__)
+    snapshot = symbols["group_snapshot"]
+    members_alive = symbols["members_alive"]
+    job = _ForkJob(lambda: None, output=False, gated=True)
+    assert job.ready.read(1) == b"s"
+    job.ready.close()
+    job.group_established = True
+    job.begin()
+    deadline = time.monotonic() + 5
+    try:
+        while not snapshot(job.pid)[0]:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert not members_alive(job.pid)
+    finally:
+        job.signal(signal.SIGKILL)
+        while job.alive():
+            job.poll()
+            assert time.monotonic() < deadline
+            time.sleep(0.01)

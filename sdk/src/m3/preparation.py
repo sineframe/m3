@@ -257,7 +257,7 @@ class PreparationSupervisor:
         if self._worker is not None and self._worker.failed:
             # A lost helper cannot prove writer death. Roots stay quarantined;
             # waiting here cannot establish safe deletion, and the worker
-            # owner must not signal process groups whose identities expired.
+            # owner no longer reserves those process group identities.
             return
         end = time.monotonic() + 3.0
         if deadline is not None:
