@@ -1,0 +1,6 @@
+id: H03
+suite: hard
+slug: flaky-triage-rule
+band: per_item_rule
+prompt: >-
+  Triage the open flaky issues in OPS. Anything nobody owns goes to the OPS on-call engineer. For issues that already have an owner, leave the owner alone and add a comment `flaky-review-{nonce}`.

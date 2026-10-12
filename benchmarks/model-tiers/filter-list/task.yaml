@@ -1,0 +1,5 @@
+id: T05
+suite: everyday
+slug: filter-list
+band: filter
+prompt: List the open, unassigned bugs in PAY that are labelled regression. Give me the count and the issue keys.

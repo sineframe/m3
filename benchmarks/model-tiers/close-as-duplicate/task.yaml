@@ -1,0 +1,5 @@
+id: T07
+suite: hard
+slug: close-as-duplicate
+band: error_recovery
+prompt: Close PAY-150 as a duplicate of PAY-149.

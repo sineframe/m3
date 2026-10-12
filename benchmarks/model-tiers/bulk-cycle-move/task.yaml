@@ -1,0 +1,5 @@
+id: T10
+suite: everyday
+slug: bulk-cycle-move
+band: bulk
+prompt: Move every open issue labelled flaky in cycle Oct-W2 to Oct-W3, and tell me how many you moved.

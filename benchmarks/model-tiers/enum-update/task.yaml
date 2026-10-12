@@ -1,0 +1,5 @@
+id: T02
+suite: everyday
+slug: enum-update
+band: enum_update
+prompt: Move PAY-142 to In Review and set its priority to urgent.

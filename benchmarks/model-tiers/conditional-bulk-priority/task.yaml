@@ -1,0 +1,5 @@
+id: H08
+suite: hard
+slug: conditional-bulk-priority
+band: conditional_bulk
+prompt: "Make every open MOB bug that has a customer ticket high priority, unless it's already urgent. Tell me how many issues you changed."

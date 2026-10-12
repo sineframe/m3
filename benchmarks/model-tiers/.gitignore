@@ -1,0 +1,15 @@
+# Python environment and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local m3 CLI install and M3 working data
+.tools/
+.m3/
+
+# Credentials: never commit
+.env
+
+# Trial records and call logs written during a run
+results/

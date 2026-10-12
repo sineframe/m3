@@ -1,0 +1,5 @@
+id: T12
+suite: hard
+slug: conditional-branch
+band: conditional
+prompt: If PAY-201 is linked to a customer ticket, bump it to urgent; otherwise leave a comment `no-link-{nonce}` on it.

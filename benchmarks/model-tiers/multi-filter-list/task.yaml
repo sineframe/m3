@@ -1,0 +1,5 @@
+id: H01
+suite: hard
+slug: multi-filter-list
+band: multi_filter
+prompt: "Which open, unassigned regression bugs in PAY or WEB are in the Oct-W2 or Oct-W3 cycles? Leave out anything labelled wontfix-candidate. Give me the count and the issue keys."

@@ -1,0 +1,5 @@
+id: H05
+suite: hard
+slug: team-rebalance
+band: rebalance
+prompt: "Nobody on Platform should have more than 3 open in-progress issues. For anyone over, move their newest extra issues to whichever active Platform engineer has the fewest in progress, and keep everyone at 3 or under."

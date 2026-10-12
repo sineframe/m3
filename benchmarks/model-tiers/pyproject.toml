@@ -1,0 +1,15 @@
+[project]
+name = "model-tiers"
+version = "0.0.0"
+description = "Model Tiers: MCP task success across Claude and OpenAI model tiers and server designs, run with M3."
+requires-python = "==3.12.*"
+dependencies = [
+    "sf-m3[pytest,judge,storage]==0.2.38",
+    "pyyaml>=6,<7",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = ["pytest>=8"]
