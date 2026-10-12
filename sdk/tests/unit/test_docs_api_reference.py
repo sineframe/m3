@@ -93,6 +93,19 @@ def test_signature_format_keeps_parameter_separators() -> None:
     assert _RENDERER._signature_value_repr(frozenset()) == "frozenset()"
 
 
+def test_signature_hides_optional_private_hooks_and_keeps_required_inputs() -> None:
+    def sample(
+        _value: str, /, *, visible: bool = False, _bridge: object = None
+    ) -> None:
+        return None
+
+    block = _RENDERER._signature_block("sample", sample)
+    assert "_bridge" not in block
+    assert "_value: str" in block
+    assert "visible: bool = False" in block
+    assert block.index("    /,") < block.index("    *,")
+
+
 def test_nested_field_constraints_and_table_code_spans_are_preserved() -> None:
     from annotated_types import Ge, MinLen
 

@@ -13,7 +13,7 @@ import inspect
 import math
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
@@ -281,21 +281,7 @@ class HarnessLaunch:
     def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""
 
-        return HarnessLaunch(
-            self.spec,
-            self.servers,
-            self.configurations,
-            self.tool_policy,
-            self.interactions,
-            self.workspace_root,
-            evidence,
-            self.capture,
-            self._credentials,
-            self._literal_registry,
-            self._credential_deadline,
-            self._native_auth_operations,
-            self._native_secret_inputs,
-        )
+        return replace(self, tool_policy_evidence=evidence)
 
 
 class HarnessSession(Protocol):

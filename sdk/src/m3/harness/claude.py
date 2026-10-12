@@ -458,10 +458,9 @@ class ClaudeCodeHarnessAdapter:
         root = Path(tempfile.mkdtemp(prefix="m3-claude-"))
         owner = ProcessOwner(root)
         try:
-            assert launch._credentials is not None
-            environment = _isolated_environment(
-                root, launch._credentials.child_environment()
-            )
+            credentials = launch._credentials
+            assert credentials is not None
+            environment = _isolated_environment(root, credentials.child_environment())
             environment["DISABLE_UPDATES"] = "1"
             harness = launch.spec.harness
             if harness is None:
@@ -477,8 +476,7 @@ class ClaudeCodeHarnessAdapter:
                     raise HarnessStartupError(
                         "Claude Code credential reference is unavailable"
                     )
-                assert launch._credentials is not None
-                value = launch._credentials.credential_environment()[target]
+                value = credentials.credential_environment()[target]
                 if not value:
                     raise HarnessStartupError("Claude Code credential is unavailable")
                 environment[target] = value
@@ -490,9 +488,7 @@ class ClaudeCodeHarnessAdapter:
             config = write_config(
                 root,
                 launch,
-                environment=launch._credentials.reference_environment()
-                if launch._credentials is not None
-                else None,
+                environment=credentials.reference_environment(),
                 secrets=runtime_secrets,
             )
             self._native_error_redaction = launch_error_redaction(

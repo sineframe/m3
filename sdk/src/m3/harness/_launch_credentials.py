@@ -73,6 +73,81 @@ class _ExpectedServer:
     loopback_only: bool
 
 
+class _LaunchInputs:
+    """Resolve inputs into one registry using one captured environment."""
+
+    def __init__(
+        self,
+        store: RunLiteralStore,
+        registered: set[LiteralHandle],
+        environment: Mapping[str, str],
+        literal_registry: RunLiteralStore | None,
+    ) -> None:
+        self.store = store
+        self.registered = registered
+        self.environment = environment
+        self.literal_registry = literal_registry
+        self.references: dict[str, LiteralHandle] = {}
+
+    def pin(self, value: str) -> LiteralHandle:
+        if not isinstance(value, str) or "\x00" in value:
+            raise CredentialResolutionError("native launch input is invalid")
+        handle = self.store.freeze(value)
+        if value:
+            self.registered.add(handle)
+        return handle
+
+    def reference(self, reference: SecretReference) -> LiteralHandle:
+        if reference.source != "environment":
+            raise CredentialResolutionError("credential provider is unsupported")
+        if reference.name not in self.references:
+            value = self.environment.get(reference.name)
+            if not isinstance(value, str) or not value:
+                raise CredentialResolutionError("named credential is unavailable")
+            self.references[reference.name] = self.pin(value)
+        return self.references[reference.name]
+
+    def resolve(self, value: object, *, template: bool = True) -> LiteralHandle:
+        if isinstance(value, SecretReference):
+            return self.reference(value)
+        if isinstance(value, LiteralHandle):
+            if self.literal_registry is None:
+                raise CredentialResolutionError("literal registry is unavailable")
+            value = self.literal_registry.resolve(value)
+        if not isinstance(value, str):
+            raise CredentialResolutionError("native launch input is invalid")
+        original = self.pin(value)
+        if not template:
+            return original
+        rendered = self.render_template(value)
+        return original if rendered == value else self.pin(rendered)
+
+    def render_template(self, value: str) -> str:
+        pieces: list[str] = []
+        offset = 0
+        while True:
+            begin = value.find("${", offset)
+            if begin < 0:
+                pieces.append(value[offset:])
+                return "".join(pieces)
+            end = value.find("}", begin + 2)
+            if end < 0:
+                pieces.append(value[offset:])
+                return "".join(pieces)
+            name = value[begin + 2 : end]
+            if len(name) > 256 or not re.fullmatch(r"[A-Za-z0-9_]+", name):
+                raise CredentialResolutionError("credential template is invalid")
+            handle = self.reference(SecretReference(source="environment", name=name))
+            pieces.extend((value[offset:begin], self.store.resolve(handle)))
+            self.pin(value[begin : end + 1])
+            offset = end + 1
+
+    def fields(self, values: Mapping[str, object]) -> Mapping[str, LiteralHandle]:
+        return MappingProxyType(
+            {key: self.resolve(value) for key, value in values.items()}
+        )
+
+
 class LaunchCredentialBundle:
     """A session-owned handle registry; public specs retain their references.
 
@@ -120,69 +195,9 @@ class LaunchCredentialBundle:
         if captured_credentials is not None:
             captured_credentials.validate_inputs(configurations)
             source.update(captured_credentials.reference_environment())
-        references: dict[str, LiteralHandle] = {}
-
-        def pin(value: str) -> LiteralHandle:
-            if not isinstance(value, str) or "\x00" in value:
-                raise CredentialResolutionError("native launch input is invalid")
-            handle = self._store.freeze(value)
-            if value:
-                self._registered.add(handle)
-            return handle
-
-        def named(reference: SecretReference) -> LiteralHandle:
-            if reference.source != "environment":
-                raise CredentialResolutionError("credential provider is unsupported")
-            if reference.name not in references:
-                value = source.get(reference.name)
-                if not isinstance(value, str) or not value:
-                    raise CredentialResolutionError("named credential is unavailable")
-                references[reference.name] = pin(value)
-            return references[reference.name]
-
-        def resolve(value: object, *, template: bool = True) -> LiteralHandle:
-            if isinstance(value, SecretReference):
-                return named(value)
-            if isinstance(value, LiteralHandle):
-                if literal_registry is None:
-                    raise CredentialResolutionError("literal registry is unavailable")
-                value = literal_registry.resolve(value)
-            if not isinstance(value, str):
-                raise CredentialResolutionError("native launch input is invalid")
-            original = pin(value)
-            rendered = value
-            if template:
-                pieces: list[str] = []
-                offset = 0
-                while True:
-                    begin = value.find("${", offset)
-                    if begin < 0:
-                        pieces.append(value[offset:])
-                        break
-                    end = value.find("}", begin + 2)
-                    if end < 0:
-                        pieces.append(value[offset:])
-                        break
-                    name = value[begin + 2 : end]
-                    if len(name) > 256 or not re.fullmatch(r"[A-Za-z0-9_]+", name):
-                        raise CredentialResolutionError(
-                            "credential template is invalid"
-                        )
-                    pieces.append(value[offset:begin])
-                    pieces.append(
-                        self._store.resolve(
-                            named(SecretReference(source="environment", name=name))
-                        )
-                    )
-                    pin(value[begin : end + 1])
-                    offset = end + 1
-                rendered = "".join(pieces)
-            return original if rendered == value else pin(rendered)
-
-        def fields(values: Mapping[str, object]) -> Mapping[str, LiteralHandle]:
-            return MappingProxyType(
-                {key: resolve(value) for key, value in values.items()}
-            )
+        inputs = _LaunchInputs(self._store, self._registered, source, literal_registry)
+        pin, resolve = inputs.pin, inputs.resolve
+        references = inputs.references
 
         try:
             self._source_inputs = self._snapshot_inputs(configurations)
@@ -216,7 +231,10 @@ class LaunchCredentialBundle:
             for value in (*native_secret_inputs, *additional_literals):
                 resolve(value, template=False)
             self._credentials = MappingProxyType(
-                {target: named(ref) for target, ref in credential_references.items()}
+                {
+                    target: inputs.reference(ref)
+                    for target, ref in credential_references.items()
+                }
             )
             for target in trimmed_credential_targets.intersection(self._credentials):
                 pin(self._store.resolve(self._credentials[target]).strip())
@@ -230,70 +248,7 @@ class LaunchCredentialBundle:
                         for key, value in (stdio_baseline or {}).items()
                     }
                 )
-            for configuration in configurations:
-                if not configuration.available:
-                    continue
-                if configuration.connection_id in self._servers:
-                    raise CredentialResolutionError("duplicate launch server identity")
-                if captured_credentials is not None:
-                    key = configuration.connection_id
-                    captured = captured_credentials._servers[key]
-
-                    def copy_handle(
-                        handle: LiteralHandle | None,
-                    ) -> LiteralHandle | None:
-                        return (
-                            pin(captured_credentials._store.resolve(handle))
-                            if handle is not None
-                            else None
-                        )
-
-                    self._servers[key] = _ServerHandles(
-                        command=tuple(
-                            pin(captured_credentials._store.resolve(handle))
-                            for handle in captured.command
-                        )
-                        if captured.command is not None
-                        else None,
-                        cwd=copy_handle(captured.cwd),
-                        endpoint=copy_handle(captured.endpoint),
-                        environment=MappingProxyType(
-                            {
-                                name: pin(value)
-                                for name, value in captured_credentials.server_environment(
-                                    key
-                                ).items()
-                            }
-                        ),
-                        headers=MappingProxyType(
-                            {
-                                name: pin(value)
-                                for name, value in captured_credentials.server_headers(
-                                    key
-                                ).items()
-                            }
-                        ),
-                    )
-                    continue
-                command = (
-                    tuple(
-                        resolve(part, template=False)
-                        for part in (configuration.command, *configuration.args)
-                    )
-                    if configuration.command is not None
-                    else None
-                )
-                self._servers[configuration.connection_id] = _ServerHandles(
-                    command=command,
-                    cwd=resolve(configuration.cwd, template=False)
-                    if configuration.cwd is not None
-                    else None,
-                    endpoint=resolve(configuration.endpoint)
-                    if configuration.endpoint is not None
-                    else None,
-                    environment=fields(configuration.environment),
-                    headers=fields(configuration.headers),
-                )
+            self._pin_servers(configurations, inputs, captured_credentials)
             self._references = MappingProxyType(references)
         except BaseException:
             self.close()
@@ -304,6 +259,84 @@ class LaunchCredentialBundle:
 
     def __getstate__(self) -> None:
         raise TypeError("launch credentials cannot be serialized")
+
+    def _pin_servers(
+        self,
+        configurations: Sequence[HarnessServerConfig],
+        inputs: _LaunchInputs,
+        captured: LaunchCredentialBundle | None,
+    ) -> None:
+        for configuration in configurations:
+            if not configuration.available:
+                continue
+            key = configuration.connection_id
+            if key in self._servers:
+                raise CredentialResolutionError("duplicate launch server identity")
+            self._servers[key] = (
+                self._copy_captured_server(captured, key, inputs)
+                if captured is not None
+                else self._pin_server(configuration, inputs)
+            )
+
+    @staticmethod
+    def _pin_server(
+        configuration: HarnessServerConfig, inputs: _LaunchInputs
+    ) -> _ServerHandles:
+        command = (
+            tuple(
+                inputs.resolve(part, template=False)
+                for part in (configuration.command, *configuration.args)
+            )
+            if configuration.command is not None
+            else None
+        )
+        return _ServerHandles(
+            command=command,
+            cwd=inputs.resolve(configuration.cwd, template=False)
+            if configuration.cwd is not None
+            else None,
+            endpoint=inputs.resolve(configuration.endpoint)
+            if configuration.endpoint is not None
+            else None,
+            environment=inputs.fields(configuration.environment),
+            headers=inputs.fields(configuration.headers),
+        )
+
+    @staticmethod
+    def _copy_captured_server(
+        captured: LaunchCredentialBundle, key: str, inputs: _LaunchInputs
+    ) -> _ServerHandles:
+        original = captured._servers[key]
+
+        def copy(handle: LiteralHandle | None) -> LiteralHandle | None:
+            return (
+                inputs.pin(captured._store.resolve(handle))
+                if handle is not None
+                else None
+            )
+
+        return _ServerHandles(
+            command=tuple(
+                inputs.pin(captured._store.resolve(handle))
+                for handle in original.command
+            )
+            if original.command is not None
+            else None,
+            cwd=copy(original.cwd),
+            endpoint=copy(original.endpoint),
+            environment=MappingProxyType(
+                {
+                    name: inputs.pin(value)
+                    for name, value in captured.server_environment(key).items()
+                }
+            ),
+            headers=MappingProxyType(
+                {
+                    name: inputs.pin(value)
+                    for name, value in captured.server_headers(key).items()
+                }
+            ),
+        )
 
     def _snapshot_inputs(
         self, configurations: Sequence[HarnessServerConfig]
