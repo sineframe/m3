@@ -40,7 +40,7 @@ class Lease:
     def receive(self) -> dict[str, Any]:
         frame = self.reader.readline(4097)
         if not frame:
-            raise RuntimeError("benchmark coordinator lost")
+            raise RuntimeError("checkpoint server connection lost")
         assert len(frame) <= 4096 and frame.endswith(b"\n")
         return json.loads(frame)
 

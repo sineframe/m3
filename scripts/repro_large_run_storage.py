@@ -85,7 +85,7 @@ class CheckpointOwner:
     """Fixture-only live socket leases; no descendant discovery or stale kills."""
 
     def __init__(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="m3-g1-"))
+        self.root = Path(tempfile.mkdtemp(prefix="m3-db-"))
         self.endpoint = self.root / "checkpoint"
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.listener.bind(str(self.endpoint))
