@@ -471,6 +471,27 @@ def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
     return values
 
 
+def _with_overrides(base: Config, explicit: _Mapping[str, _Any] | Config) -> Config:
+    """Apply Python leaves to an already resolved invocation configuration."""
+    provided = _explicit_values(explicit)
+    overrides = _validate_mapping(provided, "explicit", partial=True)
+    effective = _validate_mapping(
+        _overlay(_explicit_values(base), overrides), "effective"
+    )
+    resolved = Config.model_validate(effective)
+    origins = dict(base.sources)
+    for path in _leaves(overrides):
+        origins[path] = ConfigOrigin(
+            source=ConfigSource.EXPLICIT, origin=f"argument:{path}"
+        )
+    return Config(
+        **effective,
+        sources={
+            path: origins.get(path, resolved.sources[path]) for path in resolved.sources
+        },
+    )
+
+
 def load_config(
     explicit: _Mapping[str, _Any] | None = None,
     *,

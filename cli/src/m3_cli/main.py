@@ -104,6 +104,9 @@ def _parser() -> argparse.ArgumentParser:
         "--project-root", type=Path, help="project root used for pyproject discovery"
     )
     doctor_parser.add_argument(
+        "--m3-config", type=Path, metavar="PATH", help="TOML file containing [tool.m3]"
+    )
+    doctor_parser.add_argument(
         "--python", type=Path, metavar="PATH", help="Python used for project checks"
     )
     doctor_parser.add_argument(
@@ -218,6 +221,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> None:
+    test.add_argument(
+        "--m3-config", type=Path, metavar="PATH", help="TOML file containing [tool.m3]"
+    )
     test.add_argument(
         "--python", type=Path, metavar="PATH", help="Python used to run pytest"
     )
@@ -469,6 +475,8 @@ def main(argv: list[str] | None = None) -> int:
                     runtime=args.runtime,
                     harness_cache_dir=args.harness_cache_dir,
                 )
+                if args.m3_config is not None:
+                    test_kwargs["config_file"] = args.m3_config
                 if early_run_id is not None:
                     test_kwargs["run_id"] = early_run_id
                     test_kwargs["banner_shown"] = banner_shown
