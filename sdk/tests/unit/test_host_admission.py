@@ -491,3 +491,39 @@ async def test_owned_stalled_queue_filesystem_has_bounded_return_and_no_late_adm
         os.close(release)
         await asyncio.wait_for(processes[0].wait(), timeout=3)
     assert not (root / "queue").exists()
+
+
+@pytest.mark.asyncio
+async def test_killed_guardian_cannot_authorize_native_root_cleanup(
+    tmp_path: Path,
+) -> None:
+    from m3.errors import CleanupError
+    from m3.harness.guardian import _OWNED_GUARDIANS
+
+    root = tmp_path / "native"
+    root.mkdir()
+    sentinel = root / "must-remain"
+    sentinel.write_text("native resources")
+    owner = ProcessOwner(root)
+    await owner.spawn(
+        [
+            sys.executable,
+            "-c",
+            "import pathlib,time; print('ready',flush=True); time.sleep(.5); "
+            "pathlib.Path('late-write').write_text('writer completed'); "
+            "print('finished',flush=True)",
+        ],
+        {},
+        owned_startup=True,
+    )
+    guardian = owner._guardian
+    assert guardian is not None and owner.process is not None
+    assert owner.process.stdout is not None
+    assert await owner.process.stdout.readline() == b"ready\n"
+    guardian.process.kill()
+    with pytest.raises(CleanupError, match="lost custody"):
+        await owner.close()
+    assert sentinel.exists()
+    assert guardian in _OWNED_GUARDIANS
+    assert await owner.process.stdout.readline() == b"finished\n"
+    assert (root / "late-write").exists()

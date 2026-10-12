@@ -318,7 +318,7 @@ def _fork(
     return pid, gate_write
 
 
-def main(channel_fd: int, slot_fd: int) -> int:
+def main(channel_fd: int, slot_fd: int, death_fd: int) -> int:
     channel = socket.socket(fileno=channel_fd)
     channel.settimeout(15)
     request = _receive(channel)
@@ -470,6 +470,8 @@ def main(channel_fd: int, slot_fd: int) -> int:
                 reaped = True
                 break
             time.sleep(0.05)
+        os.write(death_fd, b"D")
+        os.close(death_fd)
         channel.close()
         if slot_fd >= 0:
             os.close(slot_fd)
@@ -477,7 +479,7 @@ def main(channel_fd: int, slot_fd: int) -> int:
 
 if __name__ == "__main__":
     try:
-        result = main(int(sys.argv[1]), int(sys.argv[2]))
+        result = main(int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]))
     except BaseException:
         result = 127
     os._exit(result if result >= 0 else 128 - result)
