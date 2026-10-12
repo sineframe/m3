@@ -511,6 +511,7 @@ class AsyncAgentSession:
         self._capture_seen: dict[str, int] = {}
         self._private_capture_seen: dict[str, int] = {}
         self._private_capture_calls: PrivateToolCalls | None = None
+        self._captured_identity_invalid = False
         # A manager may be started more than once by lifecycle retries. Keep
         # transport lifecycle evidence one-per-connection in the trace.
         self._transport_connected: set[tuple[str, str]] = set()
@@ -2035,16 +2036,24 @@ class AsyncAgentSession:
         )
         if not isinstance(calls, (tuple, list)):
             calls = ()
-        if not calls and not captured_tool_calls:
+        if (
+            not calls
+            and not captured_tool_calls
+            and not self._captured_identity_invalid
+        ):
             return ()
         # Proxy enforcement already handled the empty restrictive policy's
         # deny-by-default behavior.  Do not reinterpret an advisory provider
         # update as a second, post-hoc enforcement decision.
-        if not self._requires_policy_preflight():
-            return ()
         evidence = self._tool_policy_evidence or ToolPolicyEvidence(
             requested="restrictive", enforced="default_deny", observed="runtime"
         )
+        if not self._requires_policy_preflight():
+            return (
+                (self._policy_violation(None, "tool_identity_invalid", evidence),)
+                if self._captured_identity_invalid
+                else ()
+            )
         policy = self.spec.tool_policy
         records: tuple[Any, ...] = ()
         if self._server_manager is not None:
@@ -2085,6 +2094,10 @@ class AsyncAgentSession:
             or not self._requires_policy_preflight()
         )
         violations: list[dict[str, object]] = []
+        if self._captured_identity_invalid:
+            violations.append(
+                self._policy_violation(None, "tool_identity_invalid", evidence)
+            )
         # Preserve the positional association for adapters that emit
         # entirely anonymous updates, but never use it to repair malformed or
         # ambiguous identities. Exact cardinality is required and the adapter
@@ -2292,6 +2305,7 @@ class AsyncAgentSession:
         """Return this turn's stable forwarded calls before advancing capture."""
 
         manager = self._server_manager
+        self._captured_identity_invalid = False
         capture = getattr(manager, "capture", None) if manager is not None else None
         snapshots = getattr(capture, "snapshots", None)
         if not callable(snapshots):
@@ -2313,6 +2327,8 @@ class AsyncAgentSession:
                     if self._private_capture_calls is not None:
                         self._private_capture_calls.release()
                     self._private_capture_calls = private
+                    from pydantic import ValidationError
+
                     private_output = []
                     for call in private.calls:
                         connection_id = call["server"]
@@ -2322,10 +2338,15 @@ class AsyncAgentSession:
                             continue
                         self._private_capture_seen[connection_id] = index + 1
                         alias = aliases.get(connection_id)
-                        if alias:
-                            private_output.append(
-                                ToolDescriptor(server=alias, name=call["tool"])
-                            )
+                        if not alias:
+                            self._captured_identity_invalid = True
+                            continue
+                        try:
+                            descriptor = ToolDescriptor(server=alias, name=call["tool"])
+                        except ValidationError:
+                            self._captured_identity_invalid = True
+                            continue
+                        private_output.append(descriptor)
                     return tuple(private_output)
             output: list[ToolDescriptor] = []
             for snapshot in snapshots():

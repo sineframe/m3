@@ -975,9 +975,9 @@ def _mcp_configuration(key: str, **extra: object) -> HarnessServerConfig:
 async def test_codex_thread_start_error_never_includes_provider_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: object
 ) -> None:
-    # Any credential Codex was started with (adapter environment, native
-    # login, MCP configuration) can come back in its error text, so the error
-    # is built only from M3-known values: the code and configured server names.
+    # This direct protocol fixture has not pinned a launch registry. Only the
+    # authored category and validated code may survive; configured server names
+    # can themselves coincide with credentials and are withheld too.
     source = tmp_path / "source-home"
     source.mkdir()
     (source / "auth.json").write_text(
@@ -1005,8 +1005,12 @@ async def test_codex_thread_start_error_never_includes_provider_text(
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
     assert str(exc_info.value) == (
         "Codex thread/start failed (JSON-RPC -32603): "
-        "required MCP server failed to initialize: filesystem"
+        "required MCP server failed to initialize"
     )
+    assert "CANARY" not in str(exc_info.value)
+    assert "filesystem" not in str(exc_info.value)
+    assert exc_info.value.details["reason"] == "required_mcp_failed_to_initialize"
+    assert exc_info.value.details["native_diagnostic"] == "unavailable_registry"
 
 
 @pytest.mark.asyncio

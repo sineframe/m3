@@ -928,6 +928,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         ):
             summary += f" (JSON-RPC {code})"
         message = error.get("message")
+        details = None
         if isinstance(message, str):
             _, marker, rest = message.partition(_MCP_STARTUP_FAILURE)
             failed = sorted(
@@ -939,9 +940,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 }
             )
             if failed:
-                summary += (
-                    f": required MCP server failed to initialize: {', '.join(failed)}"
-                )
+                summary += ": required MCP server failed to initialize"
+                details = {"reason": "required_mcp_failed_to_initialize"}
+                if self._native_error_redaction is not None:
+                    summary += f": {', '.join(failed)}"
         return NativeHarnessStartupError(
             native_error_info(
                 error,
@@ -949,6 +951,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 harness="codex",
                 phase="thread/start",
                 redaction=self._native_error_redaction,
+                details=details,
             )
         )
 

@@ -100,6 +100,8 @@ def native_error_info(
         if -(2**63) <= native_code < 2**63:
             evidence["native_code"] = native_code
     if redaction is None:
+        if supplied.get("reason") == "required_mcp_failed_to_initialize":
+            evidence["reason"] = "required_mcp_failed_to_initialize"
         evidence["native_diagnostic"] = "unavailable_registry"
         return NativeErrorInfo(code=code, message=summary[:512], details=evidence)
     projection: dict[str, str] = {

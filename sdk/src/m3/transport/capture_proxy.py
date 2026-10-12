@@ -557,7 +557,7 @@ class McpCaptureManager:
         self._observation_sequences: dict[str, int] = {}
         # Original forwarded tool identities stay in this volatile ledger;
         # redacted capture files are never a policy identity authority.
-        self._private_policy_calls: dict[str, list[str]] = {}
+        self._private_policy_calls: dict[str, list[str | None]] = {}
         self._observation_loop: asyncio.AbstractEventLoop | None = None
         self._publication_lock = threading.Lock()
         self._publication_ticket = 0
@@ -635,12 +635,14 @@ class McpCaptureManager:
             return
         params = payload.get("params")
         tool = params.get("name") if isinstance(params, Mapping) else None
-        if isinstance(tool, str) and 0 < len(tool) <= 256:
-            with self._publication_lock:
-                if not self._closed:
-                    self._private_policy_calls.setdefault(connection_id, []).append(
-                        tool
-                    )
+        # Keep a value-free invalid-call marker even when no bounded native
+        # identity exists. Omitted provider updates must not hide that traffic.
+        identity = tool if isinstance(tool, str) and 0 < len(tool) <= 256 else None
+        with self._publication_lock:
+            if not self._closed:
+                self._private_policy_calls.setdefault(connection_id, []).append(
+                    identity
+                )
 
     def _private_forwarded_calls(self) -> PrivateToolCalls:
         """Return nonserializable originals, independently of durable redaction."""

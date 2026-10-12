@@ -906,8 +906,14 @@ async def test_unavailable_registry_partial_capture_remains_closed_after_adapter
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("registered", [True, False])
+@pytest.mark.parametrize(
+    "malformed",
+    ["synthetic\nidentity", "", "x" * 257, None, 123],
+    ids=["control", "empty", "oversized", "missing", "nonstring"],
+)
+@pytest.mark.parametrize("valid", [True, False])
 async def test_custom_adapter_captured_private_identity_never_leaks_in_policy_results(
-    tmp_path: Path, registered: bool
+    tmp_path: Path, registered: bool, malformed, valid: bool
 ) -> None:
     from m3.server_group import ServerRecord
     from m3.storage import InMemoryExecutionStore
@@ -954,13 +960,23 @@ async def test_custom_adapter_captured_private_identity_never_leaks_in_policy_re
             return Readiness(ready=True)
 
         async def send(self, message, *, timeout=None, metadata=None):
+            if valid:
+                writer.write(
+                    transport="stdio",
+                    direction="client_to_server",
+                    payload={
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": secret, "arguments": {}},
+                    },
+                )
             writer.write(
                 transport="stdio",
                 direction="client_to_server",
                 payload={
-                    "id": 1,
+                    "id": 2,
                     "method": "tools/call",
-                    "params": {"name": secret, "arguments": {}},
+                    "params": {"name": malformed},
                 },
             )
             return AdapterTurn(response=TurnResponse(content=(TextContent(text="4"),)))
@@ -979,8 +995,17 @@ async def test_custom_adapter_captured_private_identity_never_leaks_in_policy_re
     assert result.error is not None
     assert secret not in result.error.model_dump_json()
     violations = result.error.details["policy_violations"]
-    assert violations[0]["tool"] == ("[REDACTED]" if registered else "unavailable")
-    assert violations[0]["reason"] == "tool denied by restrictive policy"
+    if valid:
+        denied = next(
+            item
+            for item in violations
+            if item["reason"] == "tool denied by restrictive policy"
+        )
+        assert denied["tool"] == ("[REDACTED]" if registered else "unavailable")
+    invalid = next(
+        item for item in violations if item["reason"] == "tool_identity_invalid"
+    )
+    assert invalid["tool"] == "unavailable"
     # Without a writer registry existing wire capture itself retains native
     # tool text; B newly derived policy evidence must still fail closed.
     for event in store.events(recorder.execution_id):
@@ -988,3 +1013,35 @@ async def test_custom_adapter_captured_private_identity_never_leaks_in_policy_re
             "policy_violation"
         ):
             assert secret not in event.model_dump_json()
+
+
+def test_unavailable_registry_summary_omits_configured_credential_identity() -> None:
+    from dataclasses import replace
+
+    secret = "synthetic-credential-collision"
+    original = _launch()
+    launch = replace(
+        original,
+        configurations=(replace(original.configurations[0], key=secret),),
+    )
+    adapter = CodexHarnessAdapter(environment={"OPAQUE": secret})
+    error = adapter._thread_start_failure(
+        {
+            "code": -32603,
+            "message": "required MCP servers failed to initialize: "
+            + secret
+            + ": handshake failed",
+        },
+        launch,
+    )
+    assert isinstance(error, NativeHarnessStartupError)
+    assert secret not in str(error)
+    assert secret not in error.error.model_dump_json()
+    assert (
+        error.error.message
+        == "Codex thread/start failed (JSON-RPC -32603): required MCP server failed to initialize"
+    )
+    assert error.error.details["phase"] == "thread/start"
+    assert error.error.details["native_code"] == -32603
+    assert error.error.details["reason"] == "required_mcp_failed_to_initialize"
+    assert error.error.details["native_diagnostic"] == "unavailable_registry"
