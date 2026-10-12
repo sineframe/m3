@@ -1050,6 +1050,8 @@ class McpCaptureManager:
             write_stdio_handoff(
                 path,
                 credentials.stdio_environment(key),
+                command=credentials.server_command(key),
+                cwd=credentials.server_cwd(key),
                 observer=observer,
                 resolved=True,
                 complete_environment=True,
