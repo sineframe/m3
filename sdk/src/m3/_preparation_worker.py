@@ -328,7 +328,16 @@ def _fork_job(
                 result = {}
             else:
                 result = _job(operation, root, payload)
-            frame = json.dumps({"ok": True, "data": result}).encode() + b"\n"
+            completed: dict[str, Any] = {"ok": True, "data": result}
+            if operation in {
+                "private_capsule",
+                "private_endpoint",
+                "private_native_auth",
+            }:
+                identity = root.stat(follow_symlinks=False)
+                # Helper-only ownership evidence; never forwarded as a result.
+                completed["cleanup_identity"] = [identity.st_dev, identity.st_ino]
+            frame = json.dumps(completed).encode() + b"\n"
             if len(frame) > MAX_FRAME:
                 raise ValueError("preparation result exceeds limit")
         except _UnsupportedGitExtensions:
@@ -362,6 +371,8 @@ class Job:
     quarantine_sent: bool = False
     cleanup_source: str | None = None
     stream_open: bool = True
+    private_kind: str | None = None
+    cleanup_identity: tuple[int, int] | None = None
 
 
 def _supervise(
@@ -384,6 +395,7 @@ def _supervise(
     os.set_blocking(sys.stdout.fileno(), False)
     selector.register(sys.stdin, selectors.EVENT_READ, "controller")
     jobs: dict[str, Job] = {}
+    private_leases: dict[str, Job] = {}
     incoming = bytearray()
     outgoing = bytearray()
     controller_open = True
@@ -417,8 +429,18 @@ def _supervise(
     def spawn_cleanup(job: Job) -> None:
         # Writer death precedes unregistering the exact owned worktree. Never
         # prune unrelated worktrees or delete the source repository.
+        def remove_owned_root() -> None:
+            if job.cleanup_identity is not None:
+                try:
+                    identity = job.root.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    return
+                if (identity.st_dev, identity.st_ino) != job.cleanup_identity:
+                    raise ValueError("private cleanup resource changed")
+            _remove(job.root, job.cleanup_source)
+
         process = _ForkJob(
-            lambda: _remove(job.root, job.cleanup_source),
+            remove_owned_root,
             output=False,
             gated=True,
         )
@@ -481,6 +503,12 @@ def _supervise(
             assert process.stdout is not None
             os.set_blocking(process.stdout.fileno(), False)
             job = Job(ident, root, process)
+            if request["operation"] in {
+                "private_capsule",
+                "private_endpoint",
+                "private_native_auth",
+            }:
+                job.private_kind = request["operation"]
             if (
                 request["operation"] == "workspace"
                 and request["payload"]["policy"]["kind"] == "git_worktree"
@@ -520,7 +548,11 @@ def _supervise(
         elif action == "forget":
             candidate = jobs.get(ident)
             if candidate is not None and candidate.state == "released":
+                if candidate.private_kind is not None:
+                    private_leases[ident] = candidate
                 del jobs[ident]
+        elif action == "dispose_private":
+            private_leases.pop(ident, None)
         elif action == "shutdown":
             controller_open = False
             if ownership_fd is None:
@@ -656,11 +688,26 @@ def _supervise(
 
     def progress_jobs() -> None:
         now = time.monotonic()
+        if not controller_open:
+            for ident, lease in tuple(private_leases.items()):
+                # Native auth may still have a harness writer. Session process
+                # ownership must confirm its death before disposing this lease.
+                if lease.private_kind == "private_native_auth":
+                    continue
+                lease.state = "fenced"
+                jobs[ident] = lease
+                del private_leases[ident]
         for ident, job in tuple(jobs.items()):
             if job.state == "released":
-                if not controller_open:
+                if controller_open:
+                    continue
+                if job.private_kind in {"private_capsule", "private_endpoint"}:
+                    job.state = "fenced"
+                else:
+                    if job.private_kind is not None:
+                        private_leases[ident] = job
                     del jobs[ident]
-                continue
+                    continue
             if job.state == "accepted":
                 # Provisional acceptance is not publication. Only release
                 # transfers ownership; EOF fences unreleased material.
@@ -676,6 +723,9 @@ def _supervise(
                     except (ValueError, UnicodeError):
                         result = {"ok": False}
                     if result.get("ok") is True:
+                        identity = result.get("cleanup_identity")
+                        if identity is not None:
+                            job.cleanup_identity = (identity[0], identity[1])
                         job.state = "ready"
                         emit(ident, "ready", data=result["data"])
                     else:

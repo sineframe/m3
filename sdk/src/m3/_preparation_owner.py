@@ -391,6 +391,10 @@ def worker_preparation(max_jobs: int = 64) -> PreparationWorker:
 
 def shutdown_worker_preparation(timeout_seconds: float = 3) -> None:
     """Run/worker teardown seam; never called by individual kit close."""
+    from ._bootstrap_operations import drain_closed_bootstrap_operations
+
+    end = time.monotonic() + timeout_seconds
+    drain_closed_bootstrap_operations(end)
     with _workers_lock:
         workers = tuple(
             worker for (pid, _), worker in _workers.items() if pid == os.getpid()
@@ -401,7 +405,6 @@ def shutdown_worker_preparation(timeout_seconds: float = 3) -> None:
         _retired_workers[:] = [
             worker for worker in _retired_workers if worker.pid != os.getpid()
         ]
-    end = time.monotonic() + timeout_seconds
     for worker in workers:
         worker.close(max(0, end - time.monotonic()))
 
