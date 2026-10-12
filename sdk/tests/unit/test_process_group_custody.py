@@ -7,11 +7,22 @@ import textwrap
 
 import pytest
 
-from m3._process_group_custody import ownership_supported
+from m3._process_group_custody import has_unreaped_status, ownership_supported
 
 
 @pytest.mark.skipif(not ownership_supported(), reason="unreaped status unavailable")
-@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize(
+    "fallback",
+    [
+        pytest.param(
+            False,
+            marks=pytest.mark.skipif(
+                not has_unreaped_status(), reason="waitid unavailable on this Python"
+            ),
+        ),
+        True,
+    ],
+)
 def test_fork_job_reserves_exited_leader_until_term_ignoring_descendant_dies(
     fallback: bool,
 ) -> None:
