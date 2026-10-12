@@ -8,9 +8,17 @@
   "python": ">=3.10",
   "files": [
     "test_configuration_values.py",
-    "test_native_values.py"
+    "test_native_values.py",
+    "test_slow_startup.py",
+    "slow_mcp.py"
   ],
   "displayed_blocks": [
+    {
+      "page": "reference-configuration",
+      "label": "bounded native startup",
+      "source": "test_slow_startup.py",
+      "kind": "file"
+    },
     {
       "page": "reference-configuration",
       "label": "native settings descriptors",
@@ -61,9 +69,25 @@
         "status": "verified by the documented test"
       },
       "verification": "deterministic"
+    },
+    {
+      "id": "slow-native-startup",
+      "command": "m3 test --runtime managed --harness codex@0.162.1=your-codex-model --trials 1 -- test_slow_startup.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": [
+        "A 40-second MCP startup fits the explicit 75-second MCP and 90-second native ceilings.",
+        "The completed lookup turn has no error."
+      ],
+      "compatibility": {
+        "harness": "Codex 0.162.1",
+        "mode": "managed",
+        "status": "requires live verification with a configured Codex account"
+      },
+      "verification": "live-provider"
     }
   ],
-  "network": "No network or native process launch.",
-  "credentials": "None.",
-  "cleanup": "pytest removes its temporary TOML file."
+  "network": "The configuration-value scenarios use no network. The slow-startup scenario launches a native harness and requires provider network access.",
+  "credentials": "None for configuration values; an existing native Codex login for the slow-startup scenario.",
+  "cleanup": "pytest removes its temporary TOML file; m3 closes the slow server and isolated native session."
 }
