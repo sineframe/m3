@@ -140,9 +140,10 @@ async def test_owned_lease_retries_marker_cleanup_after_descriptor_close(
     deadline = clock.begin_cleanup()
 
     class Owner:
-        cleanup_complete = False
-        attempts = 0
-        deadlines: list[float] = []
+        def __init__(self) -> None:
+            self.cleanup_complete = False
+            self.attempts = 0
+            self.deadlines: list[float] = []
 
         def release_runtime(
             self, path: str, device: int, inode: int, *, deadline: float

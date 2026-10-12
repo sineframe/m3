@@ -511,12 +511,12 @@ class RuntimeManager:
         )
 
     def _owned_clock(self) -> StartupBudget:
-        if self._startup_clock is None:
-            from .._startup_deadlines import StartupBudget
-            from .._types.settings import HarnessTimeouts
+        if self._startup_clock is not None:
+            return self._startup_clock
+        from .._startup_deadlines import StartupBudget
+        from .._types.settings import HarnessTimeouts
 
-            self._startup_clock = StartupBudget(HarnessTimeouts())
-        return self._startup_clock
+        return StartupBudget(HarnessTimeouts())
 
     @_timing.timed("runtime.acquire")
     async def acquire_owned(

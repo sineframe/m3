@@ -1707,3 +1707,204 @@ async def test_lost_runtime_guard_quarantines_staging_before_detached_writer_die
         server.shutdown()
         thread.join(timeout=2)
         await asyncio.to_thread(operations.close, deadline=time.monotonic() + 0.2)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="owned runtime custody requires POSIX")
+def test_native_guard_retains_package_after_controller_sigkill(
+    tmp_path: Path, archive_server: str
+) -> None:
+    import signal
+    import socket
+    import subprocess
+    import time
+
+    from m3._bootstrap_operations import _receive_private, _send_private
+
+    binary = (
+        b'#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.2.3; exit 0; fi\n'
+        b"trap '' TERM\nprintf 'ready\\n'\nwhile :; do sleep 1; done\n"
+    )
+    _Server.body = _archive(payload=binary)
+    cache = tmp_path / "cache"
+    project = tmp_path / "project"
+    native_root = tmp_path / "native"
+    project.mkdir()
+    native_root.mkdir()
+    fixture = Path(__file__).parents[1] / "fixtures" / "owned_runtime_controller.py"
+    parent, child = socket.socketpair()
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    controller = subprocess.Popen(
+        [sys.executable, str(fixture), str(child.fileno())],
+        pass_fds=(child.fileno(),),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    child.close()
+    guardian = None
+    try:
+        _send_private(
+            parent,
+            {
+                "version": 1,
+                "cache": str(cache),
+                "project": str(project),
+                "native_root": str(native_root),
+                "selector": {
+                    "version": "1.2.3",
+                    "url": archive_server,
+                    "sha256": hashlib.sha256(_Server.body).hexdigest(),
+                },
+            },
+            time.monotonic() + 10,
+        )
+        receipt, descriptor = _receive_private(parent, time.monotonic() + 10)
+        assert descriptor is None
+        guardian = receipt["guardian"]
+        native = receipt["native"]
+        os.kill(guardian, signal.SIGSTOP)
+        controller.kill()
+        controller.wait(timeout=2)
+        os.kill(native, 0)
+        assert prune_cache(cache) == []
+        assert list_cache(cache)[0]["status"] == "ready"
+        os.kill(guardian, signal.SIGCONT)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            removed = prune_cache(cache)
+            if removed:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("native cleanup did not release managed package custody")
+        observed = subprocess.run(
+            ["ps", "-p", str(native), "-o", "stat="],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=False,
+        )
+        assert observed.returncode in {0, 1}
+        status = observed.stdout.strip()
+        assert not status or status.startswith("Z")
+    finally:
+        if controller.poll() is None:
+            controller.kill()
+        controller.wait(timeout=2)
+        parent.close()
+        if guardian is not None:
+            try:
+                os.kill(guardian, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_reused_owned_manager_starts_independent_cleanup_clocks(
+    tmp_path: Path, archive_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+    from types import SimpleNamespace
+
+    import m3._startup_deadlines as deadlines
+
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = RuntimeManager(tmp_path / "cache", project, _owned=True)
+    selector = {
+        "version": "1.2.3",
+        "url": archive_server,
+        "sha256": hashlib.sha256(_Server.body).hexdigest(),
+    }
+    first = await manager.acquire_owned(
+        "claude", selector, deadline=time.monotonic() + 10
+    )
+    assert first._owned is not None
+    first_clock = first._owned._clock
+    await manager.release(first)
+    assert first_clock.cleanup_deadline is not None
+    elapsed = time.monotonic() + 20
+    monkeypatch.setattr(deadlines, "time", SimpleNamespace(monotonic=lambda: elapsed))
+    second = await manager.acquire_owned(
+        "claude", selector, deadline=time.monotonic() + 10
+    )
+    assert second._owned is not None
+    try:
+        assert second._owned._clock is not first_clock
+        assert first_clock.cleanup_deadline < elapsed
+        await manager.release(second)
+        assert second._owned._clock.cleanup_deadline == elapsed + 10
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_cancellation_fences_download_before_cleanup_executor_is_available(
+    tmp_path: Path,
+) -> None:
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    entered = threading.Event()
+    resume = threading.Event()
+    body = _archive()
+
+    class BlockedDownload(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            entered.set()
+            resume.wait(timeout=10)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), BlockedDownload)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    executor = ThreadPoolExecutor(max_workers=1)
+    loop = asyncio.get_running_loop()
+    previous = loop._default_executor
+    loop.set_default_executor(executor)
+    project = tmp_path / "project"
+    project.mkdir()
+    cache = tmp_path / "cache"
+    manager = RuntimeManager(cache, project, _owned=True)
+    acquisition = asyncio.create_task(
+        manager.acquire_owned(
+            "claude",
+            {
+                "version": "1.2.3",
+                "url": f"http://127.0.0.1:{server.server_port}/asset.zip",
+                "sha256": hashlib.sha256(body).hexdigest(),
+            },
+            deadline=time.monotonic() + 10,
+        )
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not entered.is_set():
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.01)
+        acquisition.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(acquisition, 3)
+        assert not resume.is_set()
+        assert list_cache(cache) == []
+    finally:
+        resume.set()
+        if not acquisition.done():
+            acquisition.cancel()
+            await asyncio.gather(acquisition, return_exceptions=True)
+        await manager.close()
+        loop.set_default_executor(previous or ThreadPoolExecutor())
+        executor.shutdown(wait=True)
+        server.shutdown()
+        thread.join(timeout=2)
