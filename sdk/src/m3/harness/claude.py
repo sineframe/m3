@@ -622,7 +622,14 @@ class ClaudeCodeHarnessAdapter:
                 argv,
                 environment,
                 cwd=workspace,
-                **startup_spawn_options(launch._startup_lease),
+                **startup_spawn_options(
+                    launch._startup_lease,
+                    runtime_descriptors=(
+                        launch._runtime_lease.descriptors
+                        if launch._runtime_lease is not None
+                        else ()
+                    ),
+                ),
             )
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(
                 maxsize=MAX_QUEUE_ITEMS

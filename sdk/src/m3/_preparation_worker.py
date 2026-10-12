@@ -360,9 +360,28 @@ def _fork_job(
             if private_channel is not None:
                 from ._bootstrap_operations import execute_private_operation
 
-                execute_private_operation(
-                    private_channel, root, operation, payload["deadline"]
-                )
+                if operation in {"private_runtime", "private_models"}:
+                    from .runtime._owned_guard import (
+                        execute_models_guard,
+                        execute_runtime_guard,
+                    )
+
+                    with private_channel:
+                        guard = (
+                            execute_runtime_guard
+                            if operation == "private_runtime"
+                            else execute_models_guard
+                        )
+                        try:
+                            guard(private_channel, root, payload["deadline"])
+                        finally:
+                            # An orderly exit proves the fixed guard has reaped
+                            # every detached writer before staging cleanup.
+                            os.write(1, b'{"runtime_stopped":true}\n')
+                else:
+                    execute_private_operation(
+                        private_channel, root, operation, payload["deadline"]
+                    )
                 result = {}
             else:
                 result = _job(operation, root, payload)
@@ -410,6 +429,8 @@ class Job:
     cleanup_source: str | None = None
     stream_open: bool = True
     private_kind: str | None = None
+    runtime_guard: bool = False
+    guard_death_confirmed: bool = False
     cleanup_identity: tuple[int, int] | None = None
 
 
@@ -462,7 +483,8 @@ def _supervise(
         job.state = "fenced"
         if job.stop_at is None:
             job.stop_at = time.monotonic()
-            job.process.signal(signal.SIGTERM)
+            if not job.runtime_guard:
+                job.process.signal(signal.SIGTERM)
 
     def spawn_cleanup(job: Job) -> None:
         # Writer death precedes unregistering the exact owned worktree. Never
@@ -483,6 +505,7 @@ def _supervise(
             gated=True,
         )
         job.process = process
+        job.runtime_guard = False
         job.state = "removing"
         job.stop_at = None
         job.killed = False
@@ -506,6 +529,9 @@ def _supervise(
                 "private_remove",
                 "private_native_auth",
                 "private_read_auth",
+                "private_runtime",
+                "private_models",
+                "private_runtime_release",
             }
             short_endpoint = request[
                 "operation"
@@ -541,6 +567,10 @@ def _supervise(
             assert process.stdout is not None
             os.set_blocking(process.stdout.fileno(), False)
             job = Job(ident, root, process)
+            job.runtime_guard = request["operation"] in {
+                "private_runtime",
+                "private_models",
+            }
             if request["operation"] in {
                 "private_capsule",
                 "private_endpoint",
@@ -699,7 +729,8 @@ def _supervise(
         if raw == b"s":
             job.process.group_established = True
             if job.state == "fenced":
-                job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
+                if not job.runtime_guard:
+                    job.process.signal(signal.SIGKILL if job.killed else signal.SIGTERM)
             elif job.state in {"running", "removing"}:
                 if ownership_open:
                     emit(
@@ -717,6 +748,16 @@ def _supervise(
         raw = os.read(key.fd, 65536)
         if raw:
             job.output.extend(raw)
+            if job.runtime_guard and job.output.startswith(b'{"runtime_ready":true}\n'):
+                del job.output[: len(b'{"runtime_ready":true}\n')]
+                if job.state == "running":
+                    job.state = "ready"
+                    emit(job.ident, "ready", data={})
+            if job.runtime_guard and job.output.startswith(
+                b'{"runtime_stopped":true}\n'
+            ):
+                del job.output[: len(b'{"runtime_stopped":true}\n')]
+                job.guard_death_confirmed = True
             if len(job.output) > MAX_FRAME:
                 stop(job)
         else:
@@ -737,6 +778,23 @@ def _supervise(
                 del private_leases[ident]
         for ident, job in tuple(jobs.items()):
             if job.state == "released":
+                if job.runtime_guard:
+                    if (
+                        job.process.poll() is None
+                        or job.process.alive()
+                        or job.stream_open
+                    ):
+                        continue
+                    try:
+                        result = json.loads(job.output)
+                    except (ValueError, UnicodeError):
+                        result = {"ok": False}
+                    if result.get("ok") is not True or not job.guard_death_confirmed:
+                        emit(ident, "failed")
+                        stop(job)
+                        continue
+                    emit(ident, "guard_closed")
+                    job.runtime_guard = False
                 if controller_open:
                     continue
                 if job.private_kind in {"private_capsule", "private_endpoint"}:
@@ -785,11 +843,19 @@ def _supervise(
                         job.stop_at is not None
                         and now - job.stop_at >= TERM_GRACE
                         and not job.killed
+                        and not job.runtime_guard
                     ):
                         job.process.signal(signal.SIGKILL)
                         job.killed = True
                 elif not job.stream_open:
-                    if ownership_open:
+                    if job.runtime_guard and not job.guard_death_confirmed:
+                        # Helper loss cannot prove death of separately owned
+                        # writer groups. Leave their private root quarantined.
+                        if not job.quarantine_sent:
+                            emit(ident, "quarantined")
+                        emit(ident, "guard_lost")
+                        del jobs[ident]
+                    elif ownership_open:
                         spawn_cleanup(job)
                     else:
                         # No router remains to register/ACK a new mutation
@@ -846,7 +912,8 @@ def _supervise(
         # Protocol corruption cannot leave an unfenced writer. Kill owned
         # groups, retain roots (no deletion while writer death is uncertain).
         for job in jobs.values():
-            job.process.signal(signal.SIGKILL)
+            if not job.runtime_guard:
+                job.process.signal(signal.SIGKILL)
         selector.close()
         for channel in private_channels.values():
             channel.close()

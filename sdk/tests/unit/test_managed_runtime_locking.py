@@ -11,6 +11,7 @@ import pytest
 from m3.runtime.core import (
     RuntimeValidationError,
     _entry_lock,
+    _kernel_entry_lock,
     _lease_is_active,
     resolve_cache_root,
 )
@@ -70,3 +71,54 @@ def test_unknown_lease_marker_is_preserved(tmp_path: Path) -> None:
     lease = tmp_path / "lease-unknown-format"
     lease.touch()
     assert _lease_is_active(lease)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX kernel cache custody")
+def test_default_entry_reader_respects_owned_kernel_guard(tmp_path: Path) -> None:
+    destination = tmp_path / "sha256-entry"
+    # The legacy marker belongs to an exited preparation child. Kernel custody
+    # remains authoritative and cannot be stolen based on that child PID.
+    marker = destination.with_name(destination.name + ".lock")
+    marker.write_text("999999999\n", encoding="ascii")
+    with _kernel_entry_lock(destination, deadline=time.monotonic() + 1):
+        with pytest.raises(RuntimeValidationError, match="busy"):
+            with _entry_lock(destination, timeout=0.05):
+                pytest.fail("default reader bypassed owned publication custody")
+        assert marker.exists()
+    with _entry_lock(destination, timeout=1):
+        assert marker.read_text().strip() == str(os.getpid())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX kernel cache custody")
+def test_kernel_guard_rejects_symlink_without_touching_target(tmp_path: Path) -> None:
+    target = tmp_path / "must-not-write"
+    target.write_text("original")
+    destination = tmp_path / "entry"
+    destination.with_name("entry.guard").symlink_to(target)
+    with pytest.raises(OSError):
+        with _kernel_entry_lock(destination, deadline=time.monotonic() + 1):
+            pytest.fail("kernel guard followed a symlink")
+    assert target.read_text() == "original"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX kernel runtime leases")
+def test_kernel_runtime_lease_tracks_open_custody_not_child_pid(tmp_path: Path) -> None:
+    import fcntl
+
+    lease = tmp_path / "lease-999999999-owned"
+    lease.write_text("kernel-v1\n")
+    descriptor = os.open(lease, os.O_RDWR)
+    transferred = -1
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        transferred = os.dup(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        assert _lease_is_active(lease)
+        os.close(transferred)
+        transferred = -1
+        assert not _lease_is_active(lease)
+    finally:
+        for owned in (descriptor, transferred):
+            if owned >= 0:
+                os.close(owned)

@@ -903,6 +903,7 @@ m3.sync_api.MCPTestKit(
     max_judge_requests: int | None = None,
     harness_cache_dir: str | _Path | None = None,
     admission: _StartupAdmission | _Unset = Unset.UNSET,
+    harness_timeouts: _HarnessTimeouts | None = None,
 ) -> None
 ```
 
@@ -1072,6 +1073,7 @@ agent_session(
     harness_cache_dir: str | _Path | None = None,
     harness_permissions: _NativePermissions | _Unset = Unset.UNSET,
     admission: _StartupAdmission | _Unset = Unset.UNSET,
+    harness_timeouts: _HarnessTimeouts | _Unset = Unset.UNSET,
 ) -> AgentSession
 ```
 

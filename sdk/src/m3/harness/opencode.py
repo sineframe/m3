@@ -648,7 +648,14 @@ class OpenCodeHarnessAdapter:
                 [self.executable, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                 environment,
                 cwd=workspace,
-                **startup_spawn_options(launch._startup_lease),
+                **startup_spawn_options(
+                    launch._startup_lease,
+                    runtime_descriptors=(
+                        launch._runtime_lease.descriptors
+                        if launch._runtime_lease is not None
+                        else ()
+                    ),
+                ),
             )
             assert owner.process is not None and owner.process.stdout is not None
             base_url = await self._read_server_url(owner.process.stdout)

@@ -31,9 +31,6 @@ m3.async_api.AsyncAgentSession(
     runtime_project_root: str | Path | None = None,
     managed_input_runtime: ManagedInputRuntime | None = None,
     preparation_supervisor: PreparationSupervisor | None = None,
-    _literal_registry: RunLiteralStore | None = None,
-    _credential_deadline: float | None = None,
-    _native_auth_operations: NativeAuthOperations | None = None,
 ) -> None
 ```
 
@@ -343,6 +340,7 @@ m3.async_api.AsyncMCPTestKit(
     max_judge_requests: int | None = None,
     harness_cache_dir: str | _Path | None = None,
     admission: _StartupAdmission | _Unset = Unset.UNSET,
+    harness_timeouts: _HarnessTimeouts | None = None,
 ) -> None
 ```
 
@@ -510,6 +508,7 @@ agent_session(
     harness_cache_dir: str | _Path | None = None,
     harness_permissions: _NativePermissions | _Unset = Unset.UNSET,
     admission: _StartupAdmission | _Unset = Unset.UNSET,
+    harness_timeouts: _HarnessTimeouts | _Unset = Unset.UNSET,
 ) -> AsyncAgentSession
 ```
 

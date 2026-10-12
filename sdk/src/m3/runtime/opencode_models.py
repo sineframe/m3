@@ -62,6 +62,20 @@ def prepare_models(directory: Path, source: str | None = None) -> tuple[Path, st
     with _entry_lock(snapshot, timeout=45):
         if snapshot.is_symlink():
             raise RuntimeValidationError("OpenCode model catalog must not be a symlink")
+        generation = snapshot.with_name(snapshot.name + ".generation")
+        if generation.is_symlink():
+            raise RuntimeValidationError(
+                "OpenCode catalog generation must not be a symlink"
+            )
+        if generation.exists():
+            try:
+                accepted = json.loads(generation.read_text()).get("accepted") is True
+            except (OSError, ValueError, AttributeError):
+                accepted = False
+            if not accepted:
+                raise RuntimeValidationError(
+                    "OpenCode model catalog publication is pending"
+                )
         if snapshot.exists():
             raw = _read_models(snapshot)
             try:

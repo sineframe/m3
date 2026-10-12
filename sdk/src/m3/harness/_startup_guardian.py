@@ -222,14 +222,25 @@ class _KernelQueue:
             raise ValueError("normalized host load is unavailable") from None
 
 
-def _read_exact(channel: socket.socket, size: int, deadline: float | None) -> bytes:
+def _read_exact(
+    channel: socket.socket, size: int, deadline: float | None, descriptors: list[int]
+) -> bytes:
     data = bytearray()
     while len(data) < size:
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
             raise TimeoutError
         channel.settimeout(remaining)
-        block = channel.recv(size - len(data))
+        block, ancillary, flags, _ = channel.recvmsg(
+            size - len(data), socket.CMSG_SPACE(array.array("i").itemsize * 32)
+        )
+        for level, kind, raw in ancillary:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                received = array.array("i")
+                received.frombytes(raw[: len(raw) - len(raw) % received.itemsize])
+                descriptors.extend(received)
+        if flags or len(descriptors) > 32:
+            raise ValueError("native runtime custody transfer is invalid")
         if not block:
             raise EOFError
         data.extend(block)
@@ -237,14 +248,21 @@ def _read_exact(channel: socket.socket, size: int, deadline: float | None) -> by
 
 
 def _receive(
-    channel: socket.socket, startup_deadline: float | None = None
+    channel: socket.socket,
+    startup_deadline: float | None = None,
+    descriptors: list[int] | None = None,
 ) -> dict[str, object]:
     # Before native custody the controller owns the bounded wait; EOF fences
     # a delayed helper without imposing a second startup budget.
-    size = struct.unpack("!I", _read_exact(channel, 4, startup_deadline))[0]
+    handles: list[int] = [] if descriptors is None else descriptors
+    size = struct.unpack("!I", _read_exact(channel, 4, startup_deadline, handles))[0]
     if size > _MAX_FRAME:
         raise ValueError
-    value = json.loads(_read_exact(channel, size, startup_deadline))
+    value = json.loads(_read_exact(channel, size, startup_deadline, handles))
+    if descriptors is None and handles:
+        for handle in handles:
+            os.close(handle)
+        raise ValueError("unexpected native runtime custody handles")
     if not isinstance(value, dict):
         raise ValueError
     return value
@@ -331,7 +349,8 @@ def _fork(
 def main(channel_fd: int, slot_fd: int, death_fd: int) -> int:
     channel = socket.socket(fileno=channel_fd)
     channel.settimeout(15)
-    request = _receive(channel)
+    runtime_handles: list[int] = []
+    request = _receive(channel, descriptors=runtime_handles)
     if request.get("action") == "admit":
         root, slots, threshold, queue_deadline = (
             request.get("root"),
@@ -379,11 +398,15 @@ def main(channel_fd: int, slot_fd: int, death_fd: int) -> int:
         selector.register(channel, selectors.EVENT_READ)
         selector.select()
         selector.close()
-        request = _receive(channel)
+        if runtime_handles:
+            raise ValueError("queued admission cannot contain runtime handles")
+        request = _receive(channel, descriptors=runtime_handles)
     argv = request.get("argv")
     environment = request.get("environment")
     cwd = request.get("cwd")
     deadline_value = request.get("deadline")
+    if request.get("runtime_descriptor_count", 0) != len(runtime_handles):
+        raise ValueError("native runtime custody manifest is invalid")
     if (
         not isinstance(argv, list)
         or not argv

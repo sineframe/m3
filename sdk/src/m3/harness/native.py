@@ -41,6 +41,7 @@ class StartupSpawnOptions(TypedDict, total=False):
     startup_lease: StartupLease
     owned_startup: bool
     startup_deadline: float
+    runtime_descriptors: tuple[int, ...]
 
 
 def startup_spawn_options(
@@ -48,6 +49,7 @@ def startup_spawn_options(
     *,
     owned_startup: bool = False,
     startup_deadline: float | None = None,
+    runtime_descriptors: tuple[int, ...] = (),
 ) -> StartupSpawnOptions:
     options: StartupSpawnOptions = {}
     if lease is not None:
@@ -56,6 +58,8 @@ def startup_spawn_options(
         options["owned_startup"] = True
     if startup_deadline is not None:
         options["startup_deadline"] = startup_deadline
+    if runtime_descriptors:
+        options["runtime_descriptors"] = runtime_descriptors
     return options
 
 
@@ -413,12 +417,14 @@ class ProcessOwner:
         startup_lease: StartupLease | None = None,
         owned_startup: bool = False,
         startup_deadline: float | None = None,
+        runtime_descriptors: tuple[int, ...] = (),
     ) -> None:
         try:
             if (
                 startup_lease is not None
                 or owned_startup
                 or startup_deadline is not None
+                or runtime_descriptors
             ):
                 from .guardian import NativeGuardian
 
@@ -430,6 +436,7 @@ class ProcessOwner:
                     limit=MAX_FRAME_BYTES + 1,
                     on_spawn=self._attach_guardian,
                     deadline=startup_deadline,
+                    runtime_descriptors=runtime_descriptors,
                 )
             else:
                 self.process = await asyncio.create_subprocess_exec(

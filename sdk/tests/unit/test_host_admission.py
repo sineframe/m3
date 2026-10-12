@@ -657,3 +657,98 @@ async def test_disconnected_receive_does_not_remove_reused_descriptor_watcher(
         sender.close()
         peer.close()
         await guardian.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_kernel_custody_survives_ready_and_controller_copy_close(
+    tmp_path: Path,
+) -> None:
+    import fcntl
+
+    from m3.runtime.core import _lease_is_active
+
+    marker = tmp_path / "lease-owned-runtime"
+    marker.write_text("kernel-v1\n")
+    descriptor = os.open(marker, os.O_RDWR)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    owner = ProcessOwner(tmp_path)
+    try:
+        await owner.spawn(
+            [
+                sys.executable,
+                "-c",
+                "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                "print('ready',flush=True); time.sleep(60)",
+            ],
+            {},
+            runtime_descriptors=(descriptor,),
+        )
+        assert owner.process is not None and owner.process.stdout is not None
+        assert await owner.process.stdout.readline() == b"ready\n"
+        await owner.startup_ready()
+        os.close(descriptor)
+        descriptor = -1
+        assert _lease_is_active(marker)
+        await owner.terminate()
+        assert not _lease_is_active(marker)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        await owner.terminate()
+
+
+@pytest.mark.asyncio
+async def test_runtime_handle_is_retained_before_guardian_creation_yields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    from m3.runtime.core import _lease_is_active
+
+    marker = tmp_path / "lease-owned-runtime"
+    marker.write_text("kernel-v1\n")
+    descriptor = os.open(marker, os.O_RDWR)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    original = NativeGuardian._create
+    creation_started = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def delayed_create(*args: object, **kwargs: object) -> NativeGuardian:
+        creation_started.set()
+        await resume.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(NativeGuardian, "_create", delayed_create)
+    owner = ProcessOwner(tmp_path)
+    task = asyncio.create_task(
+        owner.spawn(
+            [
+                sys.executable,
+                "-c",
+                "import time; print('ready',flush=True); time.sleep(60)",
+            ],
+            {},
+            runtime_descriptors=(descriptor,),
+        )
+    )
+    replacement = -1
+    try:
+        await creation_started.wait()
+        os.close(descriptor)
+        replacement = os.open(tmp_path / "other", os.O_RDWR | os.O_CREAT, 0o600)
+        assert replacement == descriptor
+        assert _lease_is_active(marker)
+        resume.set()
+        await task
+        assert owner.process is not None and owner.process.stdout is not None
+        assert await owner.process.stdout.readline() == b"ready\n"
+        assert _lease_is_active(marker)
+        await owner.terminate()
+        assert not _lease_is_active(marker)
+    finally:
+        resume.set()
+        if not task.done():
+            await task
+        await owner.terminate()
+        if replacement >= 0:
+            os.close(replacement)
