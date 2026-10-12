@@ -23,6 +23,7 @@ from ._bootstrap_operations import (
 from ._immutable_cache import (
     RIPGREP,
     CacheRequest,
+    UnsupportedArtifactBuild,
     download_binary,
     materialize_binary,
     validate_native,
@@ -133,7 +134,15 @@ def execute_cache_guard(
             Path(request["native_executable"]),
             request["harness_version"],
         )
-        validate_native(inputs)
+        try:
+            validate_native(inputs)
+        except UnsupportedArtifactBuild:
+            _send_private(
+                channel,
+                {"version": 1, "reason": "unsupported_immutable_cache_build"},
+                deadline,
+            )
+            raise
         _remaining(deadline)
         inputs.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         _private(inputs.root.stat(follow_symlinks=False), directory=True)

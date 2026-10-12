@@ -24,7 +24,11 @@ from typing import Any, Literal, NamedTuple, cast
 
 import httpx
 
-from .._bootstrap_operations import OwnedBootstrapOperations, PrivateOperationError
+from .._bootstrap_operations import (
+    OwnedBootstrapOperations,
+    PrivateOperationError,
+    UnsupportedImmutableCacheBuild,
+)
 from .._cache_settings import launch_cache
 from .._immutable_cache import CacheRequest
 from .._startup_deadlines import StartupBudget
@@ -650,6 +654,10 @@ class OpenCodeHarnessAdapter:
                 except asyncio.CancelledError:
                     cache_owner.cancel_pending()
                     raise
+                except UnsupportedImmutableCacheBuild:
+                    raise UnsupportedHarnessFeature(
+                        "immutable cache does not support this native build"
+                    ) from None
                 except PrivateOperationError:
                     raise HarnessStartupError(
                         "immutable cache preparation failed"

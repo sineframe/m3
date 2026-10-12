@@ -332,14 +332,19 @@ def test_download_rejects_unverified_artifact(
 def test_rejected_native_digest_has_zero_writers_and_completes_cleanup(
     tmp_path: Path,
 ) -> None:
-    from m3._bootstrap_operations import OwnedBootstrapOperations, PrivateOperationError
+    from m3._bootstrap_operations import (
+        OwnedBootstrapOperations,
+        UnsupportedImmutableCacheBuild,
+    )
 
     native = tmp_path / "unverified-native"
     native.write_bytes(b"unverified executable bytes")
     shared = tmp_path / "shared"
     owner = OwnedBootstrapOperations()
     try:
-        with pytest.raises(PrivateOperationError):
+        with pytest.raises(
+            UnsupportedImmutableCacheBuild, match="does not support this native build"
+        ):
             owner.materialize_immutable_cache(
                 CacheRequest(shared, native, "1.18.35"), deadline=time.monotonic() + 5
             )

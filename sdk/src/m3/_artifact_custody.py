@@ -80,7 +80,7 @@ def receive_artifact_lease(channel: socket.socket) -> ArtifactLease:
         if flags or len(raw) > _MAXIMUM or len(descriptors) != 1:
             raise PrivateOperationError("invalid artifact custody frame")
         frame = json.loads(raw)
-        from ._immutable_cache import RIPGREP
+        from ._artifact_identity import RIPGREP
 
         if (
             set(frame) != {"version", "kind", "root", "identity", "key", "cold"}

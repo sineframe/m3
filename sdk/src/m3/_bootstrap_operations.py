@@ -48,6 +48,10 @@ class PrivateOperationError(RuntimeError):
     """Value-free failure of an owned private operation."""
 
 
+class UnsupportedImmutableCacheBuild(PrivateOperationError):
+    """Known, value-free rejection of an unsupported native artifact build."""
+
+
 class PrivateBytesSource(Protocol):
     def consume(self) -> bytes: ...
 
@@ -153,6 +157,14 @@ class _PrivateResult:
 def _decode_result(
     operation: str, root: Path, frame: dict[str, Any], descriptor: int | None
 ) -> _PrivateResult:
+    if (
+        operation == "private_immutable_cache"
+        and frame == {"version": 1, "reason": "unsupported_immutable_cache_build"}
+        and descriptor is None
+    ):
+        raise UnsupportedImmutableCacheBuild(
+            "immutable cache does not support this native build"
+        )
     result = _PrivateResult()
     if operation in {
         "private_capsule",

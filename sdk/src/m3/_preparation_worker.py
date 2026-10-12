@@ -405,8 +405,14 @@ def _fork_job(
                 raise ValueError("preparation result exceeds limit")
         except _UnsupportedGitExtensions:
             frame = b'{"ok":false,"reason":"unsupported_git_extensions"}\n'
-        except Exception:
-            frame = b'{"ok":false}\n'
+        except Exception as error:
+            from ._artifact_identity import UnsupportedArtifactBuild
+
+            frame = (
+                b'{"ok":false,"reason":"unsupported_immutable_cache_build"}\n'
+                if isinstance(error, UnsupportedArtifactBuild)
+                else b'{"ok":false}\n'
+            )
         view = memoryview(frame)
         while view:
             sent = os.write(1, view)
@@ -951,8 +957,12 @@ def _supervise(
                         emit(
                             ident,
                             "failed",
-                            reason="unsupported_git_extensions"
-                            if result.get("reason") == "unsupported_git_extensions"
+                            reason=result.get("reason")
+                            if result.get("reason")
+                            in {
+                                "unsupported_git_extensions",
+                                "unsupported_immutable_cache_build",
+                            }
                             else None,
                         )
                         stop(job)

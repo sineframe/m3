@@ -16,6 +16,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from m3 import _artifact_identity as identity
 from m3 import _cache_guard as guard
 from m3 import _immutable_cache as cache
 
@@ -26,7 +27,7 @@ artifact = replace(
     binary_size=len(payload),
     binary_sha256=hashlib.sha256(payload).hexdigest(),
 )
-cache.RIPGREP = guard.RIPGREP = artifact
+cache.RIPGREP = guard.RIPGREP = identity.RIPGREP = artifact
 guard.validate_native = lambda request: None
 guard.download_binary = lambda *, timeout: payload
 original_replace = os.replace
