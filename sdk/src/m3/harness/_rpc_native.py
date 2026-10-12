@@ -60,6 +60,7 @@ from .native import (
     _executable,
     _isolated_environment,
     read_bounded_line,
+    startup_spawn_options,
     workspace_for_launch,
 )
 from .observations import (
@@ -72,6 +73,7 @@ from .observations import (
 
 if TYPE_CHECKING:
     from ._launch_credentials import LaunchCredentialBundle, NativeCredentialMaterial
+    from .admission import StartupLease
 
 
 def _json_safe(value: Any, *, limit: int = 8_388_608) -> JsonValue | None:
@@ -106,11 +108,18 @@ class JsonRpcProcess:
         environment: Mapping[str, str] | None = None,
         cwd: Path | None = None,
         root: Path | None = None,
+        startup_lease: StartupLease | None = None,
+        owned_startup: bool = False,
     ) -> None:
         self.root = root or Path(tempfile.mkdtemp(prefix="m3-native-"))
         self.owner = ProcessOwner(self.root)
         env = _isolated_environment(self.root, environment)
-        await self.owner.spawn([self.executable, *self.argv], env, cwd=cwd)
+        await self.owner.spawn(
+            [self.executable, *self.argv],
+            env,
+            cwd=cwd,
+            **startup_spawn_options(startup_lease, owned_startup=owned_startup),
+        )
         self._reader = asyncio.create_task(self._read_stdout())
 
     async def _read_stdout(self) -> None:
@@ -438,7 +447,12 @@ class NativeRPCAdapter:
             environment = self.environment_for_launch(launch, root)
             workspace = workspace_for_launch(launch, root)
             check_credential_deadline(launch)
-            await process.open(environment=environment, cwd=workspace, root=root)
+            await process.open(
+                environment=environment,
+                cwd=workspace,
+                root=root,
+                **startup_spawn_options(launch._startup_lease),
+            )
             session_id = await self.initialize(process, launch)
             effective_launch = launch
             if (

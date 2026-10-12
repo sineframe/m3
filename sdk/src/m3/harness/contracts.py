@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from ._launch_credentials import LaunchCredentialBundle
     from ._native_auth import NativeAuthOperations
     from ._private_policy import PrivateToolCalls
+    from .admission import StartupLease
     from .observations import HarnessSessionEvidence, TurnEvidence
 
 
@@ -277,6 +278,7 @@ class HarnessLaunch:
     _native_secret_inputs: tuple[str | LiteralHandle, ...] = field(
         default=(), repr=False, compare=False
     )
+    _startup_lease: StartupLease | None = field(default=None, repr=False, compare=False)
 
     def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""
@@ -295,6 +297,7 @@ class HarnessLaunch:
             self._credential_deadline,
             self._native_auth_operations,
             self._native_secret_inputs,
+            self._startup_lease,
         )
 
 

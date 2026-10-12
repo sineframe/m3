@@ -68,6 +68,7 @@ from .native import (
     _text,
     probe_help,
     read_bounded_line,
+    startup_spawn_options,
     workspace_for_launch,
     write_config,
 )
@@ -621,7 +622,12 @@ class ClaudeCodeHarnessAdapter:
             from ._launch_credentials import check_credential_deadline
 
             check_credential_deadline(launch)
-            await owner.spawn(argv, environment, cwd=workspace)
+            await owner.spawn(
+                argv,
+                environment,
+                cwd=workspace,
+                **startup_spawn_options(launch._startup_lease),
+            )
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(
                 maxsize=MAX_QUEUE_ITEMS
             )
