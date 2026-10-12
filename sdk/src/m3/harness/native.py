@@ -16,12 +16,14 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote_plus, urlsplit
 
 from .. import _timing
 from ..errors import CleanupError
+from ..trace.redaction import is_sensitive_key
 from ..types import ErrorCode, ErrorInfo, SecretReference
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -30,6 +32,9 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnResult,
 )
+
+if TYPE_CHECKING:
+    from ..server_group import HarnessServerConfig
 
 MAX_FRAME_BYTES = 1024 * 1024
 MAX_STDERR_BYTES = 256 * 1024
@@ -362,6 +367,35 @@ def _exception_kind(error: BaseException) -> str:
     return kind if symbol is None else f"{kind} ({symbol})"
 
 
+def configuration_secrets(configurations: Iterable[HarnessServerConfig]) -> set[str]:
+    """Return credentials written literally into MCP server configurations.
+
+    These are sensitive-named environment and header values, and the
+    endpoint's userinfo and query values: the capture proxy copies the
+    upstream query into the URL a harness receives, so a harness can echo it
+    in an error. Query values are kept both as written and decoded.
+    """
+
+    values: set[str] = set()
+    for configuration in configurations:
+        for mapping in (configuration.environment, configuration.headers):
+            for key, value in mapping.items():
+                if isinstance(value, str) and value and is_sensitive_key(key):
+                    values.add(value)
+        if not configuration.endpoint:
+            continue
+        try:
+            parts = urlsplit(configuration.endpoint)
+            userinfo = (parts.username, parts.password)
+        except ValueError:
+            continue
+        values.update(item for item in userinfo if item)
+        for pair in parts.query.split("&"):
+            value = pair.partition("=")[2]
+            values.update(item for item in (value, unquote_plus(value)) if item)
+    return values
+
+
 class ProcessOwner:
     """Own a process group and its non-blocking output readers."""
 
@@ -643,6 +677,7 @@ __all__ = [
     "_resolved_config_values",
     "_server_configuration",
     "_text",
+    "configuration_secrets",
     "discard_bounded",
     "drain_bounded",
     "probe_help",

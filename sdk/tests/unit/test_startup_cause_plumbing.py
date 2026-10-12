@@ -22,7 +22,7 @@ from m3.execution_runtime import _error_info
 from m3.harness._rpc_native import NativeRPCAdapter
 from m3.harness.contracts import HarnessLaunch, HarnessStartupError
 from m3.harness.native import ProcessOwner
-from m3.server_group import ServerGroupSnapshot
+from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.types import (
     ACPAgent,
     ErrorCode,
@@ -30,6 +30,7 @@ from m3.types import (
     EventKind,
     ServerBinding,
     StdioServer,
+    TransportKind,
 )
 
 
@@ -180,6 +181,41 @@ async def test_unclaimed_startup_evidence_is_not_reused_by_a_later_open() -> Non
     with pytest.raises(HarnessStartupError):
         await adapter.open(launch)
     assert adapter.take_startup_evidence() is None
+
+
+@pytest.mark.asyncio
+async def test_startup_stderr_evidence_redacts_configured_endpoint_credentials() -> (
+    None
+):
+    # The capture proxy copies the upstream query into the URL the harness
+    # receives; a non-sensitive name still carries a resolved credential.
+    endpoint = (
+        "http://127.0.0.1:5555/mcp?k=resolved-query-secret&api_key=SECRET-QUERY-KEY"
+    )
+    adapter = _FailingHandshake(
+        "import sys; sys.stderr.write("
+        f"'error sending request for url ({endpoint})\\n'); sys.exit(3)"
+    )
+    spec = _spec()
+    configuration = HarnessServerConfig(
+        key="remote",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="remote-connection",
+        endpoint=endpoint,
+    )
+    launch = HarnessLaunch(
+        spec, ServerGroupSnapshot(), (configuration,), spec.tool_policy
+    )
+    with pytest.raises(HarnessStartupError):
+        await adapter.open(launch)
+    evidence = adapter.take_startup_evidence()
+    assert evidence is not None
+    stderr = evidence.observations[0].stderr
+    assert stderr is not None and "error sending request for url" in stderr
+    assert "resolved-query-secret" not in stderr
+    assert "SECRET-QUERY-KEY" not in stderr
 
 
 @pytest.mark.asyncio

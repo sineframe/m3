@@ -23,7 +23,12 @@ from pydantic import JsonValue
 
 from ..agent_session import AdapterTurn, _bounded_cause
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..trace.redaction import RedactionConfig, redact_for_api
+from ..trace.redaction import (
+    RedactionConfig,
+    native_text_redaction,
+    redact_for_api,
+    redact_native_text,
+)
 from ..types import (
     Capability,
     CapabilityStatus,
@@ -54,6 +59,7 @@ from .native import (
     ProcessOwner,
     _executable,
     _isolated_environment,
+    configuration_secrets,
     read_bounded_line,
     workspace_for_launch,
 )
@@ -254,6 +260,9 @@ class NativeRPCAdapter:
         self._process_observed = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
         self._startup_evidence: TurnEvidence | None = None
+        # Credentials written into the launch's MCP configurations; the child
+        # can echo them (an endpoint URL with its query) on stderr.
+        self._configuration_secrets: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -342,6 +351,7 @@ class NativeRPCAdapter:
         # Evidence belongs to this open attempt only; never hand over an
         # earlier failure's stderr for a later, unrelated startup failure.
         self._startup_evidence = None
+        self._configuration_secrets = configuration_secrets(launch.configurations)
         readiness = await self.preflight(launch)
         if not readiness.ready:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
@@ -382,6 +392,7 @@ class NativeRPCAdapter:
 
         A drain still running (the child is alive) is never awaited here: this
         runs on the turn path. Text is redacted with this adapter's secrets
+        and the launch's configured credentials, including those in URLs,
         before it reaches the observation; the sink redacts again and applies
         the capture policy.
         """
@@ -390,13 +401,13 @@ class NativeRPCAdapter:
         if task is None or not task.done() or task.cancelled():
             return {"stderr_state": "unavailable"}
         try:
-            text = redact_for_api(
+            text = redact_native_text(
                 task.result().decode("utf-8", errors="replace"),
-                config=RedactionConfig.from_environment(secrets=self._runtime_secrets),
+                native_text_redaction(
+                    self._runtime_secrets | self._configuration_secrets
+                ),
             )
         except Exception:
-            return {"stderr_state": "unavailable"}
-        if not isinstance(text, str):
             return {"stderr_state": "unavailable"}
         return {"stderr": text, "stderr_state": "observed"}
 
@@ -746,4 +757,5 @@ class NativeRPCAdapter:
         self._session = None
         self._process = None
         self._runtime_secrets.clear()
+        self._configuration_secrets.clear()
         self._process_observed = False

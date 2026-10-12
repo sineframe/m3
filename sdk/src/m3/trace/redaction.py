@@ -71,6 +71,14 @@ _SENSITIVE_QUERY_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _URL_PREFIX: Final[tuple[str, ...]] = ("http://", "https://")
+# A URL inside free text, ending before whitespace, quotes or parentheses.
+_URL_IN_TEXT: Final[re.Pattern[str]] = re.compile(
+    r"https?://[^\s\"'<>(){}]+", re.IGNORECASE
+)
+# Values a sensitive-looking name can hold without being a credential.
+_NON_SECRET_WORDS: Final[frozenset[str]] = frozenset(
+    {"true", "false", "yes", "no", "on", "off", "null", "none"}
+)
 _MAX_NESTING_DEPTH: Final[int] = 64
 _SAFE_PATH_COMPONENTS: Final[frozenset[str]] = frozenset(
     {
@@ -719,6 +727,59 @@ def redact_for_api(
     return project_redacted(value, projection="api", config=config, path=path)
 
 
+def _plausible_secret(value: str) -> bool:
+    stripped = value.strip()
+    return (
+        len(stripped) >= 4
+        and not stripped.isdigit()
+        and stripped.lower() not in _NON_SECRET_WORDS
+    )
+
+
+def native_text_redaction(
+    secrets: Iterable[str] = (), *, explicit: Iterable[str] = ()
+) -> RedactionConfig:
+    """Build redaction for harness-authored free text (errors, stderr).
+
+    ``secrets`` and the ambient environment are found by sensitive-looking
+    names, so values that cannot be credentials (short, numeric or boolean,
+    such as ``TOKEN_LIMIT=1``) are skipped: replacing them everywhere would
+    garble the text being kept. ``explicit`` values are known credentials and
+    are always redacted. Each value also matches without surrounding
+    whitespace, because harnesses echo trimmed values.
+    """
+
+    values: set[str] = set()
+    for value in (*secrets, *known_secret_values()):
+        if isinstance(value, str):
+            values.update(
+                item for item in (value, value.strip()) if _plausible_secret(item)
+            )
+    for value in explicit:
+        if isinstance(value, str):
+            values.update(item for item in (value, value.strip()) if item)
+    return RedactionConfig(secrets=frozenset(values), include_environment=False)
+
+
+def redact_native_text(text: str, config: RedactionConfig) -> str:
+    """Redact free text, including credentials in URLs embedded in it.
+
+    Known values are replaced first, as they appear (a URL parser would
+    re-encode them); then each embedded URL loses its userinfo and its
+    sensitive query values. A URL that cannot be parsed is replaced whole.
+    Whitespace is preserved: callers normalize only afterwards, otherwise a
+    secret containing a newline or a double space would no longer match.
+    """
+
+    def redact_url(match: re.Match[str]) -> str:
+        try:
+            return _redact_url(match.group(0), config, "$", [])
+        except RedactionError:
+            return REDACTED
+
+    return _URL_IN_TEXT.sub(redact_url, _replace_secrets(text, config, "$", []))
+
+
 def redact_for_ui(
     value: Any, *, config: RedactionConfig | None = None, path: str = "$"
 ) -> Any:
@@ -793,6 +854,7 @@ __all__ = [
     "is_sensitive_key",
     "is_sensitive_query_key",
     "known_secret_values",
+    "native_text_redaction",
     "project_redacted",
     "redact",
     "redact_artifact_bytes",
@@ -802,6 +864,7 @@ __all__ = [
     "redact_for_persistence",
     "redact_for_ui",
     "redact_model_json",
+    "redact_native_text",
     "redact_raw_evidence",
     "redact_repr",
     "redact_result",

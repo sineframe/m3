@@ -16,15 +16,55 @@ from m3.trace.redaction import (
     RedactionConfig,
     RedactionError,
     assertion_view,
+    native_text_redaction,
     project_redacted,
     redact,
     redact_artifact_bytes,
     redact_model_json,
+    redact_native_text,
     redact_raw_evidence,
     redact_repr,
     redacted_json,
     serialize_redacted,
 )
+
+
+def test_native_text_redacts_credentials_inside_embedded_urls() -> None:
+    config = native_text_redaction({"plain-query-secret"})
+    text = (
+        "remote: error sending request for url "
+        "(http://127.0.0.1:5555/mcp?api_key=SECRET-QUERY-KEY&k=plain-query-secret), "
+        "and https://user:pass-word@example.com/x failed"
+    )
+    redacted = redact_native_text(text, config)
+    for secret in ("SECRET-QUERY-KEY", "plain-query-secret", "pass-word"):
+        assert secret not in redacted
+    assert redacted.startswith(
+        "remote: error sending request for url (http://127.0.0.1:5555/mcp?"
+    )
+    assert redacted.endswith("failed")
+
+
+def test_native_text_matches_secrets_with_whitespace_before_normalizing() -> None:
+    pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----"
+    config = native_text_redaction({pem, "Bearer  XYZ-double"}, explicit={"tok-abc\n"})
+    text = f"bad key {pem}; header Bearer  XYZ-double; token tok-abc rejected"
+    assert redact_native_text(text, config) == (
+        f"bad key {REDACTED}; header {REDACTED}; token {REDACTED} rejected"
+    )
+
+
+def test_native_text_skips_values_that_cannot_be_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TOKEN_LIMIT", "1")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("AUTH_TOKEN", "ambient-auth-secret")
+    config = native_text_redaction({"no", "42"}, explicit={"7"})
+    text = "expected id 1, carried 0; auth true; no 42; pin 7; ambient-auth-secret"
+    assert redact_native_text(text, config) == (
+        f"expected id 1, carried 0; auth true; no 42; pin {REDACTED}; {REDACTED}"
+    )
 
 
 def test_nested_shapes_exact_secrets_keys_headers_and_urls_are_redacted() -> None:
