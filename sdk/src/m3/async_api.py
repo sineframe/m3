@@ -1005,6 +1005,7 @@ class AsyncMCPTestKit:
         self._record_checks = _record_checks_enabled(record_checks)
         configuration = _resolve_configuration(config, env=env, cwd=cwd)
         self.config = _override_admission_config(configuration.config, admission)
+        self._admission_override = admission
         self._literal_registry = configuration.literal_registry
         self._owns_store = False
         if store is None:
@@ -1578,7 +1579,9 @@ class AsyncMCPTestKit:
             self.config,
             kit_timeouts=self._harness_timeouts,
         )
-        spec = _resolve_admission(spec, self.config, admission)
+        spec = _resolve_admission(
+            spec, self.config, admission, kit_override=self._admission_override
+        )
         server_profile_by_ordinal = {
             item.get("_ordinal"): item
             for item in session_profile_provenance

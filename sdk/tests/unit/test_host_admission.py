@@ -92,27 +92,67 @@ async def test_larger_request_cannot_widen_active_smaller_host_limit(
 
 
 @pytest.mark.asyncio
-async def test_load_gate_keeps_capacity_idle_until_load_recovers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_fifo_spans_real_processes_and_dead_waiter_is_removed(
+    tmp_path: Path,
 ) -> None:
-    import os
+    root = tmp_path / "host"
+    first = await HostAdmission(root).acquire(
+        StartupAdmission(enabled=True, slots=1, queue_timeout_seconds=5)
+    )
+    assert first is not None
+    workers: list[asyncio.subprocess.Process] = []
+    try:
+        for number in range(4):
+            worker = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(Path(__file__).parents[1] / "fixtures" / "admission_waiter.py"),
+                str(root),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            workers.append(worker)
+
+            async def registered(expected: int) -> None:
+                while len(tuple((root / "queue").iterdir())) < expected:
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(registered(number + 1), timeout=5)
+        workers[0].kill()
+        await workers[0].wait()
+        first.close()
+        for worker in workers[1:]:
+            assert worker.stdout is not None and worker.stdin is not None
+            assert (
+                await asyncio.wait_for(worker.stdout.readline(), timeout=5)
+                == b"admitted\n"
+            )
+            worker.stdin.write(b"release\n")
+            await worker.stdin.drain()
+            assert await asyncio.wait_for(worker.wait(), timeout=5) == 0
+    finally:
+        first.close()
+        for worker in workers:
+            if worker.returncode is None:
+                worker.kill()
+            await worker.wait()
+
+
+def test_load_gate_calculates_normalized_load_and_none_skips_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from m3.harness._startup_guardian import _KernelQueue
 
     load = [100.0]
     monkeypatch.setattr(os, "getloadavg", lambda: (load[0], 0.0, 0.0))
     monkeypatch.setattr(os, "cpu_count", lambda: 2)
-    settings = StartupAdmission(
-        enabled=True,
-        slots=1,
-        normalized_load_threshold=0.5,
-        queue_timeout_seconds=2,
-    )
-    pending = asyncio.create_task(HostAdmission(tmp_path / "host").acquire(settings))
-    await asyncio.sleep(0.05)
-    assert not pending.done()
+    assert not _KernelQueue._load_ready(0.5)
     load[0] = 0.5
-    lease = await pending
-    assert lease is not None
-    lease.close()
+    assert _KernelQueue._load_ready(0.5)
+    monkeypatch.setattr(
+        os, "getloadavg", lambda: pytest.fail("disabled load was queried")
+    )
+    assert _KernelQueue._load_ready(None)
 
 
 @pytest.mark.asyncio
@@ -253,9 +293,29 @@ async def test_real_controller_death_retains_slot_while_native_writer_lives(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", [False, True])
 async def test_exited_leader_stays_reserved_until_descendant_death(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fallback: bool
 ) -> None:
+    if fallback:
+        original_spawn = asyncio.create_subprocess_exec
+
+        async def fallback_spawn(
+            *args: object, **kwargs: object
+        ) -> asyncio.subprocess.Process:
+            values = list(args)
+            if len(values) > 2 and str(values[2]).endswith("_startup_guardian.py"):
+                values[2:3] = [
+                    str(
+                        Path(__file__).parents[1]
+                        / "fixtures"
+                        / "fallback_admission_helper.py"
+                    ),
+                    values[2],
+                ]
+            return await original_spawn(*values, **kwargs)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fallback_spawn)
     root = tmp_path / "native"
     root.mkdir()
     lease = await HostAdmission(tmp_path / "host").acquire(
@@ -334,3 +394,100 @@ async def test_guardian_autonomously_fences_at_shared_startup_deadline(
         assert guardian.process.returncode != 0
     finally:
         await guardian.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_pending_helper_spawn_stays_owned_and_is_reaped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = asyncio.Event()
+    release_result = asyncio.Event()
+    original_spawn = asyncio.create_subprocess_exec
+    processes: list[asyncio.subprocess.Process] = []
+
+    async def delayed_return(
+        *args: object, **kwargs: object
+    ) -> asyncio.subprocess.Process:
+        process = await original_spawn(*args, **kwargs)
+        processes.append(process)
+        created.set()
+        await release_result.wait()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed_return)
+    root = tmp_path / "native"
+    root.mkdir()
+    marker = tmp_path / "must-not-execute"
+    owner = ProcessOwner(root)
+    pending = asyncio.create_task(
+        owner.spawn(
+            [sys.executable, "-c", f"open({str(marker)!r},'w').close()"],
+            {},
+            owned_startup=True,
+        )
+    )
+    try:
+        await asyncio.wait_for(created.wait(), timeout=3)
+        assert owner._guardian is not None
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(pending, timeout=0.5)
+        assert not marker.exists()
+        release_result.set()
+        await owner.close()
+        assert processes[0].returncode is not None
+        assert not root.exists()
+        assert not marker.exists()
+    finally:
+        release_result.set()
+        await owner.terminate()
+
+
+@pytest.mark.asyncio
+async def test_owned_stalled_queue_filesystem_has_bounded_return_and_no_late_admit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from m3.harness.guardian import _OWNED_GUARDIANS
+
+    marker, gate = tmp_path / "blocked", tmp_path / "release"
+    os.mkfifo(gate)
+    processes: list[asyncio.subprocess.Process] = []
+    original_spawn = asyncio.create_subprocess_exec
+
+    async def fixture_spawn(
+        *args: object, **kwargs: object
+    ) -> asyncio.subprocess.Process:
+        values = list(args)
+        helper = str(values[2])
+        values[2:3] = [
+            str(Path(__file__).parents[1] / "fixtures" / "stalled_admission_helper.py"),
+            helper,
+            str(marker),
+            str(gate),
+        ]
+        process = await original_spawn(*values, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fixture_spawn)
+    root = tmp_path / "host"
+    started = time.monotonic()
+    try:
+        with pytest.raises(OperationTimeout, match="queue timed out"):
+            await HostAdmission(root).acquire(
+                StartupAdmission(enabled=True, slots=1, queue_timeout_seconds=0.5)
+            )
+        assert time.monotonic() - started < 1.5
+        assert marker.exists()
+        assert processes[0].returncode is None
+        assert any(
+            owner.process_if_started is processes[0] for owner in _OWNED_GUARDIANS
+        )
+    finally:
+        release = os.open(gate, os.O_WRONLY | os.O_NONBLOCK)
+        os.write(release, b"r")
+        os.close(release)
+        await asyncio.wait_for(processes[0].wait(), timeout=3)
+    assert not (root / "queue").exists()
