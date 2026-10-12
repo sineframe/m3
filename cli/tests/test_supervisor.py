@@ -2344,3 +2344,73 @@ def test_terminal_module_falls_back_without_source_files(
     )
     monkeypatch.setattr(terminal.importlib, "import_module", lambda _name: sentinel)
     assert terminal._load() is sentinel
+
+
+def test_pytest_command_forwards_config_file() -> None:
+    command = supervisor.pytest_command(
+        Path("python"), Path("db"), [], config_file=Path("/abs/c.toml")
+    )
+    index = command.index("--m3-config")
+    assert command[index + 1] == "/abs/c.toml"
+
+
+def test_project_python_timeout_is_configurable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    timeouts: list[float] = []
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        timeouts.append(kwargs["timeout"])
+        return subprocess.CompletedProcess(args, 1, "", "")
+
+    monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
+    with pytest.raises(supervisor.ProjectPythonError):
+        supervisor.validate_project_python(
+            Path(sys.executable), project_root=tmp_path, timeout_seconds=40
+        )
+    assert timeouts == [40]
+    timeouts.clear()
+    assert not supervisor.baseline_exists(
+        tmp_path / "db.sqlite",
+        "run-x",
+        python=Path(sys.executable),
+        project_root=tmp_path,
+        timeout_seconds=40,
+    )
+    assert timeouts == [40]
+
+
+def test_m3_config_passthrough_is_rejected(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["test", "--", "--m3-config", "x"]) == 2
+    assert (
+        "--m3-config must be set through m3, not pytest passthrough"
+        in capsys.readouterr().err
+    )
+
+
+def test_m3_test_missing_config_file_fails_before_pytest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_popen(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("pytest was started")
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", fail_popen)
+    assert (
+        main(
+            [
+                "test",
+                "--project-root",
+                str(tmp_path),
+                "--m3-config",
+                str(tmp_path / "missing.toml"),
+            ]
+        )
+        == 2
+    )
+    err = capsys.readouterr().err
+    assert "invalid_project: config_file from config-file:" in err
+    assert "file not found" in err

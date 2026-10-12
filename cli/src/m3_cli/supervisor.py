@@ -378,6 +378,7 @@ def validate_project_python(
     cli_sdk_version: str | None = None,
     project_root: Path | None = None,
     require_xdist: bool = False,
+    timeout_seconds: float = 15.0,
 ) -> str:
     """Check project imports in a child process and enforce the SDK version."""
 
@@ -388,7 +389,7 @@ def validate_project_python(
             capture_output=True,
             text=True,
             check=False,
-            timeout=15,
+            timeout=timeout_seconds,
         )
     except (OSError, subprocess.TimeoutExpired):
         raise ProjectPythonError(
@@ -583,6 +584,7 @@ def baseline_exists(
     python: Path | None = None,
     project_root: Path | None = None,
     project_id: str | None = None,
+    timeout_seconds: float = 15.0,
 ) -> bool:
     """Validate an explicit baseline before starting project pytest.
 
@@ -604,7 +606,7 @@ def baseline_exists(
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=15,
+                timeout=timeout_seconds,
             )
             payload = json.loads(result.stdout.strip().splitlines()[-1])
             return result.returncode == 0 and bool(payload.get("found"))
@@ -873,6 +875,7 @@ def pytest_command(
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
     no_header: bool = False,
+    config_file: Path | None = None,
 ) -> list[str]:
     command = [
         str(python),
@@ -900,6 +903,8 @@ def pytest_command(
         )
     if project_root is not None:
         command.extend(("--project-root", str(project_root)))
+    if config_file is not None:
+        command.extend(("--m3-config", str(config_file)))
     if (
         project_root is not None
         and explicit_root
@@ -1011,6 +1016,7 @@ def _run_pytest_process(
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
     no_header: bool = False,
+    config_file: Path | None = None,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
@@ -1096,6 +1102,7 @@ def _run_pytest_process(
                     ci_metadata=ci_metadata,
                     num_processes=num_processes,
                     no_header=no_header,
+                    config_file=config_file,
                 ),
                 env=child_environment,
                 **kwargs,
@@ -1213,6 +1220,7 @@ def _prepare_test(
     root: Path,
     *,
     require_xdist: bool = False,
+    project_python_timeout: float = 15.0,
 ) -> tuple[Path, Path] | None:
     database_path = _absolute_database(database, project_root=root)
     try:
@@ -1220,12 +1228,25 @@ def _prepare_test(
         selected = resolve_project_python(python, project_root=root)
         with _timing.span("cli.validate_python"):
             validate_project_python(
-                selected, project_root=root, require_xdist=require_xdist
+                selected,
+                project_root=root,
+                require_xdist=require_xdist,
+                timeout_seconds=project_python_timeout,
             )
     except (OSError, ProjectPythonError) as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return None
     return selected, database_path
+
+
+def _cli_project_python_timeout(root: Path, config_file: Path | None) -> float:
+    """Read the CLI's own limits; the pytest controller resolves all other settings."""
+
+    from m3.configuration import load_config
+
+    return load_config(
+        env={}, cwd=root, config_file=config_file
+    ).cli.project_python_timeout_seconds
 
 
 def _stop_server(child: _ServerChild | None) -> None:
@@ -1665,6 +1686,7 @@ def run_test_with_runs(
     harness_cache_dir: str | os.PathLike[str] | None = None,
     ci_mode: bool = False,
     run_id: str | None = None,
+    config_file: str | os.PathLike[str] | None = None,
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
     banner_shown: bool = False,
@@ -1738,8 +1760,27 @@ def run_test_with_runs(
 
     with _timing.span("cli.history_scan", "before"):
         before = list_stored_runs(database_path)
+    from m3.configuration import ConfigError
+
+    config_path = (
+        Path(config_file).expanduser().absolute() if config_file is not None else None
+    )
+    try:
+        project_python_timeout = _cli_project_python_timeout(root, config_path)
+    except ConfigError as exc:
+        print(f"m3 test: {exc}", file=sys.stderr)
+        return TestRunResult(
+            OPERATIONAL_ERROR,
+            run_id=invocation_run_id,
+            database_path=database_path,
+            project_root=root,
+        )
     prepared = _prepare_test(
-        python, database, root, require_xdist=num_processes is not None
+        python,
+        database,
+        root,
+        require_xdist=num_processes is not None,
+        project_python_timeout=project_python_timeout,
     )
     if prepared is None:
         return TestRunResult(
@@ -1758,6 +1799,7 @@ def run_test_with_runs(
                 python=selected,
                 project_root=root,
                 project_id=_project_id(root),
+                timeout_seconds=project_python_timeout,
             )
     else:
         baseline_found = True
@@ -1805,6 +1847,7 @@ def run_test_with_runs(
         ci_metadata=ci_metadata,
         num_processes=num_processes,
         no_header=no_header,
+        config_file=config_path,
     )
     with _timing.span("cli.history_scan", "after"):
         after = list_stored_runs(database_path)
@@ -1862,6 +1905,7 @@ def run_test(
     ci_metadata: Mapping[str, object] | None = None,
     num_processes: str | None = None,
     banner_shown: bool = False,
+    config_file: str | os.PathLike[str] | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1916,6 +1960,7 @@ def run_test(
             ci_metadata=ci_metadata,
             num_processes=num_processes,
             banner_shown=banner_shown,
+            config_file=config_file,
         ).exit_code
     root = resolve_project_root(project_root)
     invocation_run_id = run_id or f"run-{uuid4().hex}"
@@ -1933,8 +1978,22 @@ def run_test(
             num_processes=num_processes,
         )
     )
+    from m3.configuration import ConfigError
+
+    config_path = (
+        Path(config_file).expanduser().absolute() if config_file is not None else None
+    )
+    try:
+        project_python_timeout = _cli_project_python_timeout(root, config_path)
+    except ConfigError as exc:
+        print(f"m3 test: {exc}", file=sys.stderr)
+        return OPERATIONAL_ERROR
     prepared = _prepare_test(
-        python, database, root, require_xdist=num_processes is not None
+        python,
+        database,
+        root,
+        require_xdist=num_processes is not None,
+        project_python_timeout=project_python_timeout,
     )
     if prepared is None:
         return OPERATIONAL_ERROR
@@ -1947,6 +2006,7 @@ def run_test(
                 python=selected,
                 project_root=root,
                 project_id=_project_id(root),
+                timeout_seconds=project_python_timeout,
             )
     else:
         baseline_found = True
@@ -1981,6 +2041,7 @@ def run_test(
         ci_metadata=ci_metadata,
         num_processes=num_processes,
         no_header=no_header,
+        config_file=config_path,
     )
 
 

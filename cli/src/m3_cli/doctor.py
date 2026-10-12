@@ -10,7 +10,12 @@ from typing import Any
 
 from dotenv import dotenv_values
 
-from m3.configuration import ConfigError, load_config
+from m3.configuration import (
+    SETTING_NAMES,
+    ConfigError,
+    configuration_digest,
+    load_config,
+)
 from m3.services.probes import ProbeKind, ProbeRequest, Probes
 
 from .canary import canary_build
@@ -84,7 +89,7 @@ def _parse_requirement(value: str) -> tuple[str, str | None]:
         return "config", None
     if value.startswith("config:"):
         field = value.partition(":")[2]
-        if field in {"artifact_policy", "protocol_revision"}:
+        if field in SETTING_NAMES:
             return "config", field
         raise DoctorCLIError("invalid requirement")
     try:
@@ -212,6 +217,10 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         kind == "config" for kind, _ in requirements
     ):
         raise DoctorArgumentError("--env-file requires a config requirement")
+    if getattr(args, "m3_config", None) is not None and not any(
+        kind == "config" for kind, _ in requirements
+    ):
+        raise DoctorArgumentError("--m3-config requires a config requirement")
     if args.project_root is not None:
         try:
             if not args.project_root.is_dir():
@@ -256,6 +265,26 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     source = None
     selected_path = None
 
+    include_config = any(kind == "config" for kind, _ in requirements)
+    if include_config:
+        try:
+            config = load_config(
+                env=environment,
+                cwd=args.project_root,
+                config_file=getattr(args, "m3_config", None),
+            )
+        except ConfigError as error:
+            raise DoctorConfigurationError(error) from None
+        except (OSError, TypeError, ValueError):
+            raise DoctorCLIError("invalid configuration") from None
+        configuration = {
+            "status": "ready",
+            "settings": _json_value(config),
+            "digest": configuration_digest(config),
+        }
+    project_python_timeout = (
+        config.cli.project_python_timeout_seconds if include_config else 15.0
+    )
     try:
         selected = resolve_project_python(
             getattr(args, "python", None),
@@ -275,6 +304,7 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
             selected,
             cli_sdk_version=bundled_sdk_version,
             project_root=root,
+            timeout_seconds=project_python_timeout,
         )
     except ProjectPythonError as error:
         reason = str(error)
@@ -295,15 +325,6 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
             "source": source,
             "executable": str(selected_path) if selected_path is not None else None,
         }
-    include_config = any(kind == "config" for kind, _ in requirements)
-    if include_config:
-        try:
-            config = load_config(env=environment, cwd=args.project_root)
-        except ConfigError as error:
-            raise DoctorConfigurationError(error) from None
-        except (OSError, TypeError, ValueError):
-            raise DoctorCLIError("invalid configuration") from None
-        configuration = {"status": "ready", "settings": _json_value(config)}
     probe_report = Probes().probe_requested(_requests(requirements))
     results = _safe_probe_results(list(probe_report.results), requirements)
     ready = (
@@ -353,8 +374,12 @@ def print_human(report: dict[str, Any]) -> None:
             print(f"project Python: {project_python['executable']}")
         if project_python.get("reason"):
             print(f"reason: {project_python['reason']}")
-    if report.get("configuration") is not None:
-        print(f"config: {report['configuration']['status']}")
+    configuration = report.get("configuration")
+    if configuration is not None:
+        print(f"config: {configuration['status']} ({configuration['digest']})")
+        for name, origin in sorted(configuration["settings"]["sources"].items()):
+            if origin["source"] != "default":
+                print(f"  {name} from {origin['origin']}")
     for result in report["results"]:
         capability = result["capability"]
         reason = capability.get("reason")
