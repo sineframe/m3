@@ -164,8 +164,11 @@ event loops, including the private loop threads used by synchronous kits. Its
 thread routes bounded versioned JSON frames and owns process handles; it never
 copies, publishes or deletes files. Pytest run teardown calls
 `shutdown_worker_preparation`; standalone use has the same explicit teardown
-seam and controller-pipe EOF at process exit. Closing a kit fences only that
-kit's jobs.
+seam and ownership-channel EOF at process exit. Closing a kit fences only that
+kit's jobs. Submission EOF fences work without closing the separate ownership
+channel: cleanup identities still reach the router and require its acknowledgement.
+Ownership EOF fences running cleanup and never releases a new mutation gate;
+dead-writer roots then remain explicit quarantine.
 
 The isolated helper remains single-threaded and forks each job into its own
 process group. The child closes inherited controller and sibling descriptors.
@@ -173,18 +176,26 @@ The helper first waits for a private acknowledgement that `setsid()` completed;
 until then it owns and signals the unreaped child PID. The child waits at a
 start gate until the router has recorded the acknowledged group identity.
 Fencing before acknowledgement never opens that gate.
-Staging allocation and all materialization happen in that child. Before a
+Staging allocation and framework-owned materialization happen in that child. Before a
 result is ready, the helper joins the child and checks that its entire group
 has disappeared. The controller checks the same absolute deadline through
 ready, provisional acceptance and release. It then adopts the completed root
 without another suspension. Git worktrees retain their staged absolute path
-so their repository registration remains valid.
+so their repository registration remains valid. Under an explicit total budget,
+worktree preparation rejects executable Git hooks, filter commands, external
+fsmonitor and partial-clone/promisor checkout before checkout. Per-command native
+hook/fsmonitor guards also apply after that capability check. Plain Git worktrees
+remain supported, and rejected preparation preserves the source and its worktree
+registrations. The unbounded compatibility path retains custom extension behavior
+and does not claim descendant containment for code that creates a new session.
 
 Cancellation fences the generation before requesting stop. The helper sends
 TERM, escalates to KILL and retains a quarantined root while any group member
 survives. Recursive deletion runs in another owned process after writer death;
 cancelled git worktrees unregister only their exact owned target. EOF fences
-unreleased jobs. An unexpected helper loss also kills groups whose identities
+unreleased jobs. Every cleanup group uses the same established-group acknowledgement
+and router start gate as a materialization group, including after submission EOF.
+An unexpected helper loss also kills groups whose identities
 were recorded before their start gates opened and the helper session containing
 unacknowledged children. Unannounced children observe start-gate EOF and cannot
 materialize. Roots remain quarantine evidence. A kernel IO wait may outlive KILL; callers return within
@@ -204,13 +215,13 @@ also need that integration audit. Arbitrary uncancellable callbacks are not a
 bounded preparation contract.
 
 Private capability capsule creation, protected reads/unlink and synchronous
-IPC setup still require a separate typed owned-operation provider on both
-POSIX and Windows. The generic preparation result dictionary must not carry
-capability bytes. Secret bootstrap cannot be accepted as bounded until that
-provider is wired and finite-deadline and late-IO publication tests pass.
+IPC setup require a typed owned-operation provider on both POSIX and Windows
+to enforce finite bootstrap deadlines. Those operations currently lack that
+provider. The generic preparation result dictionary must not carry capability
+bytes. Late filesystem completion must not publish a capability after fencing.
 
 Equivalent descendant ownership on Windows requires native Job Objects and
-remains unfinished. Existing default Windows workspace behavior is retained;
+is currently unsupported. Existing default Windows workspace behavior is retained;
 a requested bounded workspace preparation fails before allocating or spawning.
 The POSIX lifecycle tests in `sdk/tests/unit/test_preparation.py` cover real
 stalled writers, ignored TERM, group descendants, controller EOF, inherited

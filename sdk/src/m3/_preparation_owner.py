@@ -39,6 +39,7 @@ class PreparationWorker:
         self._process: subprocess.Popen[bytes] | None = None
         self._lock = threading.Lock()
         self._outgoing: deque[bytes] = deque()
+        self._acknowledgements: deque[bytes] = deque()
         self._queued_bytes = 0
         self._routes: dict[str, tuple[asyncio.AbstractEventLoop, Callback]] = {}
         self._groups: dict[str, int] = {}
@@ -92,11 +93,13 @@ class PreparationWorker:
         if len(frame) > 4096:
             raise ValueError("preparation request exceeds limit")
         with self._lock:
-            if self._failed or self._closing:
+            if self._failed or (self._closing and action != "begin"):
                 raise RuntimeError("preparation worker is unavailable")
             if self._queued_bytes + len(frame) > MAX_FRAME:
                 raise RuntimeError("preparation input queue is full")
-            self._outgoing.append(frame)
+            (self._acknowledgements if action == "begin" else self._outgoing).append(
+                frame
+            )
             self._queued_bytes += len(frame)
         try:
             self._wake_write.send(b"x")
@@ -135,8 +138,13 @@ class PreparationWorker:
         selector = selectors.DefaultSelector()
         pending = bytearray()
         incoming = bytearray()
+        acknowledgements = bytearray()
+        ownership_read: int | None = None
+        ownership_write: int | None = None
         process: subprocess.Popen[bytes] | None = None
         try:
+            ownership_read, ownership_write = os.pipe()
+            os.set_blocking(ownership_write, False)
             process = subprocess.Popen(
                 [
                     sys.executable,
@@ -146,13 +154,18 @@ class PreparationWorker:
                     str(self._max_jobs),
                     "--root",
                     str(self.root),
+                    "--ownership-fd",
+                    str(ownership_read),
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                pass_fds=(ownership_read,),
                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             )
+            os.close(ownership_read)
+            ownership_read = None
             self._process = process
             assert process.stdin is not None and process.stdout is not None
             os.set_blocking(process.stdin.fileno(), False)
@@ -165,6 +178,10 @@ class PreparationWorker:
                     while self._outgoing:
                         packet = self._outgoing.popleft()
                         pending.extend(packet)
+                        self._queued_bytes -= len(packet)
+                    while self._acknowledgements:
+                        packet = self._acknowledgements.popleft()
+                        acknowledgements.extend(packet)
                         self._queued_bytes -= len(packet)
                 with self._lock:
                     abandoned = [
@@ -185,6 +202,12 @@ class PreparationWorker:
                     try:
                         sent = os.write(process.stdin.fileno(), pending[:4096])
                         del pending[:sent]
+                    except BlockingIOError:
+                        pass
+                if acknowledgements:
+                    try:
+                        sent = os.write(ownership_write, acknowledgements[:4096])
+                        del acknowledgements[:sent]
                     except BlockingIOError:
                         pass
                 for key, _mask in selector.select(0.005):
@@ -219,6 +242,10 @@ class PreparationWorker:
                     process.stdin.close()
                 if process.stdout is not None:
                     process.stdout.close()
+            if ownership_read is not None:
+                os.close(ownership_read)
+            if ownership_write is not None:
+                os.close(ownership_write)
             selector.close()
             with self._lock:
                 self._failed = True
@@ -234,11 +261,18 @@ class PreparationWorker:
             # The helper's session also contains any child not yet through
             # setsid. A child that races into a new session without its ACK
             # reaching us has a closed start gate and cannot materialize.
-            if process is not None and process.poll() is not None:
+            if process is not None:
                 groups = (*groups, process.pid)
             for group in groups:
                 _signal_group(group, signal.SIGKILL)
-            while any(_group_alive(group) for group in groups):
+            while True:
+                if process is not None:
+                    # Reap our own helper before testing its session. A zombie
+                    # helper still answers killpg(0); waiting on that without
+                    # poll would keep the ownership thread alive indefinitely.
+                    process.poll()
+                if not any(_group_alive(group) for group in groups):
+                    break
                 time.sleep(0.02)
 
     def close(self, timeout_seconds: float = 3) -> None:

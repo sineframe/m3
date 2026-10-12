@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from m3.errors import UnsupportedFeature
 from m3.preparation import PreparationSupervisor
 from m3.types import WorkspaceKind, WorkspacePolicy
 from m3.workspace import WorkspaceManager
@@ -72,13 +73,17 @@ def test_workspace_creation_reuses_helper_and_private_roots(tmp_path: Path) -> N
 
 def test_fenced_generation_cannot_publish_late_result(tmp_path: Path) -> None:
     ready = tmp_path / "ready"
-    script = (
-        "import signal,time,pathlib; "
-        "signal.signal(signal.SIGTERM,lambda *_: None); "
-        f"pathlib.Path({str(ready)!r}).write_text('ready'); "
-        "pathlib.Path('partial').write_text('first chunk'); "
-        "time.sleep(.15); pathlib.Path('late').write_text('late chunk')"
-    )
+    script = f"""
+import pathlib
+import signal
+import time
+
+signal.signal(signal.SIGTERM, lambda *_: None)
+pathlib.Path({str(ready)!r}).write_text("ready")
+pathlib.Path("partial").write_text("first chunk")
+time.sleep(0.15)
+pathlib.Path("late").write_text("late chunk")
+"""
 
     async def run() -> None:
         supervisor = PreparationSupervisor(stop_seconds=0)
@@ -114,12 +119,17 @@ def test_stalled_copy_returns_bounded_and_deletes_only_after_writer_death(
     tmp_path: Path,
 ) -> None:
     ready = tmp_path / "ready"
-    script = (
-        "import os,signal,time,pathlib; "
-        "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-        f"pathlib.Path({str(ready)!r}).write_text(str(os.getpid())); "
-        "pathlib.Path('copy').write_text('partial'); time.sleep(60)"
-    )
+    script = f"""
+import os
+import pathlib
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path({str(ready)!r}).write_text(str(os.getpid()))
+pathlib.Path("copy").write_text("partial")
+time.sleep(60)
+"""
 
     async def run() -> None:
         supervisor = PreparationSupervisor(stop_seconds=0.02)
@@ -164,21 +174,27 @@ def test_controller_eof_kills_ignored_term_and_descendants(tmp_path: Path) -> No
     root = tmp_path / "stage"
     root.mkdir(mode=0o700)
     ready = tmp_path / "pids"
-    script = (
-        "import os,signal,subprocess,sys,time,pathlib; "
-        "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-        "child=subprocess.Popen([sys.executable,'-c',"
-        "'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)']); "
-        f"pathlib.Path({str(ready)!r}).write_text(str(os.getpid())+' '+str(child.pid)); "
-        "time.sleep(60)"
-    )
-    helper = subprocess.Popen(
-        [sys.executable, "-m", "m3._preparation_worker"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    descendant_script = """
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+time.sleep(60)
+"""
+    script = f"""
+import os
+import pathlib
+import signal
+import subprocess
+import sys
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = subprocess.Popen([sys.executable, "-c", {descendant_script!r}])
+pathlib.Path({str(ready)!r}).write_text(str(os.getpid()) + " " + str(child.pid))
+time.sleep(60)
+"""
+    helper, ownership = _owned_helper()
     assert helper.stdin is not None and helper.stdout is not None
     helper.stdin.write(
         json.dumps(
@@ -195,8 +211,7 @@ def test_controller_eof_kills_ignored_term_and_descendants(tmp_path: Path) -> No
     helper.stdin.flush()
     started = json.loads(helper.stdout.readline())
     assert started["event"] == "started"
-    helper.stdin.write(b'{"action":"begin","id":"eof"}\n')
-    helper.stdin.flush()
+    _acknowledge(ownership, "eof")
     end = time.monotonic() + 5
     while not ready.exists():
         assert time.monotonic() < end
@@ -204,7 +219,7 @@ def test_controller_eof_kills_ignored_term_and_descendants(tmp_path: Path) -> No
     pids = [int(item) for item in ready.read_text().split()]
     helper.stdin.close()
     try:
-        helper.wait(timeout=5)
+        _finish_helper(helper, ownership)
         assert all(not _exists(pid) for pid in pids)
         assert not root.exists()
     finally:
@@ -212,18 +227,27 @@ def test_controller_eof_kills_ignored_term_and_descendants(tmp_path: Path) -> No
             os.killpg(started["pid"], signal.SIGKILL)
             helper.kill()
             helper.wait()
-        helper.stdout.close()
+        if not helper.stdout.closed:
+            helper.stdout.close()
 
 
 def test_descendant_group_must_die_before_material_can_be_accepted(
     tmp_path: Path,
 ) -> None:
     child_pid = tmp_path / "child"
-    script = (
-        "import subprocess,sys,pathlib; "
-        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
-        f"pathlib.Path({str(child_pid)!r}).write_text(str(child.pid))"
-    )
+    descendant_script = """
+import time
+
+time.sleep(60)
+"""
+    script = f"""
+import pathlib
+import subprocess
+import sys
+
+child = subprocess.Popen([sys.executable, "-c", {descendant_script!r}])
+pathlib.Path({str(child_pid)!r}).write_text(str(child.pid))
+"""
 
     async def run() -> None:
         supervisor = PreparationSupervisor()
@@ -243,16 +267,62 @@ def test_descendant_group_must_die_before_material_can_be_accepted(
     asyncio.run(run())
 
 
+def _owned_helper() -> tuple[subprocess.Popen[bytes], int]:
+    read_fd, write_fd = os.pipe()
+    try:
+        helper = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "m3._preparation_worker",
+                "--ownership-fd",
+                str(read_fd),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            pass_fds=(read_fd,),
+        )
+    except BaseException:
+        os.close(write_fd)
+        raise
+    finally:
+        os.close(read_fd)
+    return helper, write_fd
+
+
+def _acknowledge(ownership: int, ident: str) -> None:
+    os.write(
+        ownership,
+        json.dumps({"version": 1, "action": "begin", "id": ident}).encode() + b"\n",
+    )
+
+
+def _finish_helper(helper: subprocess.Popen[bytes], ownership: int) -> None:
+    import select
+
+    assert helper.stdout is not None
+    try:
+        while True:
+            assert select.select([helper.stdout], [], [], 5)[0]
+            line = helper.stdout.readline()
+            if not line:
+                break
+            frame = json.loads(line)
+            if frame["event"] == "cleanup_started":
+                assert os.getpgid(frame["pid"]) == frame["pid"]
+                _acknowledge(ownership, frame["id"])
+        helper.wait(timeout=5)
+    finally:
+        os.close(ownership)
+        helper.stdout.close()
+
+
 def _ready_helper(
     root: Path, operation: str, payload: dict[str, object]
-) -> subprocess.Popen[bytes]:
-    helper = subprocess.Popen(
-        [sys.executable, "-m", "m3._preparation_worker"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+) -> tuple[subprocess.Popen[bytes], int]:
+    helper, ownership = _owned_helper()
     assert helper.stdin is not None and helper.stdout is not None
     helper.stdin.write(
         json.dumps(
@@ -268,23 +338,23 @@ def _ready_helper(
     )
     helper.stdin.flush()
     assert json.loads(helper.stdout.readline())["event"] == "started"
-    helper.stdin.write(b'{"action":"begin","id":"boundary"}\n')
-    helper.stdin.flush()
+    _acknowledge(ownership, "boundary")
     assert json.loads(helper.stdout.readline())["event"] == "ready"
-    return helper
+    return helper, ownership
 
 
 def test_eof_after_accept_before_release_reclaims_staging(tmp_path: Path) -> None:
     root = tmp_path / "stage"
     root.mkdir(mode=0o700)
-    helper = _ready_helper(root, "command", {"argv": [sys.executable, "-c", "pass"]})
+    helper, ownership = _ready_helper(
+        root, "command", {"argv": [sys.executable, "-c", "pass"]}
+    )
     assert helper.stdin is not None and helper.stdout is not None
     helper.stdin.write(b'{"action":"accept","id":"boundary"}\n')
     helper.stdin.flush()
     assert json.loads(helper.stdout.readline())["event"] == "accepted"
     helper.stdin.close()
-    helper.wait(timeout=5)
-    helper.stdout.close()
+    _finish_helper(helper, ownership)
     assert not root.exists()
 
 
@@ -310,7 +380,7 @@ def test_cancelled_worktree_unregisters_exact_owned_target(tmp_path: Path) -> No
     )
     root = tmp_path / "stage"
     root.mkdir(mode=0o700)
-    helper = _ready_helper(
+    helper, ownership = _ready_helper(
         root,
         "workspace",
         {
@@ -331,8 +401,7 @@ def test_cancelled_worktree_unregisters_exact_owned_target(tmp_path: Path) -> No
     assert str(root / "payload") in before
     assert helper.stdin is not None and helper.stdout is not None
     helper.stdin.close()
-    helper.wait(timeout=5)
-    helper.stdout.close()
+    _finish_helper(helper, ownership)
     assert not root.exists()
     after = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
@@ -347,9 +416,13 @@ def test_cancelled_worktree_unregisters_exact_owned_target(tmp_path: Path) -> No
 
 def test_rejected_submission_never_leaves_unowned_staging(tmp_path: Path) -> None:
     ready = tmp_path / "ready"
-    script = (
-        f"import pathlib,time; pathlib.Path({str(ready)!r}).touch(); time.sleep(60)"
-    )
+    script = f"""
+import pathlib
+import time
+
+pathlib.Path({str(ready)!r}).touch()
+time.sleep(60)
+"""
 
     async def run() -> None:
         supervisor = PreparationSupervisor(max_jobs=1)
@@ -397,24 +470,36 @@ def test_fork_job_closes_controller_and_sibling_descriptors(tmp_path: Path) -> N
     marker = tmp_path / "controller-private"
     marker.write_text("private")
     script = """
-import json,os,time
+import json
+import os
+import time
+
 from m3._preparation_worker import _ForkJob
-extra=os.open(MARKER,os.O_RDONLY)
-sibling_read,sibling_write=os.pipe()
+
+extra = os.open(MARKER, os.O_RDONLY)
+sibling_read, sibling_write = os.pipe()
+
+
 def execute():
-    leaked=[]
-    for fd in (extra,sibling_read,sibling_write):
+    leaked = []
+    for fd in (extra, sibling_read, sibling_write):
         try:
             os.fstat(fd)
             leaked.append(fd)
         except OSError:
             pass
-    report={"leaked":leaked,"stdin_eof":os.read(0,1)==b"","group_owned":os.getpgrp()==os.getpid()}
-    os.write(1,json.dumps(report).encode())
-job=_ForkJob(execute,output=True)
-print(job.stdout.read().decode(),flush=True)
+    report = {
+        "leaked": leaked,
+        "stdin_eof": os.read(0, 1) == b"",
+        "group_owned": os.getpgrp() == os.getpid(),
+    }
+    os.write(1, json.dumps(report).encode())
+
+
+job = _ForkJob(execute, output=True)
+print(job.stdout.read().decode(), flush=True)
 while job.poll() is None:
-    time.sleep(.01)
+    time.sleep(0.01)
 job.stdout.close()
 os.close(extra)
 os.close(sibling_read)
@@ -477,7 +562,16 @@ def test_closed_loop_delivery_fences_real_writer(tmp_path: Path) -> None:
     from m3._preparation_owner import worker_preparation
 
     ready = tmp_path / "ready"
-    script = f"import os,pathlib,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); pathlib.Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(60)"
+    script = f"""
+import os
+import pathlib
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path({str(ready)!r}).write_text(str(os.getpid()))
+time.sleep(60)
+"""
     loop = asyncio.new_event_loop()
     worker = worker_preparation()
     ident = "closed-loop-" + str(time.monotonic_ns())
@@ -509,27 +603,65 @@ def test_helper_loss_kills_known_writer_and_retains_quarantine(tmp_path: Path) -
     # shared with unrelated tests. Its stdout reports only ownership evidence.
     ready = tmp_path / "ready"
     script = """
-import asyncio,json,os,signal,sys,time
+import asyncio
+import json
+import os
+import signal
+import sys
+import time
 from pathlib import Path
-from m3.preparation import PreparationSupervisor,PreparationError
+
+from m3.preparation import PreparationError, PreparationSupervisor
+
+
 async def main():
-    supervisor=PreparationSupervisor(stop_seconds=.1)
-    command="import os,signal,time,pathlib; signal.signal(signal.SIGTERM,signal.SIG_IGN); pathlib.Path(READY).write_text(str(os.getpid())); time.sleep(60)".replace("READY",repr(READY))
-    task=asyncio.create_task(supervisor.prepare("command",{"argv":[sys.executable,"-c",command]}))
-    while not Path(READY).exists(): await asyncio.sleep(.01)
-    root=next(iter(supervisor._jobs.values())).root
-    writer=int(Path(READY).read_text())
-    os.kill(supervisor.helper_pid,signal.SIGKILL)
-    try: await task
-    except PreparationError: pass
-    end=time.monotonic()+3
+    supervisor = PreparationSupervisor(stop_seconds=0.1)
+    ready_path = Path(READY)
+    command = f'''
+import os
+import pathlib
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path({str(ready_path)!r}).write_text(str(os.getpid()))
+time.sleep(60)
+'''
+    task = asyncio.create_task(
+        supervisor.prepare("command", {"argv": [sys.executable, "-c", command]})
+    )
+    while not Path(READY).exists():
+        await asyncio.sleep(0.01)
+    root = next(iter(supervisor._jobs.values())).root
+    writer = int(Path(READY).read_text())
+    os.kill(supervisor.helper_pid, signal.SIGKILL)
+    try:
+        await task
+    except PreparationError:
+        pass
+    end = time.monotonic() + 3
     while True:
-        try: os.kill(writer,0)
-        except ProcessLookupError: break
-        assert time.monotonic()<end
-        await asyncio.sleep(.01)
-    print(json.dumps({"root":str(root),"quarantine":root in supervisor.quarantined_roots,"writer_dead":True}),flush=True)
+        try:
+            os.kill(writer, 0)
+        except ProcessLookupError:
+            break
+        assert time.monotonic() < end
+        await asyncio.sleep(0.01)
+    print(
+        json.dumps(
+            {
+                "root": str(root),
+                "quarantine": root in supervisor.quarantined_roots,
+                "writer_dead": True,
+            }
+        ),
+        flush=True,
+    )
+    before = time.monotonic()
     await supervisor.close()
+    assert time.monotonic() - before < 0.2
+
+
 asyncio.run(main())
 """.replace("READY", repr(str(ready)))
     completed = subprocess.run(
@@ -632,7 +764,15 @@ def test_kit_close_fences_only_its_jobs(tmp_path: Path) -> None:
     from m3.preparation import PreparationError
 
     ready = tmp_path / "ready"
-    script = f"import pathlib,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); pathlib.Path({str(ready)!r}).touch(); time.sleep(60)"
+    script = f"""
+import pathlib
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path({str(ready)!r}).touch()
+time.sleep(60)
+"""
 
     async def run() -> None:
         async with (
@@ -763,64 +903,123 @@ def test_pre_group_child_is_owned_until_acknowledged(tmp_path: Path, loss: str) 
     # No pytest/controller process is forked; the ordinary router/start gate
     # and TERM/KILL escalation remain responsible for the real child.
     helper_script = """
-import os,pathlib,signal,sys,time
+import os
+import pathlib
+import signal
+import sys
+import time
+
 from m3._preparation_worker import _supervise
-marker=pathlib.Path(MARKER)
-original=os.setsid
+
+marker = pathlib.Path(MARKER)
+original = os.setsid
+
+
 def stalled_setsid():
-    if not marker.exists():
-        signal.signal(signal.SIGTERM,signal.SIG_IGN)
+    if pathlib.Path(ARMED).exists() and not marker.exists():
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         marker.write_text(str(os.getpid()))
-        while True: time.sleep(.01)
+        while True:
+            time.sleep(0.01)
     return original()
-os.setsid=stalled_setsid
-_supervise(int(sys.argv[1]),pathlib.Path(sys.argv[2]))
-""".replace("MARKER", repr(str(tmp_path / "pre-group")))
+
+
+os.setsid = stalled_setsid
+_supervise(int(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3]))
+""".replace("MARKER", repr(str(tmp_path / "pre-group"))).replace(
+        "ARMED", repr(str(tmp_path / "armed"))
+    )
     controller_script = """
-import asyncio,json,os,pathlib,signal,subprocess,sys,time
-from m3.preparation import PreparationSupervisor,PreparationError
-original=subprocess.Popen
-def launch(argv,*args,**kwargs):
-    if isinstance(argv,list) and "m3._preparation_worker" in argv:
-        argv=[argv[0],"-c",HELPER,argv[argv.index("--max-jobs")+1],argv[argv.index("--root")+1]]
-    return original(argv,*args,**kwargs)
-subprocess.Popen=launch
+import asyncio
+import json
+import os
+import pathlib
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+from m3.preparation import PreparationError, PreparationSupervisor
+
+original = subprocess.Popen
+
+
+def launch(argv, *args, **kwargs):
+    if isinstance(argv, list) and "m3._preparation_worker" in argv:
+        argv = [
+            argv[0],
+            "-c",
+            HELPER,
+            argv[argv.index("--max-jobs") + 1],
+            argv[argv.index("--root") + 1],
+            argv[argv.index("--ownership-fd") + 1],
+        ]
+    return original(argv, *args, **kwargs)
+
+
+subprocess.Popen = launch
+
+
 async def main():
-    supervisor=PreparationSupervisor(stop_seconds=.1)
-    marker=pathlib.Path(MARKER)
-    escaped=pathlib.Path(ESCAPED)
-    deadline=time.monotonic()+1.5 if LOSS=="deadline" else None
-    command="import pathlib; pathlib.Path(ESCAPED).touch()".replace("ESCAPED",repr(str(escaped)))
-    task=asyncio.create_task(supervisor.prepare("command",{"argv":[sys.executable,"-c",command]},deadline=deadline))
-    end=time.monotonic()+3
+    supervisor = PreparationSupervisor(stop_seconds=0.1)
+    marker = pathlib.Path(MARKER)
+    escaped = pathlib.Path(ESCAPED)
+    # Reach a warm real helper before targeting the pre-group boundary. Cold
+    # bootstrap deadline behavior has separate ownership tests.
+    warm = await supervisor.prepare("command", {"argv": [sys.executable, "-c", "pass"]})
+    shutil.rmtree(warm.staging_root)
+    pathlib.Path(ARMED).touch()
+    deadline = time.monotonic() + 1.5 if LOSS == "deadline" else None
+    command = f'''
+import pathlib
+
+pathlib.Path({str(escaped)!r}).touch()
+'''
+    task = asyncio.create_task(
+        supervisor.prepare(
+            "command", {"argv": [sys.executable, "-c", command]}, deadline=deadline
+        )
+    )
+    end = time.monotonic() + 3
     while not marker.exists():
-        assert time.monotonic()<end
-        await asyncio.sleep(.01)
-    child=int(marker.read_text())
-    job=next(iter(supervisor._jobs.values()))
-    root=job.root
+        assert time.monotonic() < end
+        await asyncio.sleep(0.01)
+    child = int(marker.read_text())
+    job = next(iter(supervisor._jobs.values()))
+    root = job.root
     assert not root.exists()
     assert not supervisor._worker._groups  # No unacknowledged PGID recorded.
-    if LOSS=="controller_eof": supervisor._worker.close(.02)
-    elif LOSS=="helper_loss": os.kill(supervisor.helper_pid,signal.SIGKILL)
-    try: await task
-    except (PreparationError,asyncio.TimeoutError): pass
-    else: raise AssertionError("unacknowledged child was published")
-    end=time.monotonic()+3
+    if LOSS == "controller_eof":
+        supervisor._worker.close(0.02)
+    elif LOSS == "helper_loss":
+        os.kill(supervisor.helper_pid, signal.SIGKILL)
+    try:
+        await task
+    except (PreparationError, asyncio.TimeoutError):
+        pass
+    else:
+        raise AssertionError("unacknowledged child was published")
+    end = time.monotonic() + 3
     while True:
-        try: os.kill(child,0)
-        except ProcessLookupError: break
-        assert time.monotonic()<end
-        await asyncio.sleep(.01)
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        assert time.monotonic() < end
+        await asyncio.sleep(0.01)
     assert not escaped.exists()
     assert not root.exists()
     await supervisor.close()
-    print(json.dumps({"child_dead":True,"unpublished":True}),flush=True)
+    print(json.dumps({"child_dead": True, "unpublished": True}), flush=True)
+
+
 asyncio.run(main())
 """
     for name, value in (
         ("HELPER", helper_script),
         ("MARKER", str(tmp_path / "pre-group")),
+        ("ARMED", str(tmp_path / "armed")),
         ("ESCAPED", str(tmp_path / "escaped")),
         ("LOSS", loss),
     ):
@@ -832,3 +1031,399 @@ asyncio.run(main())
         check=True,
     )
     assert json.loads(completed.stdout) == {"child_dead": True, "unpublished": True}
+
+
+def test_close_during_deadline_bootstrap_fences_before_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        supervisor = PreparationSupervisor()
+        started = asyncio.Event()
+        resume = asyncio.Event()
+        original_start = supervisor._start
+
+        async def controlled_start() -> None:
+            await original_start()  # Real reusable owner/bootstrap allocation.
+            started.set()
+            await resume.wait()
+
+        monkeypatch.setattr(supervisor, "_start", controlled_start)
+        task = asyncio.create_task(
+            supervisor.prepare(
+                "command",
+                {"argv": [sys.executable, "-c", "pass"]},
+                deadline=time.monotonic() + 5,
+            )
+        )
+        await started.wait()
+        await supervisor.close()
+        resume.set()
+        with pytest.raises(Exception, match="supervisor is closed"):
+            await task
+        assert not supervisor._jobs
+        assert supervisor._worker is not None
+        assert not supervisor._worker._routes
+
+    asyncio.run(run())
+
+
+def test_ownership_eof_never_opens_unacknowledged_cleanup(tmp_path: Path) -> None:
+    import select
+
+    root = tmp_path / "stage"
+    root.mkdir(mode=0o700)
+    helper, ownership = _ready_helper(
+        root, "command", {"argv": [sys.executable, "-c", "pass"]}
+    )
+    assert helper.stdin is not None and helper.stdout is not None
+    helper.stdin.close()
+    cleanup = None
+    while cleanup is None:
+        assert select.select([helper.stdout], [], [], 5)[0]
+        frame = json.loads(helper.stdout.readline())
+        if frame["event"] == "cleanup_started":
+            cleanup = frame["pid"]
+    assert root.exists()
+    assert os.getpgid(cleanup) == cleanup
+    os.close(ownership)  # Router lease lost before registering/releasing gate.
+    helper.wait(timeout=5)
+    helper.stdout.close()
+    assert not _exists(cleanup)
+    assert root.exists()  # Mutation never started; retain explicit quarantine.
+    import shutil
+
+    shutil.rmtree(root)  # Safe fixture cleanup after proven writer death.
+
+
+def test_submission_eof_cleanup_remains_owned_after_helper_loss(tmp_path: Path) -> None:
+    helper_script = """
+import os
+import pathlib
+import signal
+import sys
+import time
+
+from m3 import _preparation_worker as worker
+
+original = worker._remove
+
+
+def stalled_remove(root, source=None):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    (root / "cleanup-mutation").touch()
+    pathlib.Path(MARKER).write_text(str(os.getpid()))
+    time.sleep(60)
+    original(root, source)
+
+
+worker._remove = stalled_remove
+worker._supervise(int(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3]))
+""".replace("MARKER", repr(str(tmp_path / "cleanup-ready")))
+    controller_script = """
+import asyncio
+import json
+import os
+import pathlib
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+from m3.preparation import PreparationError, PreparationSupervisor
+
+original = subprocess.Popen
+
+
+def launch(argv, *args, **kwargs):
+    if isinstance(argv, list) and "m3._preparation_worker" in argv:
+        argv = [
+            argv[0],
+            "-c",
+            HELPER,
+            argv[argv.index("--max-jobs") + 1],
+            argv[argv.index("--root") + 1],
+            argv[argv.index("--ownership-fd") + 1],
+        ]
+    return original(argv, *args, **kwargs)
+
+
+subprocess.Popen = launch
+
+
+async def wait(predicate):
+    end = time.monotonic() + 5
+    while not predicate():
+        assert time.monotonic() < end
+        await asyncio.sleep(0.01)
+
+
+def exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+async def main():
+    ready = pathlib.Path(READY)
+    cleanup = pathlib.Path(CLEANUP)
+    supervisor = PreparationSupervisor(stop_seconds=0.1)
+    command = f'''
+import pathlib
+import time
+
+pathlib.Path({str(ready)!r}).touch()
+time.sleep(60)
+'''
+    task = asyncio.create_task(
+        supervisor.prepare("command", {"argv": [sys.executable, "-c", command]})
+    )
+    await wait(ready.exists)
+    root = next(iter(supervisor._jobs.values())).root
+    owner = supervisor._worker
+    start = time.monotonic()
+    owner.close(0.02)
+    assert time.monotonic() - start < 0.2
+    await wait(cleanup.exists)
+    child = int(cleanup.read_text())
+    assert child in owner._groups.values()  # Registered before cleanup mutation.
+    os.kill(owner.helper_pid, signal.SIGKILL)
+    await wait(lambda: not owner._thread.is_alive())
+    await wait(lambda: not exists(child))
+    try:
+        await task
+    except PreparationError:
+        pass
+    else:
+        raise AssertionError("EOF job was published")
+    assert root in supervisor.quarantined_roots
+    assert (
+        root / "cleanup-mutation"
+    ).exists()  # Dead-writer quarantine, no unsafe deletion.
+    shutil.rmtree(root)
+    root.parent.rmdir()
+    await supervisor.close()
+    print(
+        json.dumps({"cleanup_dead": True, "registered_before_mutation": True}),
+        flush=True,
+    )
+
+
+asyncio.run(main())
+"""
+    for name, value in (
+        ("HELPER", helper_script),
+        ("READY", str(tmp_path / "writer-ready")),
+        ("CLEANUP", str(tmp_path / "cleanup-ready")),
+    ):
+        controller_script = controller_script.replace(name, repr(value))
+    completed = subprocess.run(
+        [sys.executable, "-c", controller_script],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert json.loads(completed.stdout) == {
+        "cleanup_dead": True,
+        "registered_before_mutation": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        "hook",
+        "filter",
+        "fsmonitor",
+        "fsmonitor_implicit",
+        "promisor",
+        "promisor_implicit",
+        "plain",
+    ],
+)
+def test_bounded_worktree_rejects_executable_extensions_before_checkout(
+    tmp_path: Path, extension: str
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    (source / "sample").write_text("preserved")
+    subprocess.run(["git", "add", "sample"], cwd=source, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=source,
+        check=True,
+    )
+    escaped = tmp_path / "escaped.pid"
+    if extension == "hook":
+        # A genuine checkout hook would escape the job's process group.
+        hook = source / ".git" / "hooks" / "post-checkout"
+        child = """
+import pathlib
+import time
+
+time.sleep(0.1)
+pathlib.Path("late-writer").touch()
+time.sleep(60)
+"""
+        hook.write_text(
+            "#!" + sys.executable + "\nimport pathlib,subprocess,sys\n"
+            "child=subprocess.Popen([sys.executable,'-c',"
+            + repr(child)
+            + "],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+            "pathlib.Path(" + repr(str(escaped)) + ").write_text(str(child.pid))\n"
+        )
+        hook.chmod(0o700)
+    elif extension == "filter":
+        (source / ".gitattributes").write_text("sample filter=fixture\n")
+        subprocess.run(["git", "add", ".gitattributes"], cwd=source, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.hooksPath=" + os.devnull,
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-qm",
+                "attributes",
+            ],
+            cwd=source,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "filter.fixture.smudge", "cat"], cwd=source, check=True
+        )
+    elif extension == "fsmonitor":
+        subprocess.run(
+            ["git", "config", "core.fsmonitor", "fixture-external-command"],
+            cwd=source,
+            check=True,
+        )
+    elif extension.endswith("_implicit"):
+        with (source / ".git" / "config").open("a") as configuration:
+            configuration.write(
+                "\n[core]\n fsmonitor\n"
+                if extension == "fsmonitor_implicit"
+                else '\n[remote "origin"]\n promisor\n'
+            )
+    elif extension == "promisor":
+        subprocess.run(
+            ["git", "config", "remote.origin.promisor", "true"], cwd=source, check=True
+        )
+
+    async def run() -> None:
+        supervisor = PreparationSupervisor()
+        manager = WorkspaceManager(
+            WorkspacePolicy(kind=WorkspaceKind.GIT_WORKTREE, source=str(source)),
+            "bounded-git",
+        )
+        try:
+            if extension == "plain":
+                root = await manager.create_async(
+                    supervisor, deadline=time.monotonic() + 10
+                )
+                assert (root / "sample").read_text() == "preserved"
+                manager.cleanup()
+            else:
+                with pytest.raises(
+                    UnsupportedFeature,
+                    match="cannot execute project hooks, filters or external helpers",
+                ):
+                    await manager.create_async(
+                        supervisor, deadline=time.monotonic() + 10
+                    )
+                with pytest.raises(Exception, match="not been created"):
+                    _ = manager.root
+            assert not escaped.exists()  # Unsupported executable never ran.
+            assert (source / "sample").read_text() == "preserved"
+            worktrees = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "worktree",
+                    "list",
+                    "--porcelain",
+                ],
+                cwd=source,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            assert worktrees.count("worktree ") == 1
+        finally:
+            if escaped.exists():
+                # Regression fixture cleanup only, never delete while escaped
+                # writer survives. The passing path cannot reach this branch.
+                os.killpg(int(escaped.read_text()), signal.SIGKILL)
+            await supervisor.close()
+
+    asyncio.run(run())
+
+
+def test_failed_git_checkout_unregisters_even_after_staged_git_file_is_removed(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    (source / "sample").write_text("preserved")
+    subprocess.run(["git", "add", "sample"], cwd=source, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=source,
+        check=True,
+    )
+    # Real Git keeps a registered worktree when post-checkout fails; the
+    # compatibility creation path then removes payload before owned cleanup.
+    hook = source / ".git" / "hooks" / "post-checkout"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o700)
+
+    async def run() -> None:
+        supervisor = PreparationSupervisor()
+        manager = WorkspaceManager(
+            WorkspacePolicy(kind=WorkspaceKind.GIT_WORKTREE, source=str(source)),
+            "failed-git",
+        )
+        with pytest.raises(Exception, match="preparation job failed"):
+            await manager.create_async(supervisor)
+        assert not supervisor.quarantined_roots
+        worktrees = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=source,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert worktrees.count("worktree ") == 1
+        assert (source / "sample").read_text() == "preserved"
+        await supervisor.close()
+
+    asyncio.run(run())

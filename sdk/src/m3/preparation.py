@@ -18,6 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 from ._preparation_owner import PreparationWorker, worker_preparation
+from .errors import UnsupportedFeature
 
 
 class PreparationError(RuntimeError):
@@ -118,7 +119,13 @@ class PreparationSupervisor:
                 job.quarantined = True
             for future in (job.ready, job.accepted, job.released):
                 if not future.done():
-                    future.set_exception(PreparationError("preparation job failed"))
+                    future.set_exception(
+                        UnsupportedFeature(
+                            "bounded git worktree preparation cannot execute project hooks, filters or external helpers"
+                        )
+                        if frame.get("reason") == "unsupported_git_extensions"
+                        else PreparationError("preparation job failed")
+                    )
         elif event == "cleanup_failed":
             job.quarantined = True
             if not job.removed.done():
@@ -155,6 +162,10 @@ class PreparationSupervisor:
             await self._start()
         else:
             await asyncio.wait_for(self._start(), max(0, deadline - time.monotonic()))
+        # close() may run while wait_for schedules the bootstrap coroutine.
+        # A closed facade must never register or adopt a later generation.
+        if self._closed:
+            raise PreparationError("preparation supervisor is closed")
         loop = asyncio.get_running_loop()
         ident = uuid4().hex
         assert self._worker is not None
@@ -239,6 +250,11 @@ class PreparationSupervisor:
                 self._send("discard", ident)
             except PreparationError:
                 pass
+        if self._worker is not None and self._worker.failed:
+            # A lost helper cannot send a cleanup receipt. Its worker owner
+            # still retains/fences groups and quarantine; waiting here cannot
+            # advance safe deletion and needlessly consumes the stop budget.
+            return
         end = time.monotonic() + 3.0
         if deadline is not None:
             end = min(end, deadline)

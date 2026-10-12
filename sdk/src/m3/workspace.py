@@ -197,7 +197,7 @@ class WorkspaceManager:
     ) -> Path:
         """Materialize privately; publish only after the complete writer dies.
 
-        E supplies an absolute total deadline here. Windows retains the
+        ``deadline`` supplies an absolute total clock. Windows retains the
         existing default path; a requested bounded path is unsupported until
         descendant ownership through native Job Objects is implemented.
         """
@@ -226,6 +226,7 @@ class WorkspaceManager:
                 {
                     "policy": self.policy.model_dump(mode="json"),
                     "include_excluded": self._include_excluded,
+                    "bounded": deadline is not None,
                 },
                 deadline=deadline,
             )

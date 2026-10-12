@@ -1,8 +1,9 @@
 """Private preparation supervisor protocol; never writes a published workspace.
 
 The reusable supervisor performs no materialization or recursive deletion. Each
-job (including cleanup) has its own process group. Its controller pipe is also
-its lifetime lease: EOF fences all unfinished jobs and escalates TERM to KILL.
+job (including cleanup) has its own process group. Submission EOF fences all
+unfinished jobs; a separate ownership lease continues cleanup registration and
+start acknowledgements. Ownership EOF never permits new mutation.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, Any, Literal, cast
 
 MAX_FRAME = 16 * 1024 * 1024
 TERM_GRACE = 0.3
@@ -45,6 +46,63 @@ def _signal_group(pid: int, sig: int) -> None:
         pass
 
 
+class _UnsupportedGitExtensions(RuntimeError):
+    pass
+
+
+def _unsupported_git_setting(key: bytes, value: bytes) -> bool:
+    if key.startswith(b"filter.") and key.endswith(
+        (b".clean", b".smudge", b".process")
+    ):
+        return bool(value)
+    if key == b"extensions.partialclone":
+        return True
+    if key == b"core.fsmonitor":
+        return value.lower() not in {b"false", b"0", b"no"}
+    if key.startswith(b"remote.") and key.endswith(b".promisor"):
+        return value.lower() not in {b"false", b"0", b"no"}
+    return False
+
+
+def _bounded_git_argv(source: Path) -> list[str]:
+    """Reject executable project extensions before bounded checkout.
+
+    Git's builtin configuration/path queries do not execute checkout hooks or
+    filter drivers. These queries run in the owned job, under its same clock.
+    This is a capability check, not a sandbox for arbitrary custom Git code.
+    """
+
+    configured = subprocess.run(
+        ["git", "config", "--null", "--list"],
+        cwd=source,
+        check=True,
+        capture_output=True,
+    ).stdout
+    for entry in configured.split(b"\0"):
+        key, _separator, value = entry.partition(b"\n")
+        key = key.lower()
+        if not key:
+            continue
+        if _unsupported_git_setting(key, value):
+            raise _UnsupportedGitExtensions
+    hooks = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+        cwd=source,
+        check=True,
+        capture_output=True,
+    ).stdout.rstrip(b"\n")
+    hooks_path = Path(os.fsdecode(hooks))
+    if hooks_path.is_dir() and any(
+        candidate.is_file() and os.access(candidate, os.X_OK)
+        for candidate in hooks_path.iterdir()
+        if not candidate.name.endswith(".sample")
+    ):
+        raise _UnsupportedGitExtensions
+    # Guard hooks/fsmonitor even if a config file changes after the capability
+    # check. Detected executable behavior is rejected, never silently skipped.
+    return ["git", "-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false"]
+
+
 def _job(operation: str, root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     if operation == "workspace":
         from .types import WorkspaceKind, WorkspacePolicy
@@ -64,7 +122,22 @@ def _job(operation: str, root: Path, payload: dict[str, Any]) -> dict[str, Any]:
             if policy.kind is not WorkspaceKind.TEMPORARY:
                 source = _safe_source(str(policy.source))
                 if policy.kind is WorkspaceKind.GIT_WORKTREE:
-                    manager._create_worktree(source, target)
+                    if payload.get("bounded"):
+                        subprocess.run(
+                            [
+                                *_bounded_git_argv(source),
+                                "worktree",
+                                "add",
+                                "--detach",
+                                str(target),
+                                "HEAD",
+                            ],
+                            cwd=source,
+                            check=True,
+                            capture_output=True,
+                        )
+                    else:
+                        manager._create_worktree(source, target)
                 else:
                     manager._copy_tree(source, target)
                     if policy.kind is WorkspaceKind.READ_ONLY:
@@ -93,20 +166,38 @@ def _job(operation: str, root: Path, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _remove(root: Path, source: str | None = None) -> None:
+    if source is not None:
+        # Failed/interrupted checkout can remove the staged .git file while
+        # leaving repository registration. Consult Git's exact target ledger;
+        # never prune other worktrees or depend on that private file surviving.
+        command = [
+            "git",
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "-c",
+            "core.fsmonitor=false",
+            "worktree",
+        ]
+        registered = subprocess.run(
+            [*command, "list", "--porcelain", "-z"],
+            cwd=source,
+            check=True,
+            capture_output=True,
+        ).stdout.split(b"\0")
+        target = root / "payload"
+        if b"worktree " + os.fsencode(target.resolve()) in registered:
+            subprocess.run(
+                [*command, "remove", "--force", str(target)],
+                cwd=source,
+                check=True,
+                capture_output=True,
+            )
     try:
         info = root.lstat()
     except FileNotFoundError:
         return
     if not stat.S_ISDIR(info.st_mode):
         raise RuntimeError("preparation root is no longer a directory")
-    if source is not None and (root / "payload" / ".git").is_file():
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", str(root / "payload")],
-            cwd=source,
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
     # Called only in a cleanup process after the writer group has disappeared.
     # rmtree does not follow a root symlink. Make private read-only copies
     # removable without following links inside them.
@@ -220,6 +311,8 @@ def _fork_job(
             frame = json.dumps({"ok": True, "data": result}).encode() + b"\n"
             if len(frame) > MAX_FRAME:
                 raise ValueError("preparation result exceeds limit")
+        except _UnsupportedGitExtensions:
+            frame = b'{"ok":false,"reason":"unsupported_git_extensions"}\n'
         except Exception:
             frame = b'{"ok":false}\n'
         view = memoryview(frame)
@@ -236,7 +329,9 @@ class Job:
     root: Path
     process: _ForkJob
     output: bytearray = field(default_factory=bytearray)
-    state: str = "running"
+    state: Literal["running", "ready", "accepted", "released", "fenced", "removing"] = (
+        "running"
+    )
     stop_at: float | None = None
     killed: bool = False
     quarantine_sent: bool = False
@@ -244,7 +339,11 @@ class Job:
     stream_open: bool = True
 
 
-def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
+def _supervise(
+    max_jobs: int = 64,
+    owned_root: Path | None = None,
+    ownership_fd: int | None = None,
+) -> None:
     if os.name != "posix":
         raise RuntimeError("owned preparation requires POSIX process groups")
     if owned_root is not None:
@@ -262,9 +361,14 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
     incoming = bytearray()
     outgoing = bytearray()
     controller_open = True
+    ownership_open = True
+    ownership_input = bytearray()
+    if ownership_fd is not None:
+        os.set_blocking(ownership_fd, False)
+        selector.register(ownership_fd, selectors.EVENT_READ, "ownership")
 
     def emit(ident: str, event: str, **data: Any) -> None:
-        if controller_open:
+        if ownership_open:
             outgoing.extend(
                 json.dumps({"version": 1, "id": ident, "event": event, **data}).encode()
                 + b"\n"
@@ -284,7 +388,7 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
         process = _ForkJob(
             lambda: _remove(job.root, job.cleanup_source),
             output=False,
-            gated=controller_open,
+            gated=True,
         )
         job.process = process
         job.state = "removing"
@@ -295,7 +399,7 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
         selector.register(process.ready, selectors.EVENT_READ, ("group", job))
 
     try:
-        while controller_open or jobs:
+        while controller_open or jobs or outgoing:
             if outgoing:
                 try:
                     sent = os.write(sys.stdout.fileno(), outgoing[:65536])
@@ -304,17 +408,52 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
                     pass
                 except BrokenPipeError:
                     controller_open = False
+                    ownership_open = False
                     outgoing.clear()
                     for job in jobs.values():
                         stop(job)
             for key, _mask in selector.select(timeout=0.02):
-                if key.data == "controller":
+                if key.data == "ownership":
+                    assert ownership_fd is not None
+                    raw = os.read(ownership_fd, 65536)
+                    if not raw:
+                        selector.unregister(ownership_fd)
+                        ownership_open = False
+                        controller_open = False
+                        if sys.stdin.fileno() in selector.get_map():
+                            selector.unregister(sys.stdin)
+                        outgoing.clear()
+                        for job in jobs.values():
+                            stop(job)
+                        continue
+                    ownership_input.extend(raw)
+                    if len(ownership_input) > MAX_FRAME:
+                        raise ValueError("preparation acknowledgement exceeds limit")
+                    while b"\n" in ownership_input:
+                        line, _, rest = ownership_input.partition(b"\n")
+                        ownership_input[:] = rest
+                        acknowledgement = json.loads(line)
+                        if (
+                            acknowledgement.get("version") != 1
+                            or acknowledgement.get("action") != "begin"
+                        ):
+                            raise ValueError("invalid preparation acknowledgement")
+                        candidate = jobs.get(acknowledgement["id"])
+                        if candidate is not None and candidate.state in {
+                            "running",
+                            "removing",
+                        }:
+                            candidate.process.begin()
+                elif key.data == "controller":
                     raw = os.read(sys.stdin.fileno(), 65536)
                     if not raw:
                         selector.unregister(sys.stdin)
                         controller_open = False
-                        outgoing.clear()
+                        if ownership_fd is None:
+                            ownership_open = False
+                            outgoing.clear()
                         for job in jobs.values():
+                            emit(job.ident, "failed")
                             stop(job)
                         continue
                     incoming.extend(raw)
@@ -362,7 +501,7 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
                             selector.register(
                                 process.ready, selectors.EVENT_READ, ("group", job)
                             )
-                        elif action == "begin":
+                        elif action == "begin" and ownership_fd is None:
                             candidate = jobs.get(ident)
                             if candidate is not None and candidate.state in {
                                 "running",
@@ -391,7 +530,9 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
                                 del jobs[ident]
                         elif action == "shutdown":
                             controller_open = False
-                            outgoing.clear()
+                            if ownership_fd is None:
+                                ownership_open = False
+                                outgoing.clear()
                             for job in jobs.values():
                                 stop(job)
                 elif isinstance(key.data, tuple):
@@ -406,7 +547,7 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
                                 signal.SIGKILL if job.killed else signal.SIGTERM
                             )
                         elif job.state in {"running", "removing"}:
-                            if controller_open:
+                            if ownership_open:
                                 emit(
                                     job.ident,
                                     "cleanup_started"
@@ -415,7 +556,7 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
                                     pid=job.process.pid,
                                 )
                             else:
-                                job.process.begin()
+                                stop(job)
                     else:
                         stop(job)
                 else:
@@ -453,7 +594,13 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
                             job.state = "ready"
                             emit(ident, "ready", data=result["data"])
                         else:
-                            emit(ident, "failed")
+                            emit(
+                                ident,
+                                "failed",
+                                reason="unsupported_git_extensions"
+                                if result.get("reason") == "unsupported_git_extensions"
+                                else None,
+                            )
                             stop(job)
                 if job.state == "fenced":
                     if not exited or alive:
@@ -468,7 +615,12 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
                             job.process.signal(signal.SIGKILL)
                             job.killed = True
                     elif not job.stream_open:
-                        spawn_cleanup(job)
+                        if ownership_open:
+                            spawn_cleanup(job)
+                        else:
+                            # No router remains to register/ACK a new mutation
+                            # group. Dead writers leave explicit quarantine.
+                            del jobs[ident]
                 elif job.state == "removing":
                     if exited and not alive:
                         emit(
@@ -493,6 +645,8 @@ def _supervise(max_jobs: int = 64, owned_root: Path | None = None) -> None:
         for job in jobs.values():
             job.process.signal(signal.SIGKILL)
         selector.close()
+        if ownership_fd is not None:
+            os.close(ownership_fd)
         if owned_root is not None:
             try:
                 owned_root.rmdir()
@@ -506,5 +660,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-jobs", type=int, default=64)
     parser.add_argument("--root", type=Path)
+    parser.add_argument("--ownership-fd", type=int)
     arguments = parser.parse_args()
-    _supervise(arguments.max_jobs, arguments.root)
+    _supervise(arguments.max_jobs, arguments.root, arguments.ownership_fd)
