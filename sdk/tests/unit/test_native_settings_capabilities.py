@@ -1,11 +1,14 @@
 """Offline capability facts and final-request checks do not start a model."""
 
+import os
 import sys
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+import m3.harness.native_capabilities as capability_module
 from m3._types.specs import AgentSpec
 from m3.agent_session import AsyncAgentSession
 from m3.errors import ModelValidationError, UnsupportedFeature
@@ -269,6 +272,78 @@ async def test_managed_artifact_identity_is_part_of_discovered_facts(
         await discover_native_support(
             str(executable), "codex", replace(identity, version="0.160.1")
         )
+
+
+@pytest.mark.asyncio
+async def test_unchanged_verified_runtime_skips_hash_and_queries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = _probe(tmp_path)
+    identity = NativeRuntimeIdentity("b" * 64, "0.162.1", "fixture-target")
+    hashes = 0
+    roots = 0
+    queries: list[tuple[str, ...]] = []
+    original_identity = capability_module._identity
+    original_query = capability_module._query
+    original_temporary_directory = capability_module.tempfile.TemporaryDirectory
+
+    def counted_identity(executable: str) -> tuple[Path, str, bool]:
+        nonlocal hashes
+        hashes += 1
+        return original_identity(executable)
+
+    async def counted_query(path: Path, args: tuple[str, ...], root: Path) -> str:
+        queries.append(args)
+        return await original_query(path, args, root)
+
+    def counted_directory(*, prefix: str) -> tempfile.TemporaryDirectory[str]:
+        nonlocal roots
+        roots += 1
+        return original_temporary_directory(prefix=prefix)
+
+    monkeypatch.setattr(capability_module, "_identity", counted_identity)
+    monkeypatch.setattr(capability_module, "_query", counted_query)
+    monkeypatch.setattr(
+        capability_module.tempfile, "TemporaryDirectory", counted_directory
+    )
+    first = await discover_native_support(str(executable), "codex", identity)
+    second = await discover_native_support(str(executable), "codex", identity)
+    assert second is first
+    assert hashes == 1
+    assert len(queries) == 2
+    assert roots == 1
+
+    # Rewriting the same path invalidates its cached version/schema facts.
+    old_status = executable.stat()
+    _probe(tmp_path, permission=False)
+    os.utime(executable, ns=(old_status.st_atime_ns, old_status.st_mtime_ns))
+    changed = await discover_native_support(str(executable), "codex", identity)
+    assert changed.executable_digest != first.executable_digest
+    assert "permissions" not in changed.rpc_parameters
+    assert hashes == 2
+    assert len(queries) == 4
+    assert roots == 2
+
+
+@pytest.mark.asyncio
+async def test_unknown_script_launcher_never_uses_fast_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = _probe(tmp_path)
+    queries = 0
+    original_query = capability_module._query
+
+    async def counted_query(path: Path, args: tuple[str, ...], root: Path) -> str:
+        nonlocal queries
+        queries += 1
+        return await original_query(path, args, root)
+
+    monkeypatch.setattr(capability_module, "_query", counted_query)
+    first = await discover_native_support(str(executable), "codex")
+    second = await discover_native_support(str(executable), "codex")
+    assert second is not first
+    assert queries == 4
+    assert first.source_revision is None
 
 
 @pytest.mark.asyncio
