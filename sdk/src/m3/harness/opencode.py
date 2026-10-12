@@ -26,7 +26,13 @@ import httpx
 
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
+from ..trace.redaction import (
+    RedactionConfig,
+    is_sensitive_key,
+    native_text_redaction,
+    redact_for_api,
+    redact_native_text,
+)
 from ..types import (
     Capability,
     CapabilityStatus,
@@ -61,6 +67,7 @@ from .native import (
     _isolated_environment,
     _server_configuration,
     _text,
+    configuration_secrets,
     probe_help,
     read_bounded_line,
     run_probe,
@@ -361,6 +368,10 @@ class OpenCodeHarnessAdapter:
         # are used to protect adapter results before they reach the public
         # session boundary; they are never included in a launch descriptor.
         self._runtime_secrets: set[str] = set()
+        # Credentials written into the launch's MCP configurations (literal
+        # sensitive env/header values, endpoint userinfo and query). Kept apart
+        # from runtime secrets: they only redact OpenCode's error text.
+        self._configuration_secrets: set[str] = set()
         self.last_policy_evidence: Any = None
 
     @property
@@ -548,13 +559,8 @@ class OpenCodeHarnessAdapter:
                         raise HarnessStartupError("OpenCode credential is unavailable")
                     environment[variable] = value
                     runtime_secrets.add(value)
+            self._configuration_secrets = configuration_secrets(launch.configurations)
             for server in launch.configurations:
-                # Literal credentials are not resolved above; register them so
-                # an OpenCode error that echoes one is redacted.
-                for values in (server.environment, server.headers):
-                    for key, value in values.items():
-                        if isinstance(value, str) and value and is_sensitive_key(key):
-                            runtime_secrets.add(value)
                 for value in server.environment.values():
                     _resolve_opencode_environment_value(
                         value,
@@ -650,6 +656,7 @@ class OpenCodeHarnessAdapter:
             return self._session
         except BaseException:
             self._runtime_secrets.clear()
+            self._configuration_secrets.clear()
             if client is not None:
                 await client.aclose()
             try:
@@ -705,6 +712,7 @@ class OpenCodeHarnessAdapter:
         self._launch = None
         self._root = None
         self._runtime_secrets.clear()
+        self._configuration_secrets.clear()
 
     async def cancel(self) -> None:
         if self._session is not None:
@@ -1891,8 +1899,10 @@ class OpenCodeHarnessAdapter:
         """Append OpenCode's error name and redacted message to ``summary``.
 
         The ``name`` is kept only when it is a short identifier. The message
-        is free text that can echo a credential, so it is redacted with every
-        runtime secret before it is bounded; if redaction fails it is dropped.
+        is free text that can echo a credential, so it is redacted on the raw
+        text (secrets can contain whitespace) with the runtime secrets and the
+        configured credentials, including those in URLs, and only then
+        normalized and bounded.
         """
 
         if not isinstance(error, Mapping):
@@ -1904,16 +1914,12 @@ class OpenCodeHarnessAdapter:
         data = error.get("data")
         text = data.get("message") if isinstance(data, Mapping) else None
         if isinstance(text, str):
-            try:
-                reason = redact_for_api(
-                    " ".join(text.split()),
-                    config=RedactionConfig.from_environment(
-                        secrets=self._runtime_secrets
-                    ),
-                )
-            except Exception:
-                reason = None
-            if isinstance(reason, str) and reason:
+            config = native_text_redaction(
+                self._runtime_secrets | self._configuration_secrets
+            )
+            redacted = redact_native_text(text, config)
+            reason = " ".join(redacted[: 4 * _NATIVE_ERROR_REASON_LIMIT].split())
+            if reason:
                 # Truncate only after redaction so a cut cannot split a secret.
                 if len(reason) > _NATIVE_ERROR_REASON_LIMIT:
                     reason = reason[: _NATIVE_ERROR_REASON_LIMIT - 1] + "…"

@@ -26,7 +26,12 @@ from m3.harness.contracts import (
     HarnessTurnRequest,
     HarnessTurnResult,
 )
-from m3.harness.native import MAX_FRAME_BYTES, _server_configuration, write_config
+from m3.harness.native import (
+    MAX_FRAME_BYTES,
+    _server_configuration,
+    configuration_secrets,
+    write_config,
+)
 from m3.harness.observation_sink import HarnessObservationSink
 from m3.harness.observations import (
     MessageChunkObservation,
@@ -2829,6 +2834,40 @@ async def test_opencode_turn_error_keeps_native_name_and_redacted_reason() -> No
     assert result.error is not None
     assert result.error.message == "OpenCode turn failed"
     assert not result.error.details
+
+
+@pytest.mark.asyncio
+async def test_opencode_turn_reason_redacts_urls_multiline_secrets_not_trivia(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TOKEN_LIMIT", "1")
+    pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
+    endpoint = "http://127.0.0.1:5555/mcp?k=QUERY-CANARY&api_key=KEY-CANARY"
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._configuration_secrets = configuration_secrets(
+        (
+            HarnessServerConfig(
+                key="remote",
+                transport=TransportKind.STREAMABLE_HTTP,
+                required=True,
+                available=True,
+                connection_id="remote-connection",
+                endpoint=endpoint,
+                environment={"PRIVATE_KEY": pem},
+            ),
+        )
+    )
+    message, details = adapter._native_failure(
+        "OpenCode turn failed",
+        {
+            "name": "UnknownError",
+            "data": {"message": f"fetch {endpoint} failed (id 1); bad key {pem}"},
+        },
+    )
+    for canary in ("QUERY-CANARY", "KEY-CANARY", "MIIE-CANARY"):
+        assert canary not in message and canary not in repr(details)
+    assert "fetch http://127.0.0.1:5555/mcp?" in message
+    assert message.endswith("failed (id 1); bad key [REDACTED]")
 
 
 @pytest.mark.asyncio
