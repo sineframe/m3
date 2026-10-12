@@ -1043,6 +1043,50 @@ async def test_codex_thread_start_error_keeps_mcp_reason_without_credentials(
 
 
 @pytest.mark.asyncio
+async def test_codex_thread_start_reason_redacts_endpoint_and_multiline_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The capture proxy copies the upstream query into the URL Codex
+    # receives; Codex quotes that URL mid-sentence when the transport fails.
+    monkeypatch.setenv("TOKEN_LIMIT", "1")
+    pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
+    endpoint = "http://127.0.0.1:5555/mcp?k=QUERY-CANARY&api_key=KEY-CANARY"
+    remote = HarnessServerConfig(
+        key="remote",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="remote-connection",
+        endpoint=endpoint,
+    )
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(
+            remote,
+            _mcp_configuration("fs", environment={"PRIVATE_KEY": pem}),
+        ),
+    )
+    process = _ThreadStartErrorProcess(
+        {
+            "code": -32603,
+            "message": (
+                "required MCP servers failed to initialize: remote: error sending "
+                f"request for url ({endpoint}), expected id 1; fs: bad key {pem}"
+            ),
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    message = str(exc_info.value)
+    for canary in ("QUERY-CANARY", "KEY-CANARY", "MIIE-CANARY"):
+        assert canary not in message
+    # TOKEN_LIMIT=1 is not a credential; the reason stays readable.
+    assert "error sending request for url (http://127.0.0.1:5555/mcp?" in message
+    assert "expected id 1; fs: bad key [REDACTED]" in message
+
+
+@pytest.mark.asyncio
 async def test_codex_thread_start_error_drops_repeated_error_chain() -> None:
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
     launch = _launch(

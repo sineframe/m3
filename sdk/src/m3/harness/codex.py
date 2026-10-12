@@ -18,7 +18,11 @@ from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
-from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
+from ..trace.redaction import (
+    is_sensitive_key,
+    native_text_redaction,
+    redact_native_text,
+)
 from ..types import (
     Codex,
     ErrorCode,
@@ -38,7 +42,7 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnRequest,
 )
-from .native import probe_help
+from .native import configuration_secrets, probe_help
 from .observations import (
     HarnessObservation,
     InteractionObservedObservation,
@@ -54,8 +58,10 @@ from .observations import (
 _THREAD_START_TIMEOUT_SECONDS = 30.0
 # Codex wording for a required MCP server that failed during thread/start.
 _MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
-# Bound for Codex's redacted error text kept in a startup error.
+# Bound for Codex's redacted error text kept in a startup error, and for how
+# much redacted text is examined to build it (Codex frames reach 1 MiB).
 _REASON_LIMIT = 1024
+_REASON_SCAN_LIMIT = 4 * _REASON_LIMIT
 
 # Credential targets that hold an OpenAI API key, in the order Codex itself
 # prefers them. The App Server reads neither from its environment, so M3 signs
@@ -896,11 +902,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         """Describe a thread/start error, keeping only a redacted MCP reason.
 
         Codex can echo any credential it was started with (environment, native
-        login, MCP environment or headers). The summary holds the JSON-RPC
-        code. When Codex names configured MCP servers that failed to start,
-        its reason follows, with every credential M3 knows of redacted; if
-        redaction fails, only the server names are kept. Any other message is
-        dropped.
+        login, MCP environment, headers or endpoint URL). The summary holds the
+        JSON-RPC code. When Codex names configured MCP servers that failed to
+        start, its reason follows with every credential M3 knows of redacted.
+        Any other message is dropped.
         """
 
         code = error.get("code")
@@ -926,26 +931,25 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         )
 
     def _redacted_reason(
-        self, text: str, launch: HarnessLaunch, extra_secrets: Sequence[str] = ()
+        self, text: str, launch: HarnessLaunch, explicit: Sequence[str] = ()
     ) -> str | None:
-        """Return Codex's error text with known credentials redacted."""
+        """Return Codex's error text with known credentials redacted.
 
-        secrets = {*self._runtime_secrets, *(s.strip() for s in extra_secrets)}
-        for config in launch.configurations:
-            for values in (config.environment, config.headers):
-                for key, value in values.items():
-                    if not isinstance(value, SecretReference) and is_sensitive_key(key):
-                        secrets.add(_config_value(value))
-        try:
-            reason = redact_for_api(
-                _collapse_repeated_chain(" ".join(text.split())),
-                config=RedactionConfig.from_environment(secrets=secrets),
-            )
-        except Exception:
+        Redaction covers the adapter's runtime secrets, credentials written
+        into the MCP configurations (endpoint URLs included) and ``explicit``
+        values. It runs on the raw text, because normalizing whitespace first
+        would stop a secret containing whitespace from matching, and before
+        any cut, so a cut cannot split a secret.
+        """
+
+        config = native_text_redaction(
+            self._runtime_secrets | configuration_secrets(launch.configurations),
+            explicit=explicit,
+        )
+        redacted = redact_native_text(text, config)[:_REASON_SCAN_LIMIT]
+        reason = _collapse_repeated_chain(" ".join(redacted.split()))
+        if not reason:
             return None
-        if not isinstance(reason, str) or not reason:
-            return None
-        # Truncate only after redaction so a cut cannot split a secret.
         if len(reason) > _REASON_LIMIT:
             reason = reason[: _REASON_LIMIT - 1] + "…"
         return reason
