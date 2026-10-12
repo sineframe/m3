@@ -1576,6 +1576,7 @@ async def test_owned_download_cancellation_cannot_publish_after_response_resumes
         resume.set()
         server.shutdown()
         thread.join(timeout=2)
+        server.server_close()
         await manager.close()
 
 
@@ -1586,7 +1587,6 @@ async def test_owned_warm_resolution_keeps_original_deadline_while_entry_is_busy
 ) -> None:
     import time
 
-    from m3._bootstrap_operations import PrivateOperationError
     from m3.runtime.core import _kernel_entry_lock
 
     project = tmp_path / "project"
@@ -1605,7 +1605,7 @@ async def test_owned_warm_resolution_keeps_original_deadline_while_entry_is_busy
     try:
         with _kernel_entry_lock(entry, deadline=time.monotonic() + 5):
             started = time.monotonic()
-            with pytest.raises(PrivateOperationError):
+            with pytest.raises(asyncio.TimeoutError):
                 await manager.acquire_owned("claude", selector, deadline=started + 0.2)
             assert time.monotonic() - started < 2
         assert list_cache(cache)[0]["status"] == "ready"
@@ -1706,6 +1706,7 @@ async def test_lost_runtime_guard_quarantines_staging_before_detached_writer_die
         resume.set()
         server.shutdown()
         thread.join(timeout=2)
+        server.server_close()
         await asyncio.to_thread(operations.close, deadline=time.monotonic() + 0.2)
 
 
@@ -1743,6 +1744,7 @@ def test_native_guard_retains_package_after_controller_sigkill(
     )
     child.close()
     guardian = None
+    guardian_stopped = False
     try:
         _send_private(
             parent,
@@ -1764,12 +1766,14 @@ def test_native_guard_retains_package_after_controller_sigkill(
         guardian = receipt["guardian"]
         native = receipt["native"]
         os.kill(guardian, signal.SIGSTOP)
+        guardian_stopped = True
         controller.kill()
         controller.wait(timeout=2)
         os.kill(native, 0)
         assert prune_cache(cache) == []
         assert list_cache(cache)[0]["status"] == "ready"
         os.kill(guardian, signal.SIGCONT)
+        guardian_stopped = False
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             removed = prune_cache(cache)
@@ -1792,7 +1796,7 @@ def test_native_guard_retains_package_after_controller_sigkill(
             controller.kill()
         controller.wait(timeout=2)
         parent.close()
-        if guardian is not None:
+        if guardian is not None and guardian_stopped:
             try:
                 os.kill(guardian, signal.SIGCONT)
             except ProcessLookupError:
@@ -1908,3 +1912,72 @@ async def test_owned_cancellation_fences_download_before_cleanup_executor_is_ava
         executor.shutdown(wait=True)
         server.shutdown()
         thread.join(timeout=2)
+        server.server_close()
+
+
+@pytest.mark.parametrize("kind", ["runtime", "catalog"])
+def test_late_complete_acceptance_marker_stays_excluded_after_guardian_loss(
+    tmp_path: Path, archive_server: str, kind: str
+) -> None:
+    import socket
+    import subprocess
+    import time
+
+    from m3._bootstrap_operations import _receive_private, _send_private
+
+    (tmp_path / "project").mkdir()
+    os.mkfifo(tmp_path / "write", 0o600)
+    os.mkfifo(tmp_path / "return", 0o600)
+    source = tmp_path / "models-source.json"
+    source.write_bytes(
+        (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
+    )
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "owned_runtime_publication_controller.py"
+    )
+    parent, child = socket.socketpair()
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    controller = subprocess.Popen(
+        [sys.executable, str(fixture), str(child.fileno())],
+        pass_fds=(child.fileno(),),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    child.close()
+    try:
+        _send_private(
+            parent,
+            {
+                "version": 1,
+                "kind": kind,
+                "directory": str(tmp_path),
+                "source": str(source),
+                "selector": {
+                    "version": "1.2.3",
+                    "url": archive_server,
+                    "sha256": hashlib.sha256(_Server.body).hexdigest(),
+                },
+            },
+            time.monotonic() + 5,
+        )
+        try:
+            result, descriptor = _receive_private(parent, time.monotonic() + 12)
+        except Exception:
+            controller.wait(timeout=2)
+            assert controller.stderr is not None
+            pytest.fail(controller.stderr.read().decode())
+        assert descriptor is None
+        assert result == {"version": 1, "late_marker_fenced": True}
+        controller.wait(timeout=3)
+        assert controller.returncode == 0
+        assert (tmp_path / "late").exists()
+        assert (tmp_path / "rejected").exists()
+    finally:
+        parent.close()
+        if controller.poll() is None:
+            controller.kill()
+        controller.wait(timeout=3)

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .._artifact_custody import transfer_artifact_lease
 from .._bootstrap_operations import (
     PrivateOperationError,
     _receive_private,
@@ -138,7 +139,9 @@ def _lease_handle(destination: Path) -> tuple[int, Path]:
         raise
 
 
-def execute_runtime_guard(channel: socket.socket, root: Path, deadline: float) -> None:
+def execute_runtime_guard(
+    channel: socket.socket, root: Path, deadline: float, custody: socket.socket
+) -> None:
     """Publish accepted dead-writer output and transfer a kernel reader lease."""
     frame, unexpected = _receive_private(channel, deadline)
     if unexpected is not None:
@@ -192,6 +195,15 @@ def execute_runtime_guard(channel: socket.socket, root: Path, deadline: float) -
             try:
                 _remaining(deadline)
                 cold = not manager._receipt_valid(destination)
+                transfer_artifact_lease(
+                    custody,
+                    guard,
+                    root=manager.cache_root,
+                    key=relative.as_posix(),
+                    cold=cold,
+                    deadline=deadline,
+                    kind="managed-runtime",
+                )
                 if cold:
                     if source == destination:
                         raise RuntimeValidationError(
@@ -279,7 +291,9 @@ def execute_runtime_guard(channel: socket.socket, root: Path, deadline: float) -
                     os.close(lease_descriptor)
 
 
-def execute_models_guard(channel: socket.socket, root: Path, deadline: float) -> None:
+def execute_models_guard(
+    channel: socket.socket, root: Path, deadline: float, custody: socket.socket
+) -> None:
     """Publish a validated immutable catalog after its owned writer has exited."""
     from .opencode_models import _read_models, _validate_models, prepare_models
 
@@ -324,6 +338,15 @@ def execute_models_guard(channel: socket.socket, root: Path, deadline: float) ->
                         if frame["source"] is None:
                             raise
                         reusable = False
+                transfer_artifact_lease(
+                    custody,
+                    lock,
+                    root=directory,
+                    key=snapshot.name,
+                    cold=not reusable,
+                    deadline=deadline,
+                    kind="model-catalog",
+                )
                 if not reusable:
 
                     def stage_catalog() -> None:

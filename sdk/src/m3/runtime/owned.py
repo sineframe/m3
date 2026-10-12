@@ -166,6 +166,7 @@ class RuntimeOperationOwner(Protocol):
         self, path: str, device: int, inode: int, *, deadline: float
     ) -> None: ...
     def close(self, *, deadline: float) -> None: ...
+    def cancel_pending(self) -> None: ...
 
 
 class OwnedRuntimeLease:
@@ -185,6 +186,7 @@ class OwnedRuntimeLease:
         self._release_identity: tuple[int, int] | None = None
         self._marker_released = False
         self._release_lock = asyncio.Lock()
+        self._close_task: asyncio.Task[None] | None = None
 
     def __repr__(self) -> str:
         return "OwnedRuntimeLease(<private>)"
@@ -204,6 +206,7 @@ class OwnedRuntimeLease:
                 os.close(self.descriptor)
                 self.descriptor = -1
             deadline = self._clock.begin_cleanup()
+            cancelled = False
             try:
                 if not self._marker_released and self._release_identity is not None:
                     await asyncio.to_thread(
@@ -213,8 +216,22 @@ class OwnedRuntimeLease:
                         deadline=deadline,
                     )
                     self._marker_released = True
+            except asyncio.CancelledError:
+                cancelled = True
+                self.operations.cancel_pending()
+                raise
             finally:
-                await asyncio.to_thread(self.operations.close, deadline=deadline)
+                from .._startup_deadlines import retain_cleanup, wait_cleanup
+
+                if self._close_task is None or self._close_task.done():
+
+                    async def close_operations() -> None:
+                        await asyncio.to_thread(
+                            self.operations.close, deadline=deadline
+                        )
+
+                    self._close_task = retain_cleanup(close_operations)
+                await wait_cleanup(self._close_task, self._clock, cancelled=cancelled)
             if not self.operations.cleanup_complete:
                 from .core import RuntimeValidationError
 

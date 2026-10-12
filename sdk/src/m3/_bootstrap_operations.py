@@ -690,6 +690,8 @@ class OwnedBootstrapOperations:
                 local.settimeout(_remaining(deadline))
                 local.sendall(b"c")
                 self._wait(job, "guard_closed", deadline)
+                worker.send("artifact_accept", ident)
+                self._wait(job, "artifact_accepted", deadline)
             with self._condition:
                 _remaining(deadline)
                 if job.fenced:

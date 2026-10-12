@@ -525,6 +525,7 @@ class RuntimeManager:
         """Resolve with one caller absolute deadline and owned private mutation."""
         from .._bootstrap_operations import (
             OwnedBootstrapOperations,
+            PrivateOperationError,
             _PrivateResult,
         )
 
@@ -545,6 +546,7 @@ class RuntimeManager:
             asyncio.to_thread(operations.acquire_runtime, request, deadline=deadline)
         )
         adopted = False
+        cancelled = False
 
         def discard_receipt(done: asyncio.Task[_PrivateResult]) -> None:
             if not done.cancelled() and done.exception() is None:
@@ -553,7 +555,9 @@ class RuntimeManager:
                     os.close(descriptor)
 
         try:
-            result = await asyncio.shield(acquisition)
+            result = await asyncio.wait_for(
+                asyncio.shield(acquisition), timeout=max(0, deadline - time.monotonic())
+            )
             if result.value is None or result.descriptor is None:
                 raise RuntimeValidationError(
                     "owned managed runtime result is unavailable"
@@ -582,19 +586,37 @@ class RuntimeManager:
             self._leases.append(lease)
             adopted = True
             return lease
+        except PrivateOperationError:
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError from None
+            raise
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
             if not adopted:
                 operations.cancel_pending()
                 acquisition.add_done_callback(discard_receipt)
-                await asyncio.to_thread(
-                    operations.close, deadline=self._owned_clock().begin_cleanup()
+                from .._startup_deadlines import retain_cleanup, wait_cleanup
+
+                clock = self._owned_clock()
+                cleanup_deadline = clock.begin_cleanup()
+
+                async def close_operations() -> None:
+                    await asyncio.to_thread(operations.close, deadline=cleanup_deadline)
+
+                await wait_cleanup(
+                    retain_cleanup(close_operations), clock, cancelled=cancelled
                 )
 
     async def prepare_models_owned(
         self, directory: Path, source: str | None = None, *, deadline: float
     ) -> tuple[Path, str]:
         """Prepare run catalog evidence within the same absolute resolution budget."""
-        from .._bootstrap_operations import OwnedBootstrapOperations
+        from .._bootstrap_operations import (
+            OwnedBootstrapOperations,
+            PrivateOperationError,
+        )
 
         if not directory.is_absolute() or (
             source is not None and not Path(source).is_absolute()
@@ -604,13 +626,16 @@ class RuntimeManager:
             raise RuntimeValidationError("managed catalog deadline exceeded")
         operations = OwnedBootstrapOperations()
         adopted = False
+        cancelled = False
         acquisition = asyncio.create_task(
             asyncio.to_thread(
                 operations.prepare_models, directory, source, deadline=deadline
             )
         )
         try:
-            result = await asyncio.shield(acquisition)
+            result = await asyncio.wait_for(
+                asyncio.shield(acquisition), timeout=max(0, deadline - time.monotonic())
+            )
             if result.value is None:
                 raise RuntimeValidationError("owned catalog result is unavailable")
             material = json.loads(result.value.consume())
@@ -625,14 +650,30 @@ class RuntimeManager:
                 raise RuntimeValidationError("owned catalog result is invalid")
             adopted = True
             return Path(material["path"]), material["digest"]
+        except PrivateOperationError:
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError from None
+            raise
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
+            from .._startup_deadlines import retain_cleanup, wait_cleanup
+
             operations.cancel_pending()
             acquisition.add_done_callback(
                 lambda done: done.exception() if not done.cancelled() else None
             )
-            await asyncio.to_thread(
-                operations.close,
-                deadline=deadline if adopted else self._owned_clock().begin_cleanup(),
+            clock = self._owned_clock()
+            cleanup_deadline = deadline if adopted else clock.begin_cleanup()
+
+            async def close_operations() -> None:
+                await asyncio.to_thread(operations.close, deadline=cleanup_deadline)
+
+            await wait_cleanup(
+                retain_cleanup(close_operations),
+                clock if not adopted else None,
+                cancelled=cancelled,
             )
 
     @_timing.timed("runtime.acquire")
