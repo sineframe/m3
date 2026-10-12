@@ -258,14 +258,20 @@ def _configure_run_config(config: _Any) -> None:
     from .configuration import _config_from_snapshot, _install_run_config, load_config
 
     workerinput = getattr(config, "workerinput", None)
-    snapshot = workerinput.get("m3_configuration") if isinstance(workerinput, dict) else None
+    snapshot = (
+        workerinput.get("m3_configuration") if isinstance(workerinput, dict) else None
+    )
     try:
         if snapshot is not None:
             run_config = _config_from_snapshot(snapshot)
         else:
-            root = _Path(config.getoption("--project-root") or _Path.cwd()).expanduser().resolve()
-            run_config = load_config(cwd=root, config_file=config.getoption("--m3-config"))
-    except ValueError as exc:  # ConfigError subclasses ValueError; messages are value-free
+            option_root = config.getoption("--project-root") or _Path.cwd()
+            root = _Path(option_root).expanduser().resolve()
+            run_config = load_config(
+                cwd=root, config_file=config.getoption("--m3-config")
+            )
+    # ConfigError subclasses ValueError; its messages are value-free.
+    except ValueError as exc:
         raise _pytest.UsageError(str(exc)) from None
     config._m3_run_config = run_config
     config._m3_busy_timeout_ms = round(run_config.results.busy_timeout_seconds * 1000)
