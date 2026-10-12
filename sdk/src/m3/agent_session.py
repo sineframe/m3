@@ -1775,18 +1775,16 @@ class AsyncAgentSession:
             if policy_violations:
                 self._emit_policy_violations(policy_violations, turn_id)
                 details = {"policy_violations": tuple(policy_violations)}
-                result = self._failure_turn(
-                    turn_id,
-                    TurnOutcome.FAILED,
-                    ErrorCode.UNSUPPORTED,
-                    "tool policy violation",
-                ).model_copy(
+                # Build the completed turn first so a genuine violation still
+                # fails the turn without discarding its response or evidence.
+                result = self._turn_result(turn_id, raw).model_copy(
                     update={
+                        "snapshot": self._turn_snapshot(turn_id, TurnOutcome.FAILED),
                         "error": ErrorInfo(
                             code=ErrorCode.UNSUPPORTED,
                             message="tool policy violation",
                             details=details,
-                        )
+                        ),
                     }
                 )
                 self._emit_turn_finished(turn_id, result)
@@ -1974,6 +1972,68 @@ class AsyncAgentSession:
             "policy_portable": evidence.portable,
         }
 
+    def _harness_builtin_kind(
+        self,
+        call: Mapping[str, Any],
+        records: tuple[Any, ...],
+        captured_tool_calls: tuple[ToolDescriptor, ...],
+    ) -> tuple[str, ToolDescriptor | None]:
+        """Classify an adapter-marked harness built-in by its provenance.
+
+        Returns ``("builtin", None)`` for verified harness introspection,
+        ``("mcp", None)`` when the call must be evaluated as MCP traffic, and
+        ``("server_unavailable", target)`` for an introspection target that is
+        not bound to this session. A bound MCP identity always takes
+        precedence: the adapter marker alone never exempts a call.
+        """
+
+        server = self._safe_tool_label(call.get("server"))
+        tool = self._safe_tool_label(call.get("tool"))
+        if server is None or tool is None:
+            return "mcp", None
+        target = call.get("target_server")
+        if target is not None and target != server:
+            return "mcp", None
+        if any(
+            item.server == server and item.name == tool for item in captured_tool_calls
+        ):
+            return "mcp", None
+        bound = next(
+            (
+                record
+                for record in records
+                if record.key == server and getattr(record, "available", False)
+            ),
+            None,
+        )
+        if bound is not None:
+            tools = tuple(getattr(bound, "tools", ()))
+            if tool in tools:
+                return "mcp", None
+            if not tools and not self._wire_enforces_policy(bound):
+                # Unknown tool list and no pre-forward policy gate: the bound
+                # server could own this tool, so it stays subject to policy.
+                # With a gate, any real call to it was already decided on the
+                # wire, so the exemption cannot bypass policy.
+                return "mcp", None
+        if target is None:
+            return "builtin", None
+        if bound is None:
+            return "server_unavailable", ToolDescriptor(server=server, name=tool)
+        return "builtin", None
+
+    def _wire_enforces_policy(self, record: Any) -> bool:
+        manager = self._server_manager
+        capture = getattr(manager, "capture", None) if manager is not None else None
+        enforces = getattr(capture, "enforces_portable_policy", None)
+        connection_id = getattr(record, "connection_id", None)
+        if not callable(enforces) or connection_id is None:
+            return False
+        try:
+            return bool(enforces((str(connection_id),)))
+        except Exception:
+            return False
+
     def _evaluate_reported_tool_calls(
         self,
         raw: object,
@@ -2038,6 +2098,17 @@ class AsyncAgentSession:
                     self._policy_violation(None, "tool_call_invalid", evidence)
                 )
                 continue
+            if call.get("harness_builtin") is True:
+                kind, target = self._harness_builtin_kind(
+                    call, records, captured_tool_calls
+                )
+                if kind == "builtin":
+                    continue
+                if kind == "server_unavailable":
+                    violations.append(
+                        self._policy_violation(target, "server_unavailable", evidence)
+                    )
+                    continue
             descriptor, identity_error = self._reported_tool_identity(call)
             if identity_error == "provider_native":
                 continue
