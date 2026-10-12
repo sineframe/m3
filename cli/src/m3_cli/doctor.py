@@ -234,6 +234,15 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         if any(kind == "config" for kind, _ in requirements)
         else None
     )
+    include_config = any(kind == "config" for kind, _ in requirements)
+    if include_config:
+        try:
+            config = load_config(env=environment, cwd=args.project_root)
+        except ConfigError as error:
+            raise DoctorConfigurationError(error) from None
+        except (OSError, TypeError, ValueError):
+            raise DoctorCLIError("invalid configuration") from None
+        configuration = {"status": "ready", "settings": config.redacted_projection()}
     try:
         cli_version = importlib.metadata.version("sf-m3-cli")
         bundled_sdk_version = importlib.metadata.version("sf-m3")
@@ -295,15 +304,6 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
             "source": source,
             "executable": str(selected_path) if selected_path is not None else None,
         }
-    include_config = any(kind == "config" for kind, _ in requirements)
-    if include_config:
-        try:
-            config = load_config(env=environment, cwd=args.project_root)
-        except ConfigError as error:
-            raise DoctorConfigurationError(error) from None
-        except (OSError, TypeError, ValueError):
-            raise DoctorCLIError("invalid configuration") from None
-        configuration = {"status": "ready", "settings": _json_value(config)}
     probe_report = Probes().probe_requested(_requests(requirements))
     results = _safe_probe_results(list(probe_report.results), requirements)
     ready = (
