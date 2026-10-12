@@ -30,6 +30,7 @@ m3.async_api.AsyncAgentSession(
     runtime_models_dir: str | Path | None = None,
     runtime_project_root: str | Path | None = None,
     managed_input_runtime: ManagedInputRuntime | None = None,
+    preparation_supervisor: PreparationSupervisor | None = None,
 ) -> None
 ```
 

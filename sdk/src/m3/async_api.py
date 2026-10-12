@@ -1020,6 +1020,9 @@ class AsyncMCPTestKit:
         self._close_lock = asyncio.Lock()
         self._active_direct: set[AsyncDirectClient] = set()
         self._active_sessions: set[AsyncAgentSession] = set()
+        from .preparation import PreparationSupervisor
+
+        self._preparation_supervisor = PreparationSupervisor()
         self._adapter_registry = (
             adapter_registry if adapter_registry is not None else _default_adapters()
         )
@@ -1195,6 +1198,10 @@ class AsyncMCPTestKit:
                     await session.aclose()
                 except BaseException as exc:
                     failures.append(exc)
+            try:
+                await self._preparation_supervisor.close()
+            except BaseException as exc:
+                failures.append(exc)
             owned_store = self.store if self._owns_store else None
             self._owns_store = False
             if owned_store is not None:
@@ -1633,6 +1640,7 @@ class AsyncMCPTestKit:
             runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,
             managed_input_runtime=_managed_input_runtime,
+            preparation_supervisor=self._preparation_supervisor,
         )
         if self._record_checks:
             _bind_execution(
