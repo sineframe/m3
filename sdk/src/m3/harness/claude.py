@@ -1085,6 +1085,10 @@ class ClaudeCodeHarnessAdapter:
                 limit()
             add_metadata()
 
+        partial_redaction = self._native_error_redaction or RedactionConfig(
+            include_environment=False
+        )
+
         def partial_evidence() -> TurnEvidence:
             # The session deadline or an outer cancellation stopped this turn
             # before it could return; keep what was already observed.
@@ -1093,7 +1097,10 @@ class ClaudeCodeHarnessAdapter:
             return TurnEvidence(
                 sequence=sequence,
                 status="cancelled",
-                observations=tuple(observations),
+                observations=tuple(
+                    project_native_observation(item, partial_redaction, index)
+                    for index, item in enumerate(observations)
+                ),
                 limitations=tuple(limitations),
                 monotonic_origin=turn_started,
             )

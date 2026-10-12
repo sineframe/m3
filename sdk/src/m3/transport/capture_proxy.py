@@ -654,7 +654,22 @@ class McpCaptureManager:
                 for connection, tools in self._private_policy_calls.items()
                 for index, tool in enumerate(tools)
             )
-        return PrivateToolCalls(calls, RedactionConfig(include_environment=False))
+            writers = tuple(target.writer for target in self._targets.values())
+        registries = tuple(writer._redaction_snapshot() for writer in writers)
+        registry = (
+            RedactionConfig(
+                secrets=frozenset(
+                    value
+                    for item in registries
+                    if item is not None
+                    for value in item.secrets
+                ),
+                include_environment=False,
+            )
+            if registries and all(item is not None for item in registries)
+            else None
+        )
+        return PrivateToolCalls(calls, registry)
 
     def _publish_scheduled(
         self,

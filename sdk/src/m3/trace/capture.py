@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import _timing
-from .redaction import known_secret_values, redact
+from .redaction import RedactionConfig, known_secret_values, redact
 
 
 class CaptureWriter:
@@ -39,6 +39,16 @@ class CaptureWriter:
             if self._secrets is None:
                 self._secrets = set(known_secret_values())
             self._secrets.update(value for value in secrets if value)
+
+    def _redaction_snapshot(self) -> RedactionConfig | None:
+        """Pin this writer's registered values without reading ambient state."""
+
+        with self.lock:
+            if self._secrets is None:
+                return None
+            return RedactionConfig(
+                secrets=frozenset(self._secrets), include_environment=False
+            )
 
     @_timing.counted("capture.write")
     def write(

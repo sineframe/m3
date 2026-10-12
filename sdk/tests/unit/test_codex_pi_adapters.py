@@ -1086,6 +1086,7 @@ async def test_codex_completed_mcp_item_without_started_event_reports_a_call() -
             "call_id": "call-1",
             "server": "deepwiki",
             "tool": "read_wiki_structure",
+            "provenance": "mcp",
             "arguments": {"repoName": "modelcontextprotocol/python-sdk"},
         }
     ]

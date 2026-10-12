@@ -24,7 +24,7 @@ from m3.harness.opencode import OpenCodeHarnessAdapter
 from m3.policy import ToolPolicyEvidence
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.storage import SQLiteExecutionStore
-from m3.trace.redaction import RedactionConfig
+from m3.trace.redaction import RedactionConfig, RedactionError
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
     ClaudeCode,
@@ -753,3 +753,238 @@ def test_plan_status_is_native_text_not_a_framework_status_enum() -> None:
     )
     assert isinstance(safe, PlanObservedObservation)
     assert safe.status == "[REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_invalid_login_registry_closes_all_public_payload_and_partial_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "login"
+    source.mkdir()
+    secret = "unknown-malformed-login-credential"
+    (source / "auth.json").write_text("{unparseable " + secret + "}")
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    root = tmp_path / "isolated"
+    root.mkdir()
+    adapter = CodexHarnessAdapter(environment={"KNOWN": "known-explicit-credential"})
+    adapter.environment_for_launch(_launch(), root)
+    adapter._thread_id = secret
+    adapter._request_id = 1
+    adapter._launch = _launch()
+    result = await adapter._send(
+        HarnessTurnRequest.from_message("fixture"), 1, _NativeFrames(secret)
+    )  # type: ignore[arg-type]
+    assert result.status == "failed"
+    assert result.response is None
+    assert result.tool_calls == ()
+    assert result.error is not None
+    assert result.error.details["native_diagnostic"] == "unavailable_registry"
+    assert secret not in repr(result)
+    assert result.turn_evidence is not None
+    assert secret not in result.turn_evidence.model_dump_json()
+    # Cancellation reads the same pinned unavailable state, rather than
+    # promoting the unrelated explicit env value to an authoritative registry.
+    adapter._partial_capture = lambda: result.turn_evidence
+    partial = adapter.take_partial_turn_evidence()
+    assert partial is not None and secret not in partial.model_dump_json()
+    assert result._private_tool_calls is not None
+    with pytest.raises(RedactionError):
+        result._private_tool_calls.project({"server": secret})
+
+
+@pytest.mark.parametrize("source", ["reported", "captured"])
+def test_private_destructive_identity_survives_provenance_policy_merge(
+    source: str,
+) -> None:
+    from m3.policy import ToolDescriptor
+
+    secret = "destructive-native-tool"
+    controller = AsyncAgentSession(
+        _launch().spec.model_copy(
+            update={
+                "tool_policy": RestrictiveToolPolicy(allowed_tools=(f"slow:{secret}",)),
+            }
+        ),
+        _ProjectedFailureHarness(),
+    )
+    controller._tool_policy_evidence = ToolPolicyEvidence(
+        requested="restrictive", enforced="native", observed="runtime"
+    )
+    private = PrivateToolCalls(
+        ({"server": "slow", "tool": secret, "destructive": True, "provenance": "mcp"},)
+        if source == "reported"
+        else (),
+        RedactionConfig(secrets=frozenset({secret}), include_environment=False),
+    )
+    violations = controller._evaluate_reported_tool_calls(
+        AdapterTurn(tool_calls=(), _private_tool_calls=private),
+        captured_tool_calls=(
+            ToolDescriptor(server="slow", name=secret, destructive=True),
+        )
+        if source == "captured"
+        else (),
+    )
+    assert len(violations) == 1
+    assert violations[0]["tool"] == secret
+    assert violations[0]["reason"] == "destructive tool requires confirmation"
+    assert secret not in repr(private.project(violations))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"error": "Claude rejected claude-secret"},
+        {"error": {"message": "Claude rejected claude-secret"}},
+        {
+            "subtype": "error_during_execution",
+            "errors": ["Claude rejected claude-secret"],
+        },
+        {
+            "subtype": "error_during_execution",
+            "result": "Claude rejected claude-secret",
+        },
+    ],
+)
+def test_claude_recognized_native_cause_shapes_retain_the_message(
+    payload: dict,
+) -> None:
+    from m3.harness.claude import _claude_native_error
+
+    error = native_error_info(
+        _claude_native_error(payload),
+        summary="Claude turn failed",
+        harness="claude_code",
+        phase="turn/result",
+        redaction=RedactionConfig(
+            secrets=frozenset({"claude-secret"}), include_environment=False
+        ),
+    )
+    assert error.details["native_message"] == "Claude rejected [REDACTED]"
+    assert "claude-secret" not in error.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_registry_partial_capture_remains_closed_after_adapter_close() -> (
+    None
+):
+    secret = "unknown-login-cancellation-secret"
+
+    class CancelledFrames:
+        owner = None
+
+        def __init__(self) -> None:
+            self.frames = iter(
+                (
+                    {"id": 2, "result": {"turn": {"id": "turn"}}},
+                    {"method": "item/agentMessage/delta", "params": {"delta": secret}},
+                )
+            )
+
+        async def write(self, payload) -> None:
+            pass
+
+        async def next(self, timeout=None):
+            frame = next(self.frames, None)
+            if frame is None:
+                raise asyncio.CancelledError
+            return frame
+
+    adapter = CodexHarnessAdapter()
+    adapter._thread_id = "thread"
+    adapter._request_id = 1
+    adapter._native_error_registry_unavailable = True
+    with pytest.raises(asyncio.CancelledError):
+        await adapter._send(
+            HarnessTurnRequest.from_message("fixture"), 1, CancelledFrames()
+        )  # type: ignore[arg-type]
+    await adapter.close()
+    partial = adapter.take_partial_turn_evidence()
+    assert partial is not None
+    assert partial.status == "cancelled"
+    assert secret not in partial.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registered", [True, False])
+async def test_custom_adapter_captured_private_identity_never_leaks_in_policy_results(
+    tmp_path: Path, registered: bool
+) -> None:
+    from m3.server_group import ServerRecord
+    from m3.storage import InMemoryExecutionStore
+    from m3.types import Readiness, TextContent, TurnResponse
+
+    secret = "writer-only-private-tool"
+    capture = McpCaptureManager(root=tmp_path)
+    writer = capture.writer_for("slow-connection")
+    if registered:
+        writer.add_secrets({secret})
+    original = _launch()
+    record = ServerRecord(
+        key="slow",
+        server=original.spec.servers[0].server,
+        required=True,
+        available=True,
+        connection_id="slow-connection",
+        tools=("allowed", secret),
+    )
+    snapshot = ServerGroupSnapshot(records=(record,))
+
+    class Manager:
+        async def start(self):
+            return snapshot
+
+        def snapshot(self):
+            return snapshot
+
+        def configurations(self):
+            return original.configurations
+
+        async def close(self):
+            await capture.close()
+
+    manager = Manager()
+    manager.capture = capture
+
+    class LegacyAdapter(_ProjectedFailureHarness):
+        last_policy_evidence = ToolPolicyEvidence(
+            requested="restrictive", enforced="portable", observed="preflight"
+        )
+
+        async def preflight(self, launch):
+            return Readiness(ready=True)
+
+        async def send(self, message, *, timeout=None, metadata=None):
+            writer.write(
+                transport="stdio",
+                direction="client_to_server",
+                payload={
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": secret, "arguments": {}},
+                },
+            )
+            return AdapterTurn(response=TurnResponse(content=(TextContent(text="4"),)))
+
+    spec = original.spec.model_copy(
+        update={"tool_policy": RestrictiveToolPolicy(allowed_tools=("slow:allowed",))}
+    )
+    store = InMemoryExecutionStore()
+    recorder = ExecutionTraceRecorder(store, "private-capture-result")
+    async with AsyncAgentSession(
+        spec, LegacyAdapter(), server_manager=manager, trace_recorder=recorder
+    ) as session:
+        result = await session.send("fixture")
+    assert result.snapshot.outcome is TurnOutcome.FAILED
+    assert result.response is not None and result.response.text == "4"
+    assert result.error is not None
+    assert secret not in result.error.model_dump_json()
+    violations = result.error.details["policy_violations"]
+    assert violations[0]["tool"] == ("[REDACTED]" if registered else "unavailable")
+    assert violations[0]["reason"] == "tool denied by restrictive policy"
+    # Without a writer registry existing wire capture itself retains native
+    # tool text; B newly derived policy evidence must still fail closed.
+    for event in store.events(recorder.execution_id):
+        if event.kind is EventKind.TURN_STATE_CHANGED or event.payload.get(
+            "policy_violation"
+        ):
+            assert secret not in event.model_dump_json()

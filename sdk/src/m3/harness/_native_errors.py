@@ -144,7 +144,7 @@ def native_error_info(
 
 
 def project_native_observation(
-    observation: HarnessObservation, redaction: RedactionConfig, index: int
+    observation: HarnessObservation, redaction: RedactionConfig | None, index: int
 ) -> HarnessObservation:
     """Project native payloads while keeping M3's schema discriminants intact."""
 
@@ -166,6 +166,8 @@ def project_native_observation(
         ):
             structural.add(name)
     try:
+        if redaction is None:
+            raise RedactionError("native projection registry is unavailable")
         safe = {
             key: redact_for_api(value, config=redaction)
             for key, value in data.items()
@@ -195,7 +197,7 @@ def project_native_observation(
 
 
 def project_native_turn(
-    result: HarnessTurnResult, redaction: RedactionConfig
+    result: HarnessTurnResult, redaction: RedactionConfig | None
 ) -> HarnessTurnResult:
     """Project every public native return, including early/failed turn exits."""
 
@@ -215,6 +217,8 @@ def project_native_turn(
             }
         )
     try:
+        if redaction is None:
+            raise RedactionError("native projection registry is unavailable")
         response = None
         if result.response is not None:
             blocks = []

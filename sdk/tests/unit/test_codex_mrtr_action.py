@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.elicitation import (
     ElicitationResponse,
     expect_form,
@@ -24,12 +25,20 @@ from m3.harness.codex import (
 )
 from m3.harness.contracts import (
     HarnessInteractionCapabilities,
+    HarnessLaunch,
     HarnessStartupError,
     HarnessTurnResult,
 )
 from m3.interaction_handlers import Interactions
-from m3.server_group import HarnessServerConfig
-from m3.types import RestrictiveToolPolicy, TransportKind, TurnOutcome
+from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
+from m3.types import (
+    Codex,
+    RestrictiveToolPolicy,
+    ServerBinding,
+    StdioServer,
+    TransportKind,
+    TurnOutcome,
+)
 
 
 class _Subscription:
@@ -576,10 +585,30 @@ async def test_server_supplied_approval_marker_cannot_reuse_codex_approval() -> 
     adapter._thread_id = "thread-1"
     adapter._turn_id = "turn-1"
     interactions = Interactions()
-    adapter._launch = SimpleNamespace(
+    server = StdioServer(name="fixture", command="mcp-server")
+    spec = AgentSpec(
+        servers=(ServerBinding(server=server),),
+        harness=Codex(model="fixture"),
+        tool_policy=RestrictiveToolPolicy(allowed_tools=("fixture:collect_code",)),
+    )
+    adapter._launch = HarnessLaunch(
+        spec=spec,
+        servers=ServerGroupSnapshot(
+            records=(
+                ServerRecord(
+                    key=config.key,
+                    server=server,
+                    required=config.required,
+                    available=config.available,
+                    connection_id=config.connection_id,
+                    transport=config.transport,
+                    tools=("collect_code",),
+                ),
+            ),
+        ),
         configurations=(config,),
         interactions=interactions,
-        tool_policy=RestrictiveToolPolicy(allowed_tools=("fixture:collect_code",)),
+        tool_policy=spec.tool_policy,
     )
     process = Process()
     now = datetime.now(timezone.utc)

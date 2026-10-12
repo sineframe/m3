@@ -257,6 +257,7 @@ class NativeRPCAdapter:
         self.last_policy_evidence: ToolPolicyEvidence | None = None
         self._runtime_secrets: set[str] = set()
         self._native_error_redaction: RedactionConfig | None = None
+        self._native_error_registry_unavailable = False
         self._process_observed = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
 
@@ -419,9 +420,7 @@ class NativeRPCAdapter:
         if capture is None:
             return None
         evidence = capture()
-        redaction = self._native_error_redaction or RedactionConfig(
-            secrets=frozenset(self._runtime_secrets), include_environment=False
-        )
+        redaction = self._public_redaction()
         return evidence.model_copy(
             update={
                 "observations": tuple(
@@ -452,10 +451,14 @@ class NativeRPCAdapter:
         result = await self._send_private(request, sequence, process)
         return project_native_turn(
             result,
-            self._native_error_redaction
-            or RedactionConfig(
-                secrets=frozenset(self._runtime_secrets), include_environment=False
-            ),
+            self._public_redaction(),
+        )
+
+    def _public_redaction(self) -> RedactionConfig | None:
+        if self._native_error_registry_unavailable:
+            return None
+        return self._native_error_redaction or RedactionConfig(
+            secrets=frozenset(self._runtime_secrets), include_environment=False
         )
 
     async def _send_private(
@@ -493,6 +496,7 @@ class NativeRPCAdapter:
         tool_calls: list[Mapping[str, Any]] = []
         text_parts: list[str] = []
         limitations: list[str] = []
+        partial_redaction = self._public_redaction()
 
         def partial_evidence() -> TurnEvidence:
             # The session deadline or an outer cancellation stopped this turn
@@ -500,7 +504,10 @@ class NativeRPCAdapter:
             return TurnEvidence(
                 sequence=sequence,
                 status="cancelled",
-                observations=tuple(observations),
+                observations=tuple(
+                    project_native_observation(item, partial_redaction, index)
+                    for index, item in enumerate(observations)
+                ),
                 limitations=tuple(dict.fromkeys((*limitations, "capture_incomplete"))),
                 monotonic_origin=started,
             )
@@ -548,13 +555,14 @@ class NativeRPCAdapter:
                     raise HarnessAdapterError("harness response was invalid")
                 raw = _json_safe(frame)
                 try:
-                    raw = redact_for_api(
-                        raw,
-                        config=self._native_error_redaction
-                        or RedactionConfig(
-                            secrets=frozenset(self._runtime_secrets),
-                            include_environment=False,
-                        ),
+                    registry = self._public_redaction()
+                    raw = (
+                        redact_for_api(raw, config=registry)
+                        if registry is not None
+                        else {
+                            "capture": "unavailable",
+                            "reason": "unavailable_registry",
+                        }
                     )
                 except Exception:
                     raw = {"capture": "unavailable", "reason": "redaction_failed"}
@@ -707,4 +715,5 @@ class NativeRPCAdapter:
         self._process = None
         self._runtime_secrets.clear()
         self._native_error_redaction = None
+        self._native_error_registry_unavailable = False
         self._process_observed = False
