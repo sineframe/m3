@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -209,15 +210,18 @@ class OwnedRuntimeLease:
             cancelled = False
             try:
                 if not self._marker_released and self._release_identity is not None:
-                    await asyncio.to_thread(
-                        self.operations.release_runtime,
-                        str(self.path),
-                        *self._release_identity,
-                        deadline=deadline,
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.operations.release_runtime,
+                            str(self.path),
+                            *self._release_identity,
+                            deadline=deadline,
+                        ),
+                        timeout=max(0.0, deadline - time.monotonic()),
                     )
                     self._marker_released = True
-            except asyncio.CancelledError:
-                cancelled = True
+            except (asyncio.CancelledError, asyncio.TimeoutError) as error:
+                cancelled = isinstance(error, asyncio.CancelledError)
                 self.operations.cancel_pending()
                 raise
             finally:
