@@ -34,6 +34,8 @@ class NativeGuardian:
         self._closed = False
         self._deadline = deadline
         self._ready = False
+        self._death_descriptor: int | None = None
+        self._death_confirmed = False
 
     @property
     def process(self) -> asyncio.subprocess.Process:
@@ -67,8 +69,17 @@ class NativeGuardian:
             if retained_slot >= 0:
                 os.close(retained_slot)
             raise
+        try:
+            death_read, death_write = os.pipe()
+        except OSError:
+            parent.close()
+            child.close()
+            if retained_slot >= 0:
+                os.close(retained_slot)
+            raise
         parent.setblocking(False)
         guardian = cls(parent, deadline)
+        guardian._death_descriptor = death_read
         _OWNED_GUARDIANS.add(guardian)
         if on_spawn is not None:
             try:
@@ -78,6 +89,8 @@ class NativeGuardian:
                 child.close()
                 if retained_slot >= 0:
                     os.close(retained_slot)
+                os.close(death_read)
+                os.close(death_write)
                 _OWNED_GUARDIANS.discard(guardian)
                 raise
 
@@ -89,9 +102,10 @@ class NativeGuardian:
                     str(Path(__file__).with_name("_startup_guardian.py")),
                     str(child.fileno()),
                     str(retained_slot),
-                    pass_fds=(child.fileno(), retained_slot)
+                    str(death_write),
+                    pass_fds=(child.fileno(), death_write, retained_slot)
                     if retained_slot >= 0
-                    else (child.fileno(),),
+                    else (child.fileno(), death_write),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -103,6 +117,7 @@ class NativeGuardian:
                 return process
             finally:
                 child.close()
+                os.close(death_write)
                 if retained_slot >= 0:
                     os.close(retained_slot)
 
@@ -268,11 +283,17 @@ class NativeGuardian:
             if self._spawn_task is not None:
                 process = await asyncio.shield(self._spawn_task)
                 await process.wait()
+                if self._death_descriptor is not None:
+                    self._death_confirmed = os.read(self._death_descriptor, 1) == b"D"
         except (OSError, ValueError):
             # A failed helper spawn created no native begin gate.
             pass
         finally:
-            _OWNED_GUARDIANS.discard(self)
+            if self._death_descriptor is not None:
+                os.close(self._death_descriptor)
+                self._death_descriptor = None
+            if self.native_pid is None or self._death_confirmed:
+                _OWNED_GUARDIANS.discard(self)
 
     def disconnect(self) -> None:
         if not self._closed:
@@ -288,3 +309,7 @@ class NativeGuardian:
             await asyncio.wait_for(asyncio.shield(self._reap_task), timeout=2)
         except asyncio.TimeoutError:
             raise CleanupError("native group remains fenced by its guardian") from None
+        if self.native_pid is not None and not self._death_confirmed:
+            raise CleanupError(
+                "native guardian lost custody; native resources remain quarantined"
+            )
