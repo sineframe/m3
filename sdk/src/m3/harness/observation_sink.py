@@ -223,7 +223,9 @@ class HarnessObservationSink:
                 },
             )
         if isinstance(observation, ToolCallObservedObservation):
-            payload.update({"tool": observation.tool})
+            payload.update(
+                {"tool": observation.tool, "provenance": observation.provenance}
+            )
             if observation.server is not None:
                 payload["server"] = observation.server
             if "arguments" in observation.model_fields_set:

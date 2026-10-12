@@ -1778,18 +1778,17 @@ class AsyncAgentSession:
             if policy_violations:
                 self._emit_policy_violations(policy_violations, turn_id)
                 details = {"policy_violations": tuple(policy_violations)}
-                result = self._failure_turn(
-                    turn_id,
-                    TurnOutcome.FAILED,
-                    ErrorCode.UNSUPPORTED,
-                    "tool policy violation",
-                ).model_copy(
+                # The native turn has already completed. Retain its answer,
+                # typed observations, evidence and limitations even when the
+                # post-turn policy result must be failed.
+                result = self._turn_result(turn_id, raw).model_copy(
                     update={
+                        "snapshot": self._turn_snapshot(turn_id, TurnOutcome.FAILED),
                         "error": ErrorInfo(
                             code=ErrorCode.UNSUPPORTED,
                             message="tool policy violation",
                             details=details,
-                        )
+                        ),
                     }
                 )
                 self._emit_turn_finished(turn_id, result)
@@ -1939,6 +1938,7 @@ class AsyncAgentSession:
             return (
                 (None, "provider_native")
                 if cls._safe_tool_label(tool) is not None
+                and call.get("provenance") in (None, "harness_builtin")
                 else (None, "tool_identity_invalid")
             )
         server_text = cls._safe_tool_label(server)
@@ -1984,7 +1984,9 @@ class AsyncAgentSession:
         captured_tool_calls: tuple[ToolDescriptor, ...] = (),
     ) -> tuple[dict[str, object], ...]:
         calls = getattr(raw, "tool_calls", ())
-        if not isinstance(calls, (tuple, list)) or not calls:
+        if not isinstance(calls, (tuple, list)):
+            calls = ()
+        if not calls and not captured_tool_calls:
             return ()
         # Proxy enforcement already handled the empty restrictive policy's
         # deny-by-default behavior.  Do not reinterpret an advisory provider
@@ -2001,6 +2003,12 @@ class AsyncAgentSession:
                 records = tuple(self._server_manager.snapshot().records)
             except Exception:
                 records = ()
+        bound_servers = {
+            binding.alias
+            or (binding.server.name if binding.server is not None else None)
+            or (binding.profile.server_name if binding.profile is not None else None)
+            for binding in self.spec.servers
+        } | {record.key for record in records}
         advertised = tuple(
             ToolDescriptor(server=record.key, name=tool)
             for record in records
@@ -2042,8 +2050,35 @@ class AsyncAgentSession:
                 )
                 continue
             descriptor, identity_error = self._reported_tool_identity(call)
-            if identity_error == "provider_native":
-                continue
+            native = identity_error == "provider_native" or (
+                call.get("provenance") == "harness_builtin"
+                and identity_error is None
+                and descriptor is not None
+                and descriptor.server not in bound_servers
+            )
+            if native:
+                # Wire traffic is actual MCP even when a provider describes it
+                # as a built-in. Never let that label hide captured calls or
+                # ambiguity between multiple matching MCP identities.
+                tool_name = self._safe_tool_label(
+                    call.get("tool", call.get("tool_name", call.get("name")))
+                )
+                captured_matches = tuple(
+                    {
+                        (item.server, item.name): item
+                        for item in captured_tool_calls
+                        if item.name == tool_name
+                    }.values()
+                )
+                if len(captured_matches) > 1:
+                    violations.append(
+                        self._policy_violation(None, "ambiguous_tool", evidence)
+                    )
+                    continue
+                if captured_matches:
+                    descriptor, identity_error = captured_matches[0], None
+                else:
+                    continue
             if ordered_captured and not any(
                 call.get(key) is not None
                 for key in (
@@ -2122,6 +2157,11 @@ class AsyncAgentSession:
                     )
                 )
                 continue
+            if descriptor.server not in bound_servers:
+                violations.append(
+                    self._policy_violation(descriptor, "server_unavailable", evidence)
+                )
+                continue
             if records:
                 matching = tuple(
                     record for record in records if record.key == descriptor.server
@@ -2164,6 +2204,24 @@ class AsyncAgentSession:
                         descriptor, decision.reason, decision.evidence
                     )
                 )
+        if captured_tool_calls:
+            # Capture is authoritative MCP evidence, independent of provider
+            # reporting. Enforce every stable wire identity even when the
+            # provider omits it, misnames it, or reports only native tools.
+            captured = AdapterTurn(
+                tool_calls=tuple(
+                    {
+                        "server": item.server,
+                        "tool": item.name,
+                        "destructive": item.destructive,
+                        "provenance": "mcp",
+                    }
+                    for item in captured_tool_calls
+                )
+            )
+            for violation in self._evaluate_reported_tool_calls(captured):
+                if violation not in violations:
+                    violations.append(violation)
         return tuple(violations)
 
     def _emit_policy_violations(
@@ -2240,6 +2298,13 @@ class AsyncAgentSession:
                     and item.get("tool") == descriptor.name
                     for item in policy_violations
                 )
+                or (
+                    call.get("provenance") == "harness_builtin"
+                    and any(
+                        item.get("tool") == call.get("tool")
+                        for item in policy_violations
+                    )
+                )
                 or (descriptor is None and identity_error is not None)
                 or (
                     descriptor is None
@@ -2261,6 +2326,9 @@ class AsyncAgentSession:
                     "tool": descriptor.name
                     if descriptor is not None
                     else "unavailable",
+                    "provenance": call.get("provenance")
+                    if call.get("provenance") in ("mcp", "harness_builtin")
+                    else "unknown",
                     "policy_blocked": True,
                     "raw_evidence": "redacted_by_policy_boundary",
                 }

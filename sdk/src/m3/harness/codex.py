@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ..agent_session import AdapterTurn
 from ..elicitation import ElicitationPlan
@@ -966,6 +966,48 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             },
         )
 
+    def _mcp_tool_provenance(
+        self, server: str | None, tool: str
+    ) -> Literal["mcp", "harness_builtin", "unknown"]:
+        """Classify Codex's synthetic introspection namespace at decoding.
+
+        App Server reports its own introspection as mcpToolCall in the
+        reserved ``codex`` namespace. That protocol namespace AND operation
+        identify the built-in; an actual configured server always wins.
+        The session additionally checks captured MCP traffic before exemption.
+        """
+        if server is None:
+            return "unknown"
+        launch = self._launch
+        bound = (
+            {configuration.key for configuration in launch.configurations}
+            if launch is not None
+            else set()
+        )
+        if launch is not None:
+            bound.update(
+                key
+                for binding in launch.spec.servers
+                if (
+                    key := binding.alias
+                    or (binding.server.name if binding.server is not None else None)
+                    or (
+                        binding.profile.server_name
+                        if binding.profile is not None
+                        else None
+                    )
+                )
+                is not None
+            )
+        if (
+            launch is not None
+            and server not in bound
+            and server == "codex"
+            and tool in {"list_mcp_resources", "list_mcp_resource_templates"}
+        ):
+            return "harness_builtin"
+        return "mcp"
+
     def consume_frame(
         self,
         frame: Mapping[str, Any],
@@ -1108,6 +1150,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                         if isinstance(item.get("server"), str)
                         else None
                     )
+                    provenance = self._mcp_tool_provenance(server, name)
                     args = item.get("arguments", item.get("input"))
                     if method == "item/started":
                         self._remember_unapproved_mcp_tool_item(item)
@@ -1119,6 +1162,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                                 "call_id": call_id,
                                 "server": server,
                                 "tool": name,
+                                "provenance": provenance,
                                 "arguments": args,
                             }
                         )
@@ -1135,6 +1179,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                                 call_id=call_id,
                                 server=server,
                                 tool=name,
+                                provenance=provenance,
                                 arguments=_json(args),
                             )
                         )
