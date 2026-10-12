@@ -9,6 +9,7 @@ errors before it crosses the adapter boundary.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import shutil
@@ -352,6 +353,15 @@ def probe_help(executable: str, args: tuple[str, ...]) -> str | None:
     return (result.stdout + "\n" + result.stderr).replace("\x00", " ")[:32_768]
 
 
+def _exception_kind(error: BaseException) -> str:
+    """Name an exception and its errno symbol without strerror/filename text."""
+
+    kind = type(error).__name__
+    code = error.errno if isinstance(error, OSError) else None
+    symbol = errno.errorcode.get(code) if code is not None else None
+    return kind if symbol is None else f"{kind} ({symbol})"
+
+
 class ProcessOwner:
     """Own a process group and its non-blocking output readers."""
 
@@ -385,8 +395,10 @@ class ProcessOwner:
                 start_new_session=True,
                 limit=MAX_FRAME_BYTES + 1,
             )
-        except (OSError, ValueError):
-            raise HarnessStartupError("harness process could not start") from None
+        except (OSError, ValueError) as exc:
+            raise HarnessStartupError(
+                f"harness process could not start: {_exception_kind(exc)}"
+            ) from None
         assert self.process.stderr is not None
         self.stderr_task = asyncio.create_task(drain_bounded(self.process.stderr))
         if os.name == "posix" and self.process.pid is not None:
@@ -572,12 +584,17 @@ def write_config(
         descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(payload)
-    except (OSError, TypeError, ValueError, HarnessStartupError):
+    except (OSError, TypeError, ValueError, HarnessStartupError) as exc:
         try:
             config.unlink(missing_ok=True)
         except OSError:
             pass
-        raise HarnessStartupError("MCP configuration could not be prepared") from None
+        # HarnessStartupError messages are adapter-authored and secret-free.
+        cause = str(exc) if isinstance(exc, HarnessStartupError) else None
+        raise HarnessStartupError(
+            "MCP configuration could not be prepared: "
+            + (cause or _exception_kind(exc))
+        ) from None
     return config
 
 

@@ -160,6 +160,15 @@ _SAFE_STARTUP_ERROR_TYPES = frozenset(
 )
 
 
+def _bounded_cause(text: str) -> str:
+    """Normalize whitespace and cut to the cause limit, marking the cut."""
+
+    text = " ".join(text.split())
+    if len(text) <= _STARTUP_CAUSE_LIMIT:
+        return text
+    return text[: _STARTUP_CAUSE_LIMIT - 1] + "…"
+
+
 async def _cleanup_succeeded(
     operation: Awaitable[object], catch: type[BaseException]
 ) -> bool:
@@ -187,9 +196,9 @@ def _startup_failure_cause(error: BaseException) -> str:
     from .runtime.core import RuntimeErrorBase
 
     if isinstance(error, (HarnessAdapterError, UnsupportedFeature)):
-        text = " ".join(str(error).split())
+        text = _bounded_cause(str(error))
         if text:
-            return text[:_STARTUP_CAUSE_LIMIT]
+            return text
     if isinstance(error, RuntimeErrorBase):
         return "managed runtime acquisition failed"
     name = type(error).__name__
@@ -233,7 +242,7 @@ def _terminal_turn_error(error: object) -> ErrorInfo | None:
 
     if not isinstance(error, ErrorInfo):
         return None
-    cause = " ".join(error.message.split())[:_STARTUP_CAUSE_LIMIT]
+    cause = _bounded_cause(error.message)
     if not cause:
         return None
     details: dict[str, Any] = {"cause": cause}
@@ -241,7 +250,7 @@ def _terminal_turn_error(error: object) -> ErrorInfo | None:
         if key == "cause" or not isinstance(key, str):
             continue
         if isinstance(value, str):
-            details[key] = " ".join(value.split())[:_STARTUP_CAUSE_LIMIT]
+            details[key] = _bounded_cause(value)
         elif value is None or isinstance(value, (bool, int, float)):
             details[key] = value
     return ErrorInfo(
@@ -683,6 +692,12 @@ class AsyncAgentSession:
             else:
                 code = ErrorCode.TRANSPORT_ERROR
                 message = f"session startup failed: {cause}"
+            evidence_id = None if cause is None else self._record_startup_evidence()
+            failure_details: dict[str, Any] | None = (
+                None if cause is None else {"cause": cause}
+            )
+            if failure_details is not None and evidence_id is not None:
+                failure_details["evidence_observation"] = evidence_id
             if cause is not None:
                 self._emit_event(
                     EventKind.DIAGNOSTIC,
@@ -690,15 +705,15 @@ class AsyncAgentSession:
                         "code": "startup_failed",
                         "error_code": code.value,
                         "message": message,
+                        **(
+                            {}
+                            if evidence_id is None
+                            else {"evidence_observation": evidence_id}
+                        ),
                     },
                     phase=LifecyclePhase.STARTUP,
                 )
-            await self._finish(
-                outcome,
-                code,
-                message,
-                details=None if cause is None else {"cause": cause},
-            )
+            await self._finish(outcome, code, message, details=failure_details)
             if cleanup_failure:
                 # Keep the terminal result and all unfinished owners visible
                 # for a later aclose()/kit close retry.  _record_cleanup_failure
@@ -722,7 +737,7 @@ class AsyncAgentSession:
             # bounded cause is surfaced; the original exception is raised
             # outside this handler so provider-controlled text does not
             # survive as ``__context__``.
-            details = {"cause": cause}
+            details = dict(failure_details or {})
             startup_error = (
                 UnsupportedFeature(
                     f"session startup unsupported: {cause}", details=details
@@ -1794,6 +1809,7 @@ class AsyncAgentSession:
                         ExecutionOutcome.FAILED,
                         ErrorCode.UNSUPPORTED,
                         "tool policy violation",
+                        details=details,
                     )
                 elif self._snapshot.lifecycle is ExecutionStatus.RUNNING_TURN:
                     self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
@@ -2445,7 +2461,31 @@ class AsyncAgentSession:
         except Exception:
             return {"evidence_state": "unavailable"}
 
-    def _record_turn_evidence(self, turn_id: TurnId, typed_evidence: object) -> None:
+    def _record_startup_evidence(self) -> str | None:
+        """Persist what a failed startup left behind; return its observation ID.
+
+        Adapters that can (the child's stderr after a failed handshake) hand
+        over typed evidence once startup has failed. The ID is a reference
+        for the startup diagnostic; the evidence text never enters an error.
+        """
+
+        from .harness.observations import TurnEvidence
+
+        take = getattr(self.adapter, "take_startup_evidence", None)
+        if not callable(take):
+            return None
+        try:
+            evidence = take()
+        except Exception:
+            return None
+        if not isinstance(evidence, TurnEvidence) or not evidence.observations:
+            return None
+        self._record_turn_evidence(None, evidence)
+        return evidence.observations[0].observation_id
+
+    def _record_turn_evidence(
+        self, turn_id: TurnId | None, typed_evidence: object
+    ) -> None:
         """Persist typed adapter observations through the failure-safe sink.
 
         Provider adapters use the typed boundary, so finalized TraceView

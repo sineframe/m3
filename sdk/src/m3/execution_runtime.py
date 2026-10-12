@@ -38,7 +38,7 @@ from .errors import (
 )
 from .events import EventFactory, EventSequence
 from .execution_trace import ExecutionTraceRecorder
-from .harness.contracts import HarnessStartupError
+from .harness.contracts import HarnessAdapterError, HarnessStartupError
 from .managed_input_api import (
     HumanInput,
     apply_human_input,
@@ -210,6 +210,33 @@ def _protocol_error_details(error: ProtocolError) -> dict[str, Any]:
     return details
 
 
+def _cause_details(error: BaseException) -> dict[str, Any]:
+    """Carry the bounded cause of a startup failure into ``ErrorInfo.details``.
+
+    A session startup error already holds a sanitized ``details["cause"]``;
+    adapter and feature errors follow the session's ``_startup_failure_cause``
+    rule. Other transport errors keep no details: their messages are not
+    guaranteed to be sanitized.
+    """
+
+    from .agent_session import _bounded_cause, _startup_failure_cause
+
+    details = getattr(error, "details", {})
+    cause = details.get("cause")
+    if isinstance(cause, str):
+        cause = _bounded_cause(cause)
+    elif isinstance(error, (HarnessAdapterError, UnsupportedFeature)):
+        cause = _startup_failure_cause(error)
+    else:
+        return {}
+    if not cause:
+        return {}
+    evidence = details.get("evidence_observation")
+    return {"cause": cause} | (
+        {"evidence_observation": evidence} if isinstance(evidence, str) else {}
+    )
+
+
 def _error_info(error: BaseException) -> ErrorInfo:
     if isinstance(error, ManagedInputRecoveryError):
         return ErrorInfo(
@@ -230,12 +257,14 @@ def _error_info(error: BaseException) -> ErrorInfo:
             code=ErrorCode.UNSUPPORTED,
             message="execution feature is unsupported",
             retryable=False,
+            details=_cause_details(error),
         )
     if isinstance(error, HarnessStartupError):
         return ErrorInfo(
             code=ErrorCode.UNSUPPORTED,
             message="requested harness is unavailable",
             retryable=False,
+            details=_cause_details(error),
         )
     if isinstance(error, ModelValidationError):
         return ErrorInfo(
@@ -259,6 +288,7 @@ def _error_info(error: BaseException) -> ErrorInfo:
             code=ErrorCode.TRANSPORT_ERROR,
             message="MCP transport operation failed",
             retryable=True,
+            details=_cause_details(error),
         )
     if isinstance(error, LocalTransportError):
         return ErrorInfo(
