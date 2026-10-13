@@ -672,6 +672,20 @@ def test_plugin_discovers_configuration_from_cwd_not_project_root(
     assert "1 passed" in result.stdout
 
 
+def test_help_ignores_invalid_configuration_but_runs_fail_fast(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.m3]\nartifact_policy = "bogus"\n')
+    test_file = tmp_path / "test_plain.py"
+    test_file.write_text("def test_plain(): pass\n")
+    helped = _run(tmp_path, persist=False, pytest_args=("--help",))
+    assert helped.returncode == 0, helped.stdout + helped.stderr
+    assert "--m3-config" in helped.stdout
+    failed = _run(tmp_path, test_file, persist=False)
+    assert failed.returncode != 0
+    assert "invalid_configuration" in failed.stdout + failed.stderr
+
+
 def test_suite_selection_normalizes_marker_for_plain_and_agent_tests(
     tmp_path: Path,
 ) -> None:

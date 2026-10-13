@@ -255,7 +255,12 @@ def pytest_configure(config: _Any) -> None:
 
 
 def _configure_run_config(config: _Any) -> None:
-    from .configuration import _config_from_snapshot, _install_run_config, load_config
+    from .configuration import (
+        Config,
+        _config_from_snapshot,
+        _install_run_config,
+        load_config,
+    )
 
     workerinput = getattr(config, "workerinput", None)
     snapshot = (
@@ -264,6 +269,9 @@ def _configure_run_config(config: _Any) -> None:
     try:
         if snapshot is not None:
             run_config = _config_from_snapshot(snapshot)
+        elif config.getoption("help"):
+            # --help must not depend on project settings.
+            run_config = Config()
         else:
             run_config = load_config(config_file=config.getoption("--m3-config"))
     # ConfigError subclasses ValueError; its messages are value-free.
