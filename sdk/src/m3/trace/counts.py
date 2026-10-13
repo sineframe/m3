@@ -13,6 +13,12 @@ from .pairing import (
 )
 from .projector import TraceProjector
 
+# Version of the rules that count tool calls (pairing, projection, and this
+# module). Stores cache counts stamped with it and recompute any row stamped
+# otherwise, so bump it whenever those rules can change a count. Version 2
+# counts each agent call once across wire and provider history (#139).
+_TOOL_CALL_COUNTS_VERSION = 2
+
 
 def tool_call_count(events: Sequence[Event]) -> int:
     """Count calls using the same reported/wire coalescing as TraceView."""

@@ -1,11 +1,15 @@
 """An agent's tool call seen on the wire and in provider history is one call."""
 
+import hashlib
+import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
+from test_trace_dedup_equivalence import _corpus, _normalized
+
 from m3.events import EventFactory, EventSequence
 from m3.observability import CorrelationState, TraceView
-from m3.trace.counts import tool_call_count_after
+from m3.trace.counts import _TOOL_CALL_COUNTS_VERSION, tool_call_count_after
 from m3.types import (
     Event,
     EventDirection,
@@ -213,3 +217,50 @@ def test_partial_history_pairs_the_reported_call_by_arguments() -> None:
         CorrelationState.WIRE_ONLY,
         CorrelationState.CORRELATED,
     ]
+
+
+# (total, successful) counts the current rules give, pinned to the counts
+# version stores stamp on cached counts. Version 1 counted the paired cases
+# below twice (for example 4 calls for 2 wire calls plus their provider history).
+_PINNED_COUNTS = (
+    2,
+    {
+        "repeated_with_error": (2, 1),
+        "reordered_history": (2, 2),
+        "identical_repeated": (2, 2),
+        "wire_stamped_ids": (2, 2),
+        "ambiguous_report": (3, 3),
+        "partial_history": (2, 2),
+    },
+    "9f856f62737e0d7243f1eb4ee022971ced556efcfb17970f0add7b9b6fe9fe45",
+)
+
+
+def test_count_changes_require_a_counts_version_bump() -> None:
+    """Stores trust cached counts stamped with the current version.
+
+    If this fails, counting changed: bump ``_TOOL_CALL_COUNTS_VERSION`` so
+    stored counts are recomputed, then pin the new counts here.
+    """
+
+    def counts(view: TraceView) -> tuple[int, int]:
+        return view.summary.tool_call_count, view.summary.successful_tool_call_count
+
+    a, b = {"text": "a"}, {"text": "b"}
+    paired = {
+        "repeated_with_error": counts(_view(_events([a, b], errors=frozenset({1})))),
+        "reordered_history": counts(_view(_events([a, b], reported_order=[1, 0]))),
+        "identical_repeated": counts(_view(_events([a, a]))),
+        "wire_stamped_ids": counts(
+            _view(_events([a, a], reported_order=[1, 0], stamp_ids=True))
+        ),
+        "ambiguous_report": counts(_view(_events([a, a], reported=[0]))),
+        "partial_history": counts(_view(_events([a, b], reported=[1]))),
+    }
+    corpus = {
+        name: list(counts(_normalized(build()).view()))
+        for name, build in sorted(_corpus().items())
+    }
+    digest = hashlib.sha256(json.dumps(corpus, sort_keys=True).encode()).hexdigest()
+
+    assert (_TOOL_CALL_COUNTS_VERSION, paired, digest) == _PINNED_COUNTS

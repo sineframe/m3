@@ -53,7 +53,12 @@ from ..observability import (
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from ..suites import Suite, generated_suite_id, normalize_suite_name
-from ..trace.counts import has_tool_request, tool_call_count, tool_call_count_after
+from ..trace.counts import (
+    _TOOL_CALL_COUNTS_VERSION,
+    has_tool_request,
+    tool_call_count,
+    tool_call_count_after,
+)
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -364,10 +369,6 @@ class _CompatConnection:
 _QUEUE_LEASE_SECONDS = 30.0
 
 
-# Persisted tool-call counts are only valid for the trace projection that
-# produced them; a row stamped with another TraceView version is recomputed.
-_TRACE_VIEW_SCHEMA_VERSION = TraceView.model_fields["schema_version"].default
-
 # Keys of a complete stored execution snapshot.
 _SNAPSHOT_FIELDS = frozenset(ExecutionState.model_fields)
 
@@ -380,7 +381,7 @@ def _cached_tool_call_counts(raw: str | None) -> tuple[int, int] | None:
         return None
     if (
         isinstance(cached, Mapping)
-        and cached.get("schema_version") == _TRACE_VIEW_SCHEMA_VERSION
+        and cached.get("counts_version") == _TOOL_CALL_COUNTS_VERSION
         and type(cached.get("total")) is int
         and type(cached.get("successful")) is int
     ):
@@ -2824,7 +2825,7 @@ class SQLiteExecutionStore(_SqliteBase):
         successful = view.summary.successful_tool_call_count
         counts = _json(
             {
-                "schema_version": view.schema_version,
+                "counts_version": _TOOL_CALL_COUNTS_VERSION,
                 "total": total,
                 "successful": successful,
             }

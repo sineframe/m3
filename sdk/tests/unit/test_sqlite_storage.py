@@ -40,6 +40,7 @@ from m3.storage import (
     TerminalConflict,
 )
 from m3.storage import sqlite as sqlite_storage
+from m3.trace.counts import _TOOL_CALL_COUNTS_VERSION
 from m3.trace.redaction import RedactionConfig
 from m3.types import (
     ArtifactRef,
@@ -1366,7 +1367,7 @@ def test_tool_call_counts_match_trace_view_before_and_after_persisting(
 
     assert store.tool_call_counts([execution_id]) == {"corpus": expected}
     assert json.loads(_stored_counts(tmp_path, execution_id)) == {
-        "schema_version": "2.0",
+        "counts_version": _TOOL_CALL_COUNTS_VERSION,
         "total": expected[0],
         "successful": expected[1],
     }
@@ -1399,12 +1400,14 @@ def test_tool_call_counts_omit_unfinished_and_missing_and_fill_null_rows(
 
     assert store.tool_call_counts(ids) == {"finished": (3, 2), "empty": (0, 0)}
     assert json.loads(_stored_counts(tmp_path, finished)) == {
-        "schema_version": "2.0",
+        "counts_version": _TOOL_CALL_COUNTS_VERSION,
         "total": 3,
         "successful": 2,
     }
 
-    stale = json.dumps({"schema_version": "1.0", "total": 9, "successful": 9})
+    # A row written by an earlier counting rule (here stamped with the
+    # TraceView schema version, as before #139) is recomputed, not trusted.
+    stale = json.dumps({"schema_version": "2.0", "total": 9, "successful": 9})
     with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         connection.execute(
             "UPDATE v2_executions SET tool_call_counts_json=? WHERE id=?",
@@ -1417,7 +1420,7 @@ def test_tool_call_counts_omit_unfinished_and_missing_and_fill_null_rows(
 
     assert store.tool_call_counts(ids) == {"finished": (3, 2), "empty": (0, 0)}
     assert json.loads(_stored_counts(tmp_path, finished)) == {
-        "schema_version": "2.0",
+        "counts_version": _TOOL_CALL_COUNTS_VERSION,
         "total": 3,
         "successful": 2,
     }
