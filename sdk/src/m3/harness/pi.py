@@ -211,6 +211,10 @@ class PiHarnessAdapter(NativeRPCAdapter):
         return ready
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
+        # Reject a second open before replacing any state an open session
+        # still uses (secrets, launch environment, control channel).
+        if self._session is not None:
+            raise HarnessStartupError(f"{self.name} session is already open")
         # The extension spawns exactly this package-owned bridge command. MCP
         # Pal's capture layer has already instrumented these descriptors.
         base_environment = dict(self.environment)
@@ -293,8 +297,10 @@ class PiHarnessAdapter(NativeRPCAdapter):
         self._runtime_secrets.add(control.token)
         if callable(add_secrets):
             add_secrets({control.token})
+        process: JsonRpcProcess | None = None
         try:
             session = await super().open(launch)
+            process = self._process
             try:
                 await control.wait_connected()
             except PiControlClosed as error:
@@ -302,10 +308,17 @@ class PiHarnessAdapter(NativeRPCAdapter):
                     "Pi managed-control extension did not authenticate"
                 ) from error
             return session
-        except BaseException:
-            await super().close()
-            await control.close("adapter_open_failed")
-            self._control_channel = None
+        except BaseException as error:
+            try:
+                if isinstance(error, Exception) and process is not None:
+                    # This open's base handshake succeeded, so its own failure
+                    # path never ran: keep the child's stderr (an extension
+                    # stack trace, say) as evidence for this failed startup.
+                    await self._fail_startup(process, error)
+            finally:
+                await super().close()
+                await control.close("adapter_open_failed")
+                self._control_channel = None
             raise
 
     def environment_for_launch(

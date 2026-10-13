@@ -10,7 +10,14 @@ from typing import Any
 from ..execution_trace import ExecutionTraceRecorder
 from ..observability import CaptureOptions
 from ..trace.redaction import redact_for_persistence
-from ..types import EventKind, EventOrigin, EventSource, EvidenceRef, TurnId
+from ..types import (
+    EventKind,
+    EventOrigin,
+    EventSource,
+    EvidenceRef,
+    LifecyclePhase,
+    TurnId,
+)
 from .observations import (
     HARNESS_OBSERVATION_ADAPTER,
     HarnessObservation,
@@ -49,6 +56,7 @@ class HarnessObservationSink:
         capture_config: CaptureOptions | None = None,
         turn_id: TurnId | str | None = None,
         monotonic_origin: float | None = None,
+        lifecycle_phase: LifecyclePhase | None = None,
     ) -> None:
         self._recorder = recorder
         store_config = getattr(
@@ -64,6 +72,9 @@ class HarnessObservationSink:
         # Keep Identifier objects intact: ``str(TurnId(...))`` is the
         # Pydantic ``root='...'`` representation, not the identifier value.
         self._turn_id = turn_id
+        # Evidence from outside any turn (a failed startup) is recorded in its
+        # lifecycle phase with no turn, never under a turn that did not run.
+        self._lifecycle_phase = lifecycle_phase
         # Observation offsets count from the adapter's ``time.monotonic()``
         # origin. Read both clocks together to express that origin on the
         # trace's perf-counter clock without assuming the two clocks match.
@@ -82,8 +93,11 @@ class HarnessObservationSink:
     def raw_references(self) -> Mapping[str, EvidenceRef]:
         return dict(self._raw_references)
 
-    def emit(self, observation: HarnessObservation) -> None:
-        """Persist one observation without allowing adapter-facing failures."""
+    def emit(self, observation: HarnessObservation) -> bool:
+        """Persist one observation without allowing adapter-facing failures.
+
+        Returns whether the observation was recorded.
+        """
 
         try:
             value = HARNESS_OBSERVATION_ADAPTER.validate_python(observation)
@@ -91,13 +105,13 @@ class HarnessObservationSink:
             if value.observation_id in self._observation_ids:
                 self._limit("capture_incomplete")
                 self._diagnostic("duplicate_harness_observation")
-                return
+                return False
             self._observation_ids.add(value.observation_id)
             if not self._capture_config.capture_provider_messages and isinstance(
                 value, _PROVIDER_OBSERVATIONS
             ):
                 self._limit("capture_disabled")
-                return
+                return False
             kind, payload, kwargs = self._normalize(value)
             raw = value.raw_evidence
             raw_content: bytes | None = None
@@ -108,7 +122,17 @@ class HarnessObservationSink:
         except Exception:
             self._limit("capture_incomplete")
             self._diagnostic("harness_observation_failed")
-            return
+            return False
+        turn_id: TurnId | str | None
+        if self._lifecycle_phase is not None:
+            kwargs = {**kwargs, "lifecycle_phase": self._lifecycle_phase}
+            turn_id = None
+        else:
+            turn_id = (
+                self._turn_id
+                if self._turn_id is not None
+                else f"turn-{value.turn_sequence}"
+            )
         try:
             event = self._recorder.emit(
                 kind,
@@ -118,11 +142,7 @@ class HarnessObservationSink:
                     source=value.harness_kind,
                     provider_kind=value.harness_kind,
                 ),
-                turn_id=(
-                    self._turn_id
-                    if self._turn_id is not None
-                    else f"turn-{value.turn_sequence}"
-                ),
+                turn_id=turn_id,
                 **kwargs,
                 raw_evidence_content=raw_content,
                 raw_evidence_media_type=raw_media_type,
@@ -130,7 +150,7 @@ class HarnessObservationSink:
         except Exception:
             self._limit("persistence_failed")
             self._diagnostic("harness_observation_persistence_failed")
-            return
+            return False
         if raw_content is not None and event.raw_evidence_ref is not None:
             self._raw_references[value.observation_id] = event.raw_evidence_ref
         elif raw is not None:
@@ -141,6 +161,7 @@ class HarnessObservationSink:
         for limitation in tuple(self._pending_limitations):
             self._limit(limitation)
         self._pending_limitations.clear()
+        return True
 
     def _normalize(
         self, observation: HarnessObservation

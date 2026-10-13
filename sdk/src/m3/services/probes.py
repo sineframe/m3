@@ -26,6 +26,7 @@ from typing import Any
 
 from pydantic import Field
 
+from ..trace.redaction import CREDENTIAL_TEXT_PATTERN
 from ..types import Capability, CapabilityStatus, FrozenModel, Readiness, TransportKind
 
 
@@ -120,9 +121,6 @@ _SENSITIVE_KEY_RE = re.compile(
     r"(^|[-_])(authorization|proxy_authorization|cookie|set_cookie|token|api_key|apikey|secret|password|passwd|credential|private_key)([-_]|$)",
     re.IGNORECASE,
 )
-_SENSITIVE_TEXT_RE = re.compile(
-    r"(?i)(bearer\s+)[^\s,;]+|((?:api[_-]?key|token|secret|password|signature|credential)=)[^\s&;]+"
-)
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
 _REDACTED = "[REDACTED]"
 _DEFAULT_OUTPUT_LIMIT = 64 * 1024
@@ -135,7 +133,7 @@ def _redact_text(
     """Redact known values and credential-shaped text without raising."""
 
     secrets = tuple(secrets)
-    result = _SENSITIVE_TEXT_RE.sub(
+    result = CREDENTIAL_TEXT_PATTERN.sub(
         lambda match: f"{match.group(1) or match.group(2)}{_REDACTED}", value
     )
     for secret in secrets:

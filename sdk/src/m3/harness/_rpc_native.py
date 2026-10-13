@@ -21,9 +21,9 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
-from ..agent_session import AdapterTurn
+from ..agent_session import AdapterTurn, _bounded_cause
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..trace.redaction import RedactionConfig, redact_for_api
+from ..trace.redaction import RedactionConfig, redact_for_api, redact_native_text
 from ..types import (
     Capability,
     CapabilityStatus,
@@ -50,10 +50,12 @@ from .contracts import (
 )
 from .native import (
     MAX_FRAME_BYTES,
+    MAX_STDERR_BYTES,
     NativeSessionBase,
     ProcessOwner,
     _executable,
     _isolated_environment,
+    launch_secrets,
     read_bounded_line,
     workspace_for_launch,
 )
@@ -63,7 +65,12 @@ from .observations import (
     RawEvidenceInput,
     RawFrameObservation,
     TurnEvidence,
+    attach_startup_evidence,
 )
+
+# How much of a child's stderr becomes evidence: its end, where a startup or
+# crash reports its failure. The sink keeps at most its own preview of it.
+_STDERR_EVIDENCE_CHARS = 16 * 1024
 
 
 def _json_safe(value: Any, *, limit: int = 8_388_608) -> JsonValue | None:
@@ -253,6 +260,9 @@ class NativeRPCAdapter:
         self._runtime_secrets: set[str] = set()
         self._process_observed = False
         self._partial_capture: Callable[[], TurnEvidence] | None = None
+        # What the launch handed the child through its MCP configurations;
+        # the child can echo it on stderr.
+        self._launch_secrets: frozenset[str] = frozenset()
 
     @property
     def name(self) -> str:
@@ -343,6 +353,9 @@ class NativeRPCAdapter:
             raise HarnessStartupError(f"{self.name} executable is unavailable")
         if self._session is not None:
             raise HarnessStartupError(f"{self.name} session is already open")
+        # Only after the checks: a rejected open must not change the secrets
+        # an open session redacts its stderr with.
+        self._launch_secrets = launch_secrets(launch)
         root = Path(tempfile.mkdtemp(prefix=f"m3-{self.name}-"))
         process = JsonRpcProcess(self.executable, self.process_argv(launch))
         try:
@@ -365,9 +378,101 @@ class NativeRPCAdapter:
             self._launch, self._process = effective_launch, process
             self._session = NativeRPCSession(self, process, session_id)
             return self._session
-        except Exception:
-            await process.close()
+        except Exception as error:
+            await self._fail_startup(process, error)
             raise
+
+    async def _fail_startup(
+        self, process: JsonRpcProcess, error: BaseException
+    ) -> None:
+        """Close a process whose startup failed; attach its stderr to ``error``.
+
+        The evidence belongs to this one failure, so it travels with the
+        exception rather than living on the adapter. Subclasses whose startup
+        continues after ``open`` (Pi's control channel) call this too, before
+        closing the session.
+        """
+
+        started_at = time.monotonic()
+        try:
+            await process.close()
+        finally:
+            evidence = self._startup_failure_evidence(process, started_at)
+            if evidence is not None:
+                attach_startup_evidence(error, evidence)
+
+    def _stderr_fields(self, process: JsonRpcProcess) -> dict[str, Any]:
+        """Return stderr evidence once the bounded drain has stopped.
+
+        A drain still running (the child is alive) is never awaited or read
+        here: this runs on the turn path. Only the end of what the drain kept
+        is used, where a failure is reported, in whole lines: a cut line could
+        hold part of a secret, and the drain is cut by its size limit or by
+        cancellation when a detached descendant holds the pipe. The text is
+        redacted before it reaches the observation; the sink redacts again
+        and applies the capture policy.
+        """
+
+        owner = process.owner
+        task = owner.stderr_task if owner is not None else None
+        if owner is None or task is None or not task.done():
+            return {"stderr_state": "unavailable"}
+        retained = bytes(owner.stderr_retained)
+        text = retained.decode("utf-8", errors="replace")
+        if (task.cancelled() or len(retained) >= MAX_STDERR_BYTES) and not (
+            text.endswith("\n")
+        ):
+            text = text[: text.rfind("\n") + 1]
+        if len(text) > _STDERR_EVIDENCE_CHARS:
+            # Keep whole lines only: the cut first line could hold the end of
+            # a secret.
+            tail = text[-_STDERR_EVIDENCE_CHARS:]
+            text = tail[tail.find("\n") + 1 :] if "\n" in tail else ""
+        try:
+            text = redact_native_text(
+                text,
+                RedactionConfig.from_environment(
+                    secrets=self._runtime_secrets | self._launch_secrets
+                ),
+            )
+        except Exception:
+            return {"stderr_state": "unavailable"}
+        if retained and not text:
+            # Nothing whole was left; an empty observation would misreport
+            # what the child wrote.
+            return {"stderr_state": "unavailable"}
+        return {"stderr": text, "stderr_state": "observed"}
+
+    def _startup_failure_evidence(
+        self, process: JsonRpcProcess, started_at: float
+    ) -> TurnEvidence | None:
+        """Describe a child that failed during startup, if one was spawned."""
+
+        child = process.owner.process if process.owner is not None else None
+        if child is None:
+            return None
+        try:
+            return TurnEvidence(
+                sequence=0,
+                status="failed",
+                observations=(
+                    ProcessObservedObservation(
+                        observation_id=f"{self.name}-process-startup-failed",
+                        harness_kind=self.name,
+                        turn_sequence=0,
+                        wall_time=datetime.now(timezone.utc),
+                        monotonic_offset_ms=0,
+                        phase="failed",
+                        executable=self.executable,
+                        pid=child.pid,
+                        exit_code=child.returncode,
+                        **self._stderr_fields(process),
+                    ),
+                ),
+                monotonic_origin=started_at,
+            )
+        except Exception:
+            return None
 
     async def send(
         self,
@@ -454,7 +559,7 @@ class NativeRPCAdapter:
                     phase="started",
                     executable=self.executable,
                     pid=pid,
-                    stderr_state="unavailable",
+                    **self._stderr_fields(process),
                 ),
             )
             self._process_observed = True
@@ -505,7 +610,7 @@ class NativeRPCAdapter:
                             phase="exited",
                             executable=self.executable,
                             exit_code=return_code,
-                            stderr_state="unavailable",
+                            **self._stderr_fields(process),
                         )
                     )
                     raise HarnessAdapterError(
@@ -615,7 +720,7 @@ class NativeRPCAdapter:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             failure_status: Literal["failed", "cancelled"] = (
                 "cancelled" if self._cancel_requested else "failed"
             )
@@ -634,7 +739,15 @@ class NativeRPCAdapter:
             return HarnessTurnResult(
                 sequence=sequence,
                 status=failure_status,
-                error=ErrorInfo(code=code, message="harness turn failed"),
+                error=ErrorInfo(
+                    code=code,
+                    # Adapter errors are M3-authored and secret-free; any other
+                    # exception may carry provider text, so only its type is kept.
+                    message=_bounded_cause(str(exc))
+                    if isinstance(exc, HarnessAdapterError) and str(exc)
+                    else "harness turn failed",
+                    details={"exception_type": type(exc).__name__},
+                ),
                 turn_evidence=evidence,
             )
 
@@ -670,4 +783,5 @@ class NativeRPCAdapter:
         self._session = None
         self._process = None
         self._runtime_secrets.clear()
+        self._launch_secrets = frozenset()
         self._process_observed = False

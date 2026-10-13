@@ -19,12 +19,79 @@ from m3.trace.redaction import (
     project_redacted,
     redact,
     redact_artifact_bytes,
+    redact_for_persistence,
     redact_model_json,
+    redact_native_text,
     redact_raw_evidence,
     redact_repr,
     redacted_json,
     serialize_redacted,
 )
+
+_NO_SECRETS = RedactionConfig(include_environment=False)
+
+
+def test_native_text_reduces_embedded_urls_to_their_origin() -> None:
+    # Paths (Zapier-style keys), queries, percent-encoded values, userinfo and
+    # hostless URLs can all carry credentials that M3 never knew.
+    text = (
+        "remote: error sending request for url "
+        "(http://127.0.0.1:5555/api/mcp/s/ZapPathSecret/mcp?zap=s%C3%A9cret), "
+        "then https://user:pass-word@example.com, and https://example.com/. "
+        "db postgres:///app?password=hunter, sock unix:///run/x.sock?token=t1, "
+        "http:///mcp?api_key=SuperSecretKey, wss://h/x?q={x}&token=SECRET "
+        "at load (file:///home/u/.pi/extensions/foo/dist/index.js:45:11)"
+    )
+    # Only a plain local file URL (a Node stack frame) stays whole.
+    assert redact_native_text(text, _NO_SECRETS) == (
+        "remote: error sending request for url (http://127.0.0.1:5555/…), "
+        "then https://example.com/…, and https://example.com. "
+        "db postgres://…, sock unix://…, http://…, wss://h/… "
+        "at load (file:///home/u/.pi/extensions/foo/dist/index.js:45:11)"
+    )
+
+
+def test_native_text_replaces_known_values_before_reducing_urls() -> None:
+    # A URL match stops at a quote and hostnames are lowercased when a URL is
+    # reduced, so known values must already be gone.
+    config = RedactionConfig(
+        secrets=frozenset({"s3cr3t'x", "AbCdEf123Tok"}), include_environment=False
+    )
+    text = "https://u:s3cr3t'x@host.com/ failed; https://AbCdEf123Tok.ngrok.app/mcp"
+    redacted = redact_native_text(text, config)
+    for fragment in ("s3cr3t", "'x", "abcdef123tok", "AbCdEf123Tok"):
+        assert fragment not in redacted
+
+
+def test_native_text_scrubs_credential_shaped_text() -> None:
+    text = (
+        "args --header Authorization: Bearer abc.def.ghi; token=4821, using bearer auth"
+    )
+    assert redact_native_text(text, _NO_SECRETS) == (
+        f"args --header Authorization: Bearer {REDACTED}; token={REDACTED}, "
+        "using bearer auth"
+    )
+
+
+def test_native_text_starting_with_a_url_keeps_its_other_lines() -> None:
+    assert redact_native_text("https://h/x?q=1\nError: boom happened", _NO_SECRETS) == (
+        "https://h/…\nError: boom happened"
+    )
+
+
+def test_pass_named_keys_stay_readable_in_projections() -> None:
+    assert redact_for_persistence(
+        {"pass_rate": 0.5, "pass": 3, "pass_at_1": True}, config=_NO_SECRETS
+    ) == {"pass_rate": 0.5, "pass": 3, "pass_at_1": True}
+
+
+def test_native_text_url_matching_stays_linear() -> None:
+    import time
+
+    # A quadratic scan of this 256 KiB dotted run took about a minute.
+    started = time.monotonic()
+    redact_native_text("a." * 128 * 1024, _NO_SECRETS)
+    assert time.monotonic() - started < 5.0
 
 
 def test_nested_shapes_exact_secrets_keys_headers_and_urls_are_redacted() -> None:

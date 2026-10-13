@@ -21,6 +21,9 @@ control_host = os.environ.get("M3_PI_CONTROL_HOST")
 control_port = os.environ.get("M3_PI_CONTROL_PORT")
 control_session = os.environ.get("M3_PI_CONTROL_SESSION")
 control_token = os.environ.get("M3_PI_CONTROL_TOKEN")
+if os.environ.get("M3_PI_FIXTURE_STDERR"):
+    sys.stderr.write(os.environ["M3_PI_FIXTURE_STDERR"] + "\n")
+    sys.stderr.flush()
 if (
     control_host
     and control_port

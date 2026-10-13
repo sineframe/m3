@@ -71,6 +71,20 @@ _SENSITIVE_QUERY_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _URL_PREFIX: Final[tuple[str, ...]] = ("http://", "https://")
+# A URL inside free text: a scheme of at most 32 characters (bounded, so a
+# long dotted run cannot make matching quadratic), then everything up to
+# whitespace, quotes or angle brackets.
+_URL_IN_TEXT: Final[re.Pattern[str]] = re.compile(
+    r"(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]{0,31}://[^\s\"'<>]+"
+)
+# Punctuation that ends a URL quoted in prose or in parentheses.
+_URL_TRAILING_PUNCTUATION: Final[str] = ".,;:!?)]}"
+# Credential-shaped text: a bearer token (token characters, eight or more, so
+# prose such as "bearer auth" stays), or a credential-named assignment.
+CREDENTIAL_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?i)(bearer\s+)[A-Za-z0-9\-._~+/]{8,}=*"
+    r"|((?:api[_-]?key|token|secret|password|signature|credential)=)[^\s&;,]+"
+)
 _MAX_NESTING_DEPTH: Final[int] = 64
 _SAFE_PATH_COMPONENTS: Final[frozenset[str]] = frozenset(
     {
@@ -377,7 +391,9 @@ def _replace_secrets(
 def _redact_url(
     value: str, config: RedactionConfig, path: str, paths: list[str]
 ) -> str:
-    if not value.lower().startswith(_URL_PREFIX):
+    # Only a whole value can be one URL; text that merely starts with one
+    # (stderr, a message) would otherwise be parsed as a URL and lose lines.
+    if not value.lower().startswith(_URL_PREFIX) or any(c.isspace() for c in value):
         return value
     try:
         parts = urlsplit(value)
@@ -719,6 +735,68 @@ def redact_for_api(
     return project_redacted(value, projection="api", config=config, path=path)
 
 
+def _url_origin(url: str) -> str:
+    """Keep a URL's scheme, host and port; mark anything after them.
+
+    Paths, queries, fragments and userinfo can all carry credentials (a
+    Zapier-style ``/s/<key>/mcp`` path, an ``?api_key=`` query) that M3 never
+    knew, possibly percent-encoded, so none of them is kept. A plain local
+    ``file:`` URL (a Node stack frame) is the exception: it has no host,
+    userinfo, query or fragment, and its path is the useful part.
+    """
+
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return REDACTED
+    if not parts.scheme:
+        return REDACTED
+    if (
+        parts.scheme.lower() == "file"
+        and not parts.netloc
+        and not parts.query
+        and not parts.fragment
+    ):
+        return url
+    if not host:
+        return f"{parts.scheme}://…"
+    netloc = f"[{host}]" if ":" in host else host
+    if port is not None:
+        netloc += f":{port}"
+    elided = (
+        parts.path not in ("", "/")
+        or bool(parts.query or parts.fragment)
+        or "@" in parts.netloc
+    )
+    return f"{parts.scheme}://{netloc}" + ("/…" if elided else "")
+
+
+def redact_native_text(text: str, config: RedactionConfig) -> str:
+    """Redact harness-authored free text (an error message, stderr).
+
+    The usual persistence redaction replaces the configured values first;
+    every URL embedded in the text is then reduced to its origin (the usual
+    redaction only handles a value that is a URL as a whole); credential-
+    shaped text that remains (``Bearer x``, ``token=x``) is scrubbed last.
+    Raises ``RedactionError`` when the text cannot be projected.
+    """
+
+    projected = redact_for_persistence(text, config=config)
+    if not isinstance(projected, str):
+        raise RedactionError("$")
+
+    def reduce(match: re.Match[str]) -> str:
+        url = match.group(0)
+        trimmed = url.rstrip(_URL_TRAILING_PUNCTUATION)
+        return _url_origin(trimmed) + url[len(trimmed) :]
+
+    reduced = _URL_IN_TEXT.sub(reduce, projected)
+    return CREDENTIAL_TEXT_PATTERN.sub(
+        lambda match: f"{match.group(1) or match.group(2)}{REDACTED}", reduced
+    )
+
+
 def redact_for_ui(
     value: Any, *, config: RedactionConfig | None = None, path: str = "$"
 ) -> Any:
@@ -782,6 +860,7 @@ def redact_repr(
 
 
 __all__ = [
+    "CREDENTIAL_TEXT_PATTERN",
     "REDACTED",
     "ArtifactBytesResult",
     "InProcessAssertionView",
@@ -802,6 +881,7 @@ __all__ = [
     "redact_for_persistence",
     "redact_for_ui",
     "redact_model_json",
+    "redact_native_text",
     "redact_raw_evidence",
     "redact_repr",
     "redact_result",

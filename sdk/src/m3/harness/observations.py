@@ -372,6 +372,27 @@ def _validate_limitations(values: tuple[str, ...]) -> None:
         raise ValueError("limitations must be unique")
 
 
+# Exception attribute carrying what a failed startup left behind.
+_STARTUP_EVIDENCE_ATTRIBUTE = "_m3_startup_evidence"
+
+
+def attach_startup_evidence(error: BaseException, evidence: TurnEvidence) -> None:
+    """Attach a failed startup's evidence to the exception that reports it.
+
+    The evidence belongs to that one failure, so it travels with it: no
+    adapter state can hand it to a later, unrelated failure.
+    """
+
+    setattr(error, _STARTUP_EVIDENCE_ATTRIBUTE, evidence)
+
+
+def startup_evidence(error: BaseException) -> TurnEvidence | None:
+    """Return the evidence attached to a failed startup's exception, if any."""
+
+    evidence = getattr(error, _STARTUP_EVIDENCE_ATTRIBUTE, None)
+    return evidence if isinstance(evidence, TurnEvidence) else None
+
+
 __all__ = [
     "HARNESS_OBSERVATION_ADAPTER",
     "HarnessObservation",
@@ -390,4 +411,6 @@ __all__ = [
     "ToolResultObservedObservation",
     "TurnEvidence",
     "UsageObservedObservation",
+    "attach_startup_evidence",
+    "startup_evidence",
 ]

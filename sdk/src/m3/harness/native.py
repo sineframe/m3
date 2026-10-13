@@ -9,8 +9,10 @@ errors before it crosses the adapter boundary.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,6 +23,7 @@ from typing import Any
 
 from .. import _timing
 from ..errors import CleanupError
+from ..trace.redaction import is_sensitive_key
 from ..types import ErrorCode, ErrorInfo, SecretReference
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -260,7 +263,12 @@ async def read_bounded_line(
     return line or None
 
 
-async def drain_bounded(stream: Any, *, maximum: int = MAX_STDERR_BYTES) -> bytes:
+async def drain_bounded(
+    stream: Any,
+    *,
+    maximum: int = MAX_STDERR_BYTES,
+    retained: bytearray | None = None,
+) -> bytes:
     """Drain a diagnostic stream to EOF while retaining a bounded prefix.
 
     Reading must continue after the retained diagnostic limit is reached.  A
@@ -268,13 +276,16 @@ async def drain_bounded(stream: Any, *, maximum: int = MAX_STDERR_BYTES) -> byte
     inherited pipe, making a successful startup look like a hung harness and
     preventing process cleanup from completing.  The retained bytes are only
     diagnostic evidence; callers redact them before exposing them publicly.
+    A caller-owned ``retained`` buffer keeps what was read even if the drain
+    is cancelled because a detached descendant holds the pipe open.
     """
 
     if stream is None:
         return b""
     if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum <= 0:
         raise ValueError("diagnostic limit must be a positive integer")
-    retained = bytearray()
+    if retained is None:
+        retained = bytearray()
     while True:
         chunk = await stream.read(8192)
         if not chunk:
@@ -352,6 +363,46 @@ def probe_help(executable: str, args: tuple[str, ...]) -> str | None:
     return (result.stdout + "\n" + result.stderr).replace("\x00", " ")[:32_768]
 
 
+def _exception_kind(error: BaseException) -> str:
+    """Name an exception and its errno symbol without strerror/filename text."""
+
+    kind = type(error).__name__
+    code = error.errno if isinstance(error, OSError) else None
+    symbol = errno.errorcode.get(code) if code is not None else None
+    return kind if symbol is None else f"{kind} ({symbol})"
+
+
+# Credential name parts the shared sensitive-key pattern leaves out on
+# purpose (it also redacts keys like ``pass_rate``); only MCP launch
+# credentials, which harness text can echo, are matched by them.
+_LAUNCH_CREDENTIAL_PART = re.compile(r"(^|[_-])(pass|pat)([_-]|$)", re.IGNORECASE)
+
+
+def launch_secrets(launch: HarnessLaunch) -> frozenset[str]:
+    """Return the MCP credentials a launch hands its harness.
+
+    With capture, the launch holds rewritten configurations, so the capture
+    manager reports what it resolved and classified from the originals.
+    Without it, the launch's configurations are the originals: their literal
+    env and header values under sensitive names (``DB_PASS`` and
+    ``GITHUB_PAT`` included).
+    """
+
+    values: set[str] = set()
+    resolved = getattr(launch.capture, "resolved_secrets", None)
+    if callable(resolved):
+        values.update(resolved())
+    for configuration in launch.configurations:
+        for mapping in (configuration.environment, configuration.headers):
+            values.update(
+                value
+                for key, value in mapping.items()
+                if isinstance(value, str)
+                and (is_sensitive_key(key) or _LAUNCH_CREDENTIAL_PART.search(key))
+            )
+    return frozenset(values)
+
+
 class ProcessOwner:
     """Own a process group and its non-blocking output readers."""
 
@@ -359,6 +410,8 @@ class ProcessOwner:
         self.root = root
         self.process: asyncio.subprocess.Process | None = None
         self.stderr_task: asyncio.Task[bytes] | None = None
+        # Bytes the stderr drain has kept so far, readable after cancellation.
+        self.stderr_retained = bytearray()
         self.pgid: int | None = None
         self._closed = False
 
@@ -385,10 +438,14 @@ class ProcessOwner:
                 start_new_session=True,
                 limit=MAX_FRAME_BYTES + 1,
             )
-        except (OSError, ValueError):
-            raise HarnessStartupError("harness process could not start") from None
+        except (OSError, ValueError) as exc:
+            raise HarnessStartupError(
+                f"harness process could not start: {_exception_kind(exc)}"
+            ) from None
         assert self.process.stderr is not None
-        self.stderr_task = asyncio.create_task(drain_bounded(self.process.stderr))
+        self.stderr_task = asyncio.create_task(
+            drain_bounded(self.process.stderr, retained=self.stderr_retained)
+        )
         if os.name == "posix" and self.process.pid is not None:
             # ``start_new_session=True`` makes the child its own group leader.
             # Keep this identity even if a very short-lived child is already
@@ -572,12 +629,17 @@ def write_config(
         descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(payload)
-    except (OSError, TypeError, ValueError, HarnessStartupError):
+    except (OSError, TypeError, ValueError, HarnessStartupError) as exc:
         try:
             config.unlink(missing_ok=True)
         except OSError:
             pass
-        raise HarnessStartupError("MCP configuration could not be prepared") from None
+        # HarnessStartupError messages are adapter-authored and secret-free.
+        cause = str(exc) if isinstance(exc, HarnessStartupError) else None
+        raise HarnessStartupError(
+            "MCP configuration could not be prepared: "
+            + (cause or _exception_kind(exc))
+        ) from None
     return config
 
 
@@ -628,6 +690,7 @@ __all__ = [
     "_text",
     "discard_bounded",
     "drain_bounded",
+    "launch_secrets",
     "probe_help",
     "read_bounded_line",
     "result_from_output",
