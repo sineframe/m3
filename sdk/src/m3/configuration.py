@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib as _hashlib
 import json as _json
-import math as _math
 import os as _os
 import re as _re
 import sys as _sys
@@ -36,6 +35,9 @@ from pydantic import (
 )
 from pydantic import (
     StrictStr as _StrictStr,
+)
+from pydantic import (
+    ValidationError as _ValidationError,
 )
 from pydantic import (
     field_validator as _field_validator,
@@ -78,56 +80,43 @@ class ConfigOrigin(_FrozenModel):
     origin: str = _Field(min_length=1, max_length=4096)
 
 
-class _Section(_FrozenModel):
-    @_field_validator("*", mode="before")
-    @classmethod
-    def _reject_bool(cls, value: _Any) -> _Any:
-        if isinstance(value, bool):
-            raise ValueError("must be a number")
-        return value
-
-
-class CliSettings(_Section):
+class CliSettings(_FrozenModel):
     """Limits used by the m3 CLI before pytest starts."""
 
     project_python_timeout_seconds: float = _Field(
-        default=15.0, gt=0, le=3600, allow_inf_nan=False
+        default=15.0, gt=0, le=3600, allow_inf_nan=False, strict=True
     )
 
 
-class ResultsSettings(_Section):
+class ResultsSettings(_FrozenModel):
     """Results-store settings applied to stores the pytest plugin opens."""
 
     busy_timeout_seconds: float = _Field(
-        default=5.0, ge=0, le=3600, allow_inf_nan=False
+        default=5.0, ge=0, le=3600, allow_inf_nan=False, strict=True
     )
 
 
-SETTING_NAMES: tuple[str, ...] = (
+_SETTING_NAMES: tuple[str, ...] = (
     "artifact_policy",
     "protocol_revision",
     "cli.project_python_timeout_seconds",
     "results.busy_timeout_seconds",
 )
-_SECTIONS: dict[str, type[_Section]] = {"cli": CliSettings, "results": ResultsSettings}
-_DEFAULTS: dict[str, _Any] = {
-    "artifact_policy": "failed",
-    "protocol_revision": "auto",
-    "cli.project_python_timeout_seconds": 15.0,
-    "results.busy_timeout_seconds": 5.0,
-}
-_NUMBER_RULES: dict[str, tuple[bool, str]] = {  # (zero allowed, reason)
-    "cli.project_python_timeout_seconds": (
-        False,
-        "must be a number greater than 0 and at most 3600",
-    ),
-    "results.busy_timeout_seconds": (True, "must be a number from 0 to 3600"),
+_SECTIONS: dict[str, type[_FrozenModel]] = {
+    "cli": CliSettings,
+    "results": ResultsSettings,
 }
 
 
 def _leaf(config: Config, name: str) -> _Any:
     section, _, key = name.partition(".")
     return getattr(getattr(config, section), key) if key else getattr(config, section)
+
+
+def _default(name: str) -> _Any:
+    section, _, key = name.partition(".")
+    model = _SECTIONS[section] if key else Config
+    return model.model_fields[key or section].default
 
 
 _ENV_FIELDS = {
@@ -141,7 +130,7 @@ _REVISION_PATTERN = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 def _default_origins() -> dict[str, ConfigOrigin]:
     return {
         name: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
-        for name in SETTING_NAMES
+        for name in _SETTING_NAMES
     }
 
 
@@ -163,7 +152,7 @@ class Config(_FrozenModel):
 
     @_model_validator(mode="after")
     def _validate_sources(self) -> Config:
-        if set(self.sources) != set(SETTING_NAMES):
+        if set(self.sources) != set(_SETTING_NAMES):
             raise ValueError(
                 "sources must identify every supported configuration field"
             )
@@ -187,15 +176,14 @@ class Config(_FrozenModel):
                 )
                 if explicit(name)
                 else ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
-                for name in SETTING_NAMES
+                for name in _SETTING_NAMES
             }
             object.__setattr__(self, "sources", _FrozenMapping(inferred))
         else:
-            for name in SETTING_NAMES:
-                if (
-                    self.sources[name].source is ConfigSource.DEFAULT
-                    and _leaf(self, name) != _DEFAULTS[name]
-                ):
+            for name in _SETTING_NAMES:
+                if self.sources[name].source is ConfigSource.DEFAULT and _leaf(
+                    self, name
+                ) != _default(name):
                     raise ValueError(
                         f"{name} has a non-default value but default provenance"
                     )
@@ -208,7 +196,7 @@ class Config(_FrozenModel):
         return self.sources
 
     def source_for(self, field: str) -> ConfigOrigin:
-        if field not in SETTING_NAMES:
+        if field not in _SETTING_NAMES:
             raise ConfigError(
                 field=field,
                 origin="runtime",
@@ -244,18 +232,13 @@ def _validate(field: str, value: _Any, origin: str) -> _Any:
                 "must be auto or a non-empty protocol revision identifier",
             )
         return value
-    if field in _NUMBER_RULES:
-        zero_allowed, reason = _NUMBER_RULES[field]
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not _math.isfinite(value)
-            or value < 0
-            or value > 3600
-            or (value == 0 and not zero_allowed)
-        ):
-            raise _error(field, origin, reason)
-        return float(value)
+    section, _, key = field.partition(".")
+    if key and section in _SECTIONS:
+        try:
+            validated = _SECTIONS[section].model_validate({key: value})
+        except _ValidationError as exc:
+            raise _error(field, origin, exc.errors()[0]["msg"]) from None
+        return getattr(validated, key)
     raise _error(field, origin, "unknown setting", code="unknown_setting")
 
 
@@ -268,11 +251,11 @@ def _flatten(values: _Mapping[str, _Any], origin: str) -> dict[str, _Any]:
                 raise _error(key, origin, "must be a table")
             for leaf, leaf_value in value.items():
                 name = f"{key}.{leaf}"
-                if name in SETTING_NAMES:
+                if name in _SETTING_NAMES:
                     flat[name] = leaf_value
                 else:
                     unknown.append(name)
-        elif key in SETTING_NAMES and "." not in key:
+        elif key in _SETTING_NAMES and "." not in key:
             flat[key] = value
         else:
             unknown.append(key)
@@ -365,13 +348,13 @@ def _build(values: _Mapping[str, _Any], origins: _Mapping[str, ConfigOrigin]) ->
         section: model(
             **{
                 name.partition(".")[2]: values[name]
-                for name in SETTING_NAMES
+                for name in _SETTING_NAMES
                 if name.startswith(f"{section}.")
             }
         )
         for section, model in _SECTIONS.items()
     }
-    top = {name: values[name] for name in SETTING_NAMES if "." not in name}
+    top = {name: values[name] for name in _SETTING_NAMES if "." not in name}
     return Config(**top, **sections, sources=dict(origins))
 
 
@@ -415,10 +398,10 @@ def load_config(
         _file_values(config_file) if config_file is not None else _project_values(cwd)
     )
 
-    values: dict[str, _Any] = dict(_DEFAULTS)
+    values = {name: _default(name) for name in _SETTING_NAMES}
     origins: dict[str, ConfigOrigin] = {
         name: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
-        for name in SETTING_NAMES
+        for name in _SETTING_NAMES
     }
     for name, value in project_values.items():
         values[name] = value
@@ -496,7 +479,7 @@ def _resolve_kit_config(
     active = _active_run_config()
     if active is None or env is not None or cwd is not None:
         return load_config(config, env=env, cwd=cwd)
-    values = {name: _leaf(active, name) for name in SETTING_NAMES}
+    values = {name: _leaf(active, name) for name in _SETTING_NAMES}
     origins = dict(active.sources)
     for name, value in _validate_mapping(config or {}, "explicit").items():
         values[name] = value
@@ -507,7 +490,6 @@ def _resolve_kit_config(
 
 
 __all__ = [
-    "SETTING_NAMES",
     "CliSettings",
     "Config",
     "ConfigError",

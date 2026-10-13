@@ -11,7 +11,6 @@ from typing import Any
 from dotenv import dotenv_values
 
 from m3.configuration import (
-    SETTING_NAMES,
     ConfigError,
     configuration_digest,
     load_config,
@@ -89,7 +88,7 @@ def _parse_requirement(value: str) -> tuple[str, str | None]:
         return "config", None
     if value.startswith("config:"):
         field = value.partition(":")[2]
-        if field in SETTING_NAMES:
+        if field in {"artifact_policy", "protocol_revision"}:
             return "config", field
         raise DoctorCLIError("invalid requirement")
     try:

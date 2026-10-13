@@ -225,6 +225,10 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _absolute_path(value: str) -> Path:
+    return Path(value).expanduser().absolute()
+
+
 def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> None:
     test.add_argument(
         "--python", type=Path, metavar="PATH", help="Python used to run pytest"
@@ -281,7 +285,7 @@ def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> N
     test.add_argument(
         "--m3-config",
         dest="m3_config",
-        type=Path,
+        type=_absolute_path,
         default=None,
         metavar="PATH",
         help="TOML file with [tool.m3] settings; replaces pyproject.toml discovery",

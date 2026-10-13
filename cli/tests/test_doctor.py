@@ -436,13 +436,3 @@ def test_doctor_invalid_config_fails_without_config_requirement(
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == "invalid_configuration"
-
-
-def test_doctor_requires_dotted_config_leaf(capsys) -> None:
-    assert main(
-        ["doctor", "--require", "config:results.busy_timeout_seconds", "--json"]
-    ) in {0, 1}
-    report = json.loads(capsys.readouterr().out)
-    assert report["requirements"] == ["config:results.busy_timeout_seconds"]
-    assert main(["doctor", "--require", "config:results.nope"]) == 2
-    assert "invalid requirement" in capsys.readouterr().err

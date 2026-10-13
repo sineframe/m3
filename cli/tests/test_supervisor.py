@@ -558,7 +558,11 @@ def test_ui_is_not_started_for_interrupted_or_collection_status(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     monkeypatch.setattr(
         supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns()
@@ -583,7 +587,11 @@ def test_ui_launches_for_ordinary_pytest_failure_and_keeps_status(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     monkeypatch.setattr(
         supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns()
@@ -1190,7 +1198,11 @@ def test_plain_test_child_omits_access_token(monkeypatch, tmp_path, with_env_fil
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     captured = {}
 
@@ -1951,7 +1963,11 @@ def test_ui_prints_timing_summary_before_serving(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_a, **_k: 0)
 
@@ -2082,7 +2098,11 @@ def test_run_test_skips_pytest_header_after_printing_banner(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(

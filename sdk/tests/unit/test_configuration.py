@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from m3.configuration import (
-    SETTING_NAMES,
+    _SETTING_NAMES,
     Config,
     ConfigError,
     ConfigSource,
@@ -227,8 +227,6 @@ def test_configuration_json_round_trip_and_aliases() -> None:
 
 
 _NO_PROJECT = Path("/tmp/m3-no-project")
-_BUSY_REASON = "must be a number from 0 to 3600"
-_CLI_REASON = "must be a number greater than 0 and at most 3600"
 
 
 def test_nested_project_sections_and_origins(tmp_path: Path) -> None:
@@ -300,12 +298,48 @@ def test_nested_unknown_and_shape_errors(
 @pytest.mark.parametrize(
     ("section", "name", "value", "reason", "secret"),
     [
-        ("results", "busy_timeout_seconds", -1, _BUSY_REASON, "-1"),
-        ("results", "busy_timeout_seconds", 3601, _BUSY_REASON, "3601"),
-        ("results", "busy_timeout_seconds", True, _BUSY_REASON, "True"),
-        ("results", "busy_timeout_seconds", "5", _BUSY_REASON, "'5'"),
-        ("results", "busy_timeout_seconds", float("nan"), _BUSY_REASON, "nan"),
-        ("cli", "project_python_timeout_seconds", 0, _CLI_REASON, "= 0"),
+        (
+            "results",
+            "busy_timeout_seconds",
+            -1,
+            "Input should be greater than or equal to 0",
+            "-1",
+        ),
+        (
+            "results",
+            "busy_timeout_seconds",
+            3601,
+            "Input should be less than or equal to 3600",
+            "3601",
+        ),
+        (
+            "results",
+            "busy_timeout_seconds",
+            True,
+            "Input should be a valid number",
+            "True",
+        ),
+        (
+            "results",
+            "busy_timeout_seconds",
+            "5",
+            "Input should be a valid number",
+            "'5'",
+        ),
+        (
+            "results",
+            "busy_timeout_seconds",
+            float("nan"),
+            "Input should be a finite number",
+            "nan",
+        ),
+        (
+            "cli",
+            "project_python_timeout_seconds",
+            0,
+            "Input should be greater than 0",
+            "= 0",
+        ),
     ],
 )
 def test_nested_value_errors_are_value_free(
@@ -325,7 +359,7 @@ def test_nested_toml_nan_is_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError) as caught:
         load_config(env={}, cwd=tmp_path)
-    assert caught.value.reason == _BUSY_REASON
+    assert caught.value.reason == "Input should be a finite number"
 
 
 def test_config_file_replaces_discovery(tmp_path: Path) -> None:
@@ -422,7 +456,7 @@ def test_direct_construction_nested_provenance() -> None:
     leaf = config.source_for("results.busy_timeout_seconds")
     assert leaf.source is ConfigSource.EXPLICIT
     assert leaf.origin == "argument:results.busy_timeout_seconds"
-    for name in SETTING_NAMES:
+    for name in _SETTING_NAMES:
         if name != "results.busy_timeout_seconds":
             assert config.source_for(name).source is ConfigSource.DEFAULT
     with pytest.raises(ValidationError):
