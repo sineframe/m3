@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
 from .._types.specs import AgentSpec
 from ..agent_session import ControllerHarnessAdapter, HarnessAdapter
+from ..configuration import Config
 from ..elicitation import PendingElicitationRound
 from ..errors import MCPError
 from ..interaction_handlers import Interactions
@@ -256,6 +257,8 @@ class HarnessLaunch:
     # Runtime-owned, read-only capture context.  The adapter may query a
     # structured snapshot but never owns transport framing or proxy cleanup.
     capture: Any | None = None
+    # Resolved run/kit settings; adapters read their startup limits from it.
+    config: Config = field(default_factory=Config)
 
     def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""
@@ -269,7 +272,36 @@ class HarnessLaunch:
             self.workspace_root,
             evidence,
             self.capture,
+            self.config,
         )
+
+
+def harness_timeout(launch: HarnessLaunch, settings: Any, phase: str) -> float:
+    """Return one startup limit: the typed harness value, else the run setting."""
+
+    override = getattr(launch.spec.harness, "timeouts", None)
+    value = getattr(override, phase, None) if override is not None else None
+    return float(value if value is not None else getattr(settings, phase))
+
+
+def mcp_startup_seconds(
+    launch: HarnessLaunch, server: HarnessServerConfig
+) -> float | None:
+    """Return one server's MCP startup budget; ``None`` keeps the native default."""
+
+    if server.mcp_startup_seconds is not None:
+        return server.mcp_startup_seconds
+    return launch.config.mcp_timeouts.startup_seconds
+
+
+def startup_timeout(
+    harness: str, phase: str, setting: str, seconds: float
+) -> HarnessStartupError:
+    """Name the limit that ended startup and the setting that controls it."""
+
+    return HarnessStartupError(
+        f"{harness} {phase} did not finish within {seconds:g}s ({setting})"
+    )
 
 
 class HarnessSession(Protocol):

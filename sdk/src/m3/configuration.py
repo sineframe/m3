@@ -96,27 +96,92 @@ class ResultsSettings(_FrozenModel):
     )
 
 
-_SETTING_NAMES: tuple[str, ...] = (
-    "artifact_policy",
-    "protocol_revision",
-    "cli.project_python_timeout_seconds",
-    "results.busy_timeout_seconds",
-)
+def _seconds(default: float) -> _Any:
+    return _Field(default=default, gt=0, le=3600, allow_inf_nan=False, strict=True)
+
+
+class CodexTimeoutSettings(_FrozenModel):
+    """Limits m3 applies while it starts a Codex App Server session."""
+
+    initialize_seconds: float = _seconds(30.0)
+    # thread/start returns after Codex has started the thread's MCP servers, so
+    # this must leave room for their own startup budget.
+    startup_seconds: float = _seconds(120.0)
+
+
+class OpenCodeTimeoutSettings(_FrozenModel):
+    """Limits m3 applies while it starts an OpenCode server session."""
+
+    startup_seconds: float = _seconds(60.0)
+    session_creation_seconds: float = _seconds(60.0)
+
+
+class CodexSettings(_FrozenModel):
+    timeouts: CodexTimeoutSettings = _Field(default_factory=CodexTimeoutSettings)
+
+
+class OpenCodeSettings(_FrozenModel):
+    timeouts: OpenCodeTimeoutSettings = _Field(default_factory=OpenCodeTimeoutSettings)
+
+
+class HarnessSettings(_FrozenModel):
+    """Per-harness settings, keyed by harness name."""
+
+    codex: CodexSettings = _Field(default_factory=CodexSettings)
+    opencode: OpenCodeSettings = _Field(default_factory=OpenCodeSettings)
+
+
+class McpTimeoutSettings(_FrozenModel):
+    """Budgets passed to each harness's own MCP client; unset keeps its default."""
+
+    startup_seconds: float | None = _Field(
+        default=None, gt=0, le=3600, allow_inf_nan=False, strict=True
+    )
+
+
+# Dotted path of each settings table below the root and the model of its leaves.
 _SECTIONS: dict[str, type[_FrozenModel]] = {
     "cli": CliSettings,
     "results": ResultsSettings,
+    "harnesses.codex.timeouts": CodexTimeoutSettings,
+    "harnesses.opencode.timeouts": OpenCodeTimeoutSettings,
+    "mcp_timeouts": McpTimeoutSettings,
 }
+_SETTING_NAMES: tuple[str, ...] = (
+    "artifact_policy",
+    "protocol_revision",
+    *(
+        f"{section}.{leaf}"
+        for section, model in _SECTIONS.items()
+        for leaf in model.model_fields
+    ),
+)
+# Every proper prefix of a section path names a table that only nests others.
+_TABLES = frozenset(
+    ".".join(section.split(".")[:end])
+    for section in _SECTIONS
+    for end in range(1, section.count(".") + 1)
+)
+
+
+def _split(name: str) -> tuple[str, str]:
+    """Return ``(section, leaf)``; the section is empty for root settings."""
+
+    section, _, leaf = name.rpartition(".")
+    return section, leaf
 
 
 def _leaf(config: Config, name: str) -> _Any:
-    section, _, key = name.partition(".")
-    return getattr(getattr(config, section), key) if key else getattr(config, section)
+    value: _Any = config
+    for part in name.split("."):
+        value = getattr(value, part)
+    return value
 
 
 def _default(name: str) -> _Any:
-    section, _, key = name.partition(".")
-    model = _SECTIONS[section] if key else Config
-    return model.model_fields[key or section].default
+    section, leaf = _split(name)
+    model = _SECTIONS[section] if section else Config
+    return model.model_fields[leaf].default
 
 
 _ENV_FIELDS = {
@@ -141,6 +206,8 @@ class Config(_FrozenModel):
     protocol_revision: _StrictStr = "auto"
     cli: CliSettings = _Field(default_factory=CliSettings)
     results: ResultsSettings = _Field(default_factory=ResultsSettings)
+    harnesses: HarnessSettings = _Field(default_factory=HarnessSettings)
+    mcp_timeouts: McpTimeoutSettings = _Field(default_factory=McpTimeoutSettings)
     sources: _Mapping[str, ConfigOrigin] = _Field(default_factory=_default_origins)
 
     @_field_validator("protocol_revision")
@@ -162,13 +229,12 @@ class Config(_FrozenModel):
             # frozen here because this validator runs after the base model's
             # recursive-freeze hook.
             def explicit(name: str) -> bool:
-                section, _, key = name.partition(".")
-                if not key:
-                    return name in self.__pydantic_fields_set__
-                return (
-                    section in self.__pydantic_fields_set__
-                    and key in getattr(self, section).model_fields_set
-                )
+                node: _Any = self
+                for part in name.split("."):
+                    if part not in node.model_fields_set:
+                        return False
+                    node = getattr(node, part)
+                return True
 
             inferred = {
                 name: ConfigOrigin(
@@ -232,8 +298,8 @@ def _validate(field: str, value: _Any, origin: str) -> _Any:
                 "must be auto or a non-empty protocol revision identifier",
             )
         return value
-    section, _, key = field.partition(".")
-    if key and section in _SECTIONS:
+    section, key = _split(field)
+    if section in _SECTIONS:
         try:
             validated = _SECTIONS[section].model_validate({key: value})
         except _ValidationError as exc:
@@ -245,20 +311,23 @@ def _validate(field: str, value: _Any, origin: str) -> _Any:
 def _flatten(values: _Mapping[str, _Any], origin: str) -> dict[str, _Any]:
     flat: dict[str, _Any] = {}
     unknown: list[str] = []
-    for key, value in values.items():
-        if key in _SECTIONS:
-            if not isinstance(value, _Mapping):
-                raise _error(key, origin, "must be a table")
-            for leaf, leaf_value in value.items():
-                name = f"{key}.{leaf}"
-                if name in _SETTING_NAMES:
-                    flat[name] = leaf_value
-                else:
-                    unknown.append(name)
-        elif key in _SETTING_NAMES and "." not in key:
-            flat[key] = value
-        else:
-            unknown.append(key)
+
+    def walk(table: _Mapping[str, _Any], prefix: str) -> None:
+        for key, value in table.items():
+            name = f"{prefix}{key}"
+            # A literal dotted key would otherwise alias a nested setting.
+            if not isinstance(key, str) or "." in key:
+                unknown.append(name)
+            elif name in _SECTIONS or name in _TABLES:
+                if not isinstance(value, _Mapping):
+                    raise _error(name, origin, "must be a table")
+                walk(value, f"{name}.")
+            elif name in _SETTING_NAMES:
+                flat[name] = value
+            else:
+                unknown.append(name)
+
+    walk(values, "")
     if unknown:
         raise _error(
             ", ".join(sorted(unknown)),
@@ -344,18 +413,14 @@ def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
 
 
 def _build(values: _Mapping[str, _Any], origins: _Mapping[str, ConfigOrigin]) -> Config:
-    sections: dict[str, _Any] = {
-        section: model(
-            **{
-                name.partition(".")[2]: values[name]
-                for name in _SETTING_NAMES
-                if name.startswith(f"{section}.")
-            }
-        )
-        for section, model in _SECTIONS.items()
-    }
-    top = {name: values[name] for name in _SETTING_NAMES if "." not in name}
-    return Config(**top, **sections, sources=dict(origins))
+    tree: dict[str, _Any] = {}
+    for name in _SETTING_NAMES:
+        *tables, leaf = name.split(".")
+        node = tree
+        for table in tables:
+            node = node.setdefault(table, {})
+        node[leaf] = values[name]
+    return Config.model_validate({**tree, "sources": dict(origins)})
 
 
 def load_config(
@@ -491,10 +556,16 @@ def _resolve_kit_config(
 
 __all__ = [
     "CliSettings",
+    "CodexSettings",
+    "CodexTimeoutSettings",
     "Config",
     "ConfigError",
     "ConfigOrigin",
     "ConfigSource",
+    "HarnessSettings",
+    "McpTimeoutSettings",
+    "OpenCodeSettings",
+    "OpenCodeTimeoutSettings",
     "ResultsSettings",
     "configuration_digest",
     "load_config",

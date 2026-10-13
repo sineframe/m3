@@ -1632,6 +1632,7 @@ class AsyncMCPTestKit:
             runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,
             managed_input_runtime=_managed_input_runtime,
+            config=self.config,
         )
         if self._record_checks:
             _bind_execution(

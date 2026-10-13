@@ -72,9 +72,59 @@ class UserMessage(FrozenModel):
         return value
 
 
+def _optional_seconds() -> _Any:
+    return _Field(default=None, gt=0, le=3600, allow_inf_nan=False)
+
+
+class _Timeouts(FrozenModel):
+    @_model_serializer(mode="wrap")
+    def _omit_unset(self, handler: _Any) -> dict[str, _Any]:
+        return {key: value for key, value in handler(self).items() if value is not None}
+
+
+class McpTimeouts(_Timeouts):
+    """Budgets passed to the harness's own MCP client for one server.
+
+    Unset fields fall back to ``[tool.m3.mcp_timeouts]``, then to the
+    harness's native default.
+    """
+
+    startup_seconds: float | None = _optional_seconds()
+
+
+class HarnessTimeouts(_Timeouts):
+    """Limits m3 applies while it starts a native harness session.
+
+    Unset fields fall back to ``[tool.m3.harnesses.<name>.timeouts]``.  Codex
+    has ``initialize_seconds`` and ``startup_seconds``; OpenCode has
+    ``startup_seconds`` and ``session_creation_seconds``.
+    """
+
+    initialize_seconds: float | None = _optional_seconds()
+    startup_seconds: float | None = _optional_seconds()
+    session_creation_seconds: float | None = _optional_seconds()
+
+
+def _supported_timeouts(
+    harness: str, timeouts: HarnessTimeouts | None, phases: frozenset[str]
+) -> None:
+    if timeouts is None:
+        return
+    unsupported = sorted(set(timeouts.model_fields_set) - phases)
+    if unsupported:
+        raise ValueError(f"{harness} has no {unsupported[0]} startup phase")
+
+
 class ServerDefinition(FrozenModel):
     name: str = _Field(min_length=1, max_length=256)
     trust: TrustLevel = TrustLevel.UNTRUSTED
+
+    @_model_serializer(mode="wrap")
+    def _omit_unset_timeouts(self, handler: _Any) -> dict[str, _Any]:
+        value = dict(handler(self))
+        if value.get("timeouts", ...) is None:
+            value.pop("timeouts")
+        return value
 
 
 class StdioServer(ServerDefinition):
@@ -83,6 +133,7 @@ class StdioServer(ServerDefinition):
     args: tuple[str, ...] = ()
     environment: _Mapping[str, SecretReference | str] = _Field(default_factory=dict)
     cwd: str | None = None
+    timeouts: McpTimeouts | None = None
 
     @_field_validator("cwd")
     @classmethod
@@ -99,6 +150,7 @@ class HTTPServer(ServerDefinition):
     # Set only when localhost/literal-loopback shorthand inferred trusted
     # private trust. This constrains every DNS resolution to loopback addresses.
     loopback_only: bool = False
+    timeouts: McpTimeouts | None = None
 
 
 class InProcessServer(ServerDefinition):
@@ -189,6 +241,8 @@ class HarnessValue(FrozenModel):
             value.pop("runtime", None)
         if value.get("version") is None:
             value.pop("version", None)
+        if value.get("timeouts", ...) is None:
+            value.pop("timeouts")
         return value
 
     def with_model(self, model: str) -> HarnessValue:
@@ -231,6 +285,7 @@ class OpenCode(HarnessValue):
     provider: str | None = None
     dialect: _Literal["auto", "legacy", "v2"] = "auto"
     credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
+    timeouts: HarnessTimeouts | None = None
 
     @_field_validator("credential_references")
     @classmethod
@@ -252,6 +307,16 @@ class OpenCode(HarnessValue):
             )
         return values
 
+    @_field_validator("timeouts")
+    @classmethod
+    def _supported_phases(cls, value: HarnessTimeouts | None) -> HarnessTimeouts | None:
+        _supported_timeouts(
+            "OpenCode",
+            value,
+            frozenset({"startup_seconds", "session_creation_seconds"}),
+        )
+        return value
+
 
 class Codex(HarnessValue):
     """Native OpenAI Codex App Server harness profile."""
@@ -259,6 +324,7 @@ class Codex(HarnessValue):
     kind: _Literal["codex"] = "codex"
     name: str = "codex"
     credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
+    timeouts: HarnessTimeouts | None = None
 
     @_field_validator("credential_references")
     @classmethod
@@ -279,6 +345,14 @@ class Codex(HarnessValue):
                 reference.name if reference.source == "environment" else "",
             )
         return values
+
+    @_field_validator("timeouts")
+    @classmethod
+    def _supported_phases(cls, value: HarnessTimeouts | None) -> HarnessTimeouts | None:
+        _supported_timeouts(
+            "Codex", value, frozenset({"initialize_seconds", "startup_seconds"})
+        )
+        return value
 
 
 class Pi(HarnessValue):
@@ -640,12 +714,14 @@ __all__ = [
     "HTTPServer",
     "HarnessProfileRef",
     "HarnessSpec",
+    "HarnessTimeouts",
     "HarnessValue",
     "InProcessServer",
     "ListPrompts",
     "ListResources",
     "ListTemplates",
     "ListTools",
+    "McpTimeouts",
     "NativeToolPolicy",
     "OpenCode",
     "PermissionPolicy",

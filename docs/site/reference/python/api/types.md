@@ -111,6 +111,7 @@ m3.types.HTTPServer(
     url: str,
     headers: collections.abc.Mapping[str, m3.types.SecretReference | str] = ...,
     loopback_only: bool = False,
+    timeouts: m3.types.McpTimeouts | None = None,
 ) -> None
 ```
 
@@ -124,6 +125,7 @@ Model fields:
 | `url` | `str` | Yes | — | `min_length=1` | — |
 | `headers` | `collections.abc.Mapping[str, m3.types.SecretReference \| str]` | No | `factory builtins.dict()` | — | — |
 | `loopback_only` | `bool` | No | `False` | — | — |
+| `timeouts` | `m3.types.McpTimeouts \| None` | No | `None` | — | — |
 
 ## `StdioServer`
 
@@ -137,6 +139,7 @@ m3.types.StdioServer(
     args: tuple[str, ...] = (),
     environment: collections.abc.Mapping[str, m3.types.SecretReference | str] = ...,
     cwd: str | None = None,
+    timeouts: m3.types.McpTimeouts | None = None,
 ) -> None
 ```
 
@@ -151,6 +154,7 @@ Model fields:
 | `args` | `tuple[str, ...]` | No | `()` | — | — |
 | `environment` | `collections.abc.Mapping[str, m3.types.SecretReference \| str]` | No | `factory builtins.dict()` | — | — |
 | `cwd` | `str \| None` | No | `None` | — | — |
+| `timeouts` | `m3.types.McpTimeouts \| None` | No | `None` | — | — |
 
 ## `InProcessServer`
 
@@ -178,6 +182,44 @@ Model fields:
 | `factory` | `Any` | Yes | — | — | — |
 | `descriptor` | `collections.abc.Mapping[str, Any]` | No | `factory builtins.dict()` | — | — |
 | `origin` | `str` | No | `'python_registration'` | `min_length=1, max_length=256` | — |
+
+## `HarnessTimeouts`
+
+```python
+m3.types.HarnessTimeouts(
+    *,
+    initialize_seconds: float | None = None,
+    startup_seconds: float | None = None,
+    session_creation_seconds: float | None = None,
+) -> None
+```
+
+Limits m3 applies while it starts a native harness session.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `initialize_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
+| `startup_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
+| `session_creation_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
+
+## `McpTimeouts`
+
+```python
+m3.types.McpTimeouts(
+    *,
+    startup_seconds: float | None = None,
+) -> None
+```
+
+Budgets passed to the harness's own MCP client for one server.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `startup_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
 
 ## `SecretReference`
 
