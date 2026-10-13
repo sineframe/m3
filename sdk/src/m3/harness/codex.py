@@ -18,7 +18,11 @@ from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..policy import ToolDescriptor
-from ..trace.redaction import is_sensitive_key
+from ..trace.redaction import (
+    RedactionConfig,
+    is_sensitive_key,
+    redact_native_text,
+)
 from ..types import (
     Codex,
     ErrorCode,
@@ -38,7 +42,7 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnRequest,
 )
-from .native import probe_help
+from .native import launch_secrets, probe_help
 from .observations import (
     HarnessObservation,
     InteractionObservedObservation,
@@ -54,6 +58,10 @@ from .observations import (
 _THREAD_START_TIMEOUT_SECONDS = 30.0
 # Codex wording for a required MCP server that failed during thread/start.
 _MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
+# Bound for Codex's redacted error text kept in a startup error, and for how
+# much redacted text is examined to build it (Codex frames reach 1 MiB).
+_REASON_LIMIT = 1024
+_REASON_SCAN_LIMIT = 4 * _REASON_LIMIT
 
 # Credential targets that hold an OpenAI API key, in the order Codex itself
 # prefers them. The App Server reads neither from its environment, so M3 signs
@@ -759,7 +767,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         await self._write_frame(
             process, {"jsonrpc": "2.0", "method": "initialized", "params": {}}
         )
-        await self._authenticate(process, api_key)
+        await self._authenticate(process, launch, api_key)
         self._request_id += 1
         workspace = launch.workspace_root or str(process.root or Path.cwd())
         sandbox = (
@@ -842,7 +850,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 return frame
             self._deferred_frames.append(frame)
 
-    async def _authenticate(self, process: JsonRpcProcess, api_key: str | None) -> None:
+    async def _authenticate(
+        self, process: JsonRpcProcess, launch: HarnessLaunch, api_key: str | None
+    ) -> None:
         """Sign Codex in with a mapped API key and require a usable account.
 
         ``codex app-server`` reads neither ``OPENAI_API_KEY`` nor
@@ -857,12 +867,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             )
             error = response.get("error")
             if error is not None or not isinstance(response.get("result"), Mapping):
-                # Codex's free text is never passed on (see _thread_start_failure).
+                # Codex can echo the key, so its text follows only once every
+                # credential M3 knows of (the key included) is redacted.
                 code = error.get("code") if isinstance(error, Mapping) else None
                 summary = "Codex API key login failed"
                 if isinstance(code, int) and not isinstance(code, bool):
                     summary += f" (JSON-RPC {code})"
-                raise HarnessStartupError(summary)
+                message = error.get("message") if isinstance(error, Mapping) else None
+                reason = (
+                    self._redacted_reason(message, launch, (api_key, api_key.strip()))
+                    if isinstance(message, str)
+                    else None
+                )
+                raise HarnessStartupError(f"{summary}: {reason}" if reason else summary)
         response = await self._startup_request(
             process, "account/read", {"refreshToken": False}
         )
@@ -879,16 +896,16 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 "credential_env or sign in to Codex"
             )
 
-    @staticmethod
     def _thread_start_failure(
-        error: Mapping[str, Any], launch: HarnessLaunch
+        self, error: Mapping[str, Any], launch: HarnessLaunch
     ) -> HarnessStartupError:
-        """Describe a thread/start error without Codex's free text.
+        """Describe a thread/start error, keeping only a redacted MCP reason.
 
         Codex can echo any credential it was started with (environment, native
-        login, MCP environment or headers), so its message is never passed on.
-        The error is built from M3-known values only: the JSON-RPC code and the
-        configured MCP servers the message names as failing to start.
+        login, MCP environment, headers or endpoint URL). The summary holds the
+        JSON-RPC code. When Codex names configured MCP servers that failed to
+        start, its reason follows with every credential M3 knows of redacted.
+        Any other message is dropped.
         """
 
         code = error.get("code")
@@ -896,21 +913,49 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         if isinstance(code, int) and not isinstance(code, bool):
             summary += f" (JSON-RPC {code})"
         message = error.get("message")
-        if isinstance(message, str):
-            _, marker, rest = message.partition(_MCP_STARTUP_FAILURE)
-            failed = sorted(
-                {
-                    config.key
-                    for config in launch.configurations
-                    if marker
-                    and re.search(rf"(?<![\w-]){re.escape(config.key)}:", rest)
-                }
-            )
-            if failed:
-                summary += (
-                    f": required MCP server failed to initialize: {', '.join(failed)}"
-                )
-        return HarnessStartupError(summary)
+        if not isinstance(message, str):
+            return HarnessStartupError(summary)
+        _, marker, rest = message.partition(_MCP_STARTUP_FAILURE)
+        failed = sorted(
+            {
+                config.key
+                for config in launch.configurations
+                if marker and re.search(rf"(?<![\w-]){re.escape(config.key)}:", rest)
+            }
+        )
+        if not failed:
+            return HarnessStartupError(summary)
+        reason = self._redacted_reason(rest, launch) or ", ".join(failed)
+        return HarnessStartupError(
+            f"{summary}: required MCP server failed to initialize: {reason}"
+        )
+
+    def _redacted_reason(
+        self, text: str, launch: HarnessLaunch, known: Sequence[str] = ()
+    ) -> str | None:
+        """Return Codex's error text with credentials redacted.
+
+        Redacted: the adapter's runtime secrets, the launch's MCP credentials,
+        ``known`` values, embedded URLs beyond their origin, and
+        credential-shaped text. Redaction runs on the raw text, because
+        normalizing whitespace first would stop a secret containing
+        whitespace from matching, and before any cut, so a cut cannot split
+        a secret.
+        """
+
+        config = RedactionConfig.from_environment(
+            secrets=(*self._runtime_secrets, *launch_secrets(launch), *known)
+        )
+        try:
+            redacted = redact_native_text(text, config)[:_REASON_SCAN_LIMIT]
+        except Exception:
+            return None
+        reason = _collapse_repeated_chain(" ".join(redacted.split()))
+        if not reason:
+            return None
+        if len(reason) > _REASON_LIMIT:
+            reason = reason[: _REASON_LIMIT - 1] + "…"
+        return reason
 
     def initial_observations(
         self, sequence: int, wall: datetime, started: float
@@ -1769,11 +1814,30 @@ _CODEX_TURN_FAILURES = {
 }
 
 
+def _collapse_repeated_chain(text: str) -> str:
+    """Drop a repeated tail from a ``: ``-joined error chain.
+
+    Codex prints an error chain whose outer context can quote its source, as
+    in ``handshake failed: bad id: bad id``; the repeat carries nothing.
+    """
+
+    parts = text.split(": ")
+    collapsed = True
+    while collapsed:
+        collapsed = False
+        for size in range(1, len(parts) // 2 + 1):
+            if parts[-size:] == parts[-2 * size : -size]:
+                del parts[-size:]
+                collapsed = True
+                break
+    return ": ".join(parts)
+
+
 def _turn_failure(error: Any) -> ErrorInfo:
     """Describe a failed Codex turn from its structured error fields only.
 
     Codex's ``message`` can quote request details and any credential it was
-    started with, so it is never passed on (see ``_thread_start_failure``).
+    started with, so it is never passed on.
     The reason is a known ``codexErrorInfo`` variant and the HTTP status a
     bounded integer.
     """

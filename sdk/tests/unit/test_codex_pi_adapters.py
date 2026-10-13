@@ -994,42 +994,41 @@ def _mcp_configuration(key: str, **extra: object) -> HarnessServerConfig:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "configuration",
-    (
-        _mcp_configuration("filesystem"),
-        # A literal credential in the MCP server's environment.
-        _mcp_configuration("filesystem", environment={"API_TOKEN": "CANARY"}),
-        # A literal credential in an MCP header.
-        _mcp_configuration("filesystem", headers={"Authorization": "CANARY"}),
-    ),
-)
-async def test_codex_thread_start_error_never_includes_provider_text(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: object
+async def test_codex_thread_start_error_keeps_mcp_reason_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Any credential Codex was started with (adapter environment, native
-    # login, MCP configuration) can come back in its error text, so the error
-    # is built only from M3-known values: the code and configured server names.
+    # Codex can echo any credential it was started with (adapter environment,
+    # native login, literal MCP environment or headers) in its error text.
     source = tmp_path / "source-home"
     source.mkdir()
     (source / "auth.json").write_text(
-        json.dumps({"tokens": {"access_token": "CANARY"}}), encoding="utf-8"
+        json.dumps({"tokens": {"access_token": "LOGIN-CANARY"}}), encoding="utf-8"
     )
     monkeypatch.setenv("CODEX_HOME", str(source))
     adapter = CodexHarnessAdapter(
-        executable=str(CODEX_FIXTURE), environment={"OPENAI_API_KEY": "CANARY"}
+        executable=str(CODEX_FIXTURE), environment={"OPENAI_API_KEY": "ENV-CANARY"}
     )
     launch = _launch(
         Codex(model="fixture", executable=str(CODEX_FIXTURE)),
-        configurations=(configuration,),  # type: ignore[arg-type]
+        configurations=(
+            _mcp_configuration(
+                "filesystem",
+                environment={"API_TOKEN": "MCP-ENV-CANARY", "RETRIES": "1"},
+                headers={"Authorization": "MCP-HEADER-CANARY"},
+            ),
+        ),
     )
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    adapter.environment_for_launch(launch, runtime_root)
     process = _ThreadStartErrorProcess(
         {
             "code": -32603,
             "message": (
                 "error creating thread: Fatal error: Failed to initialize session: "
                 "required MCP servers failed to initialize: filesystem: handshaking "
-                "with MCP server failed: auth failed for CANARY secret  with\tspaces"
+                "with MCP server failed: auth failed for ENV-CANARY LOGIN-CANARY "
+                "MCP-ENV-CANARY  MCP-HEADER-CANARY\tafter 1 attempt"
             ),
         }
     )
@@ -1037,7 +1036,95 @@ async def test_codex_thread_start_error_never_includes_provider_text(
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
     assert str(exc_info.value) == (
         "Codex thread/start failed (JSON-RPC -32603): "
-        "required MCP server failed to initialize: filesystem"
+        "required MCP server failed to initialize: filesystem: handshaking with "
+        "MCP server failed: auth failed for [REDACTED] [REDACTED] [REDACTED] "
+        "[REDACTED] after 1 attempt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_codex_thread_start_reason_redacts_urls_and_configured_credentials() -> (
+    None
+):
+    # The capture proxy copies the upstream path and query into the URL Codex
+    # receives (a Zapier-style key is a path segment); Codex quotes that URL
+    # mid-sentence when the transport fails.
+    pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
+    endpoint = "http://127.0.0.1:5555/api/mcp/s/ZapPathCanary/mcp?k=QUERY-CANARY"
+    remote = HarnessServerConfig(
+        key="remote",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="remote-connection",
+        endpoint=endpoint,
+    )
+    environment = {
+        "PRIVATE_KEY": pem,
+        "API_TOKEN": "ghp_literal_canary",
+        "MODE": "stream",
+    }
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(remote, _mcp_configuration("fs", environment=environment)),
+    )
+    process = _ThreadStartErrorProcess(
+        {
+            "code": -32603,
+            "message": (
+                "required MCP servers failed to initialize: remote: error sending "
+                f"request for url ({endpoint}), expected id 1; fs: bad key {pem}, "
+                "pat ghp_literal_canary, token=4821, stream closed"
+            ),
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    message = str(exc_info.value)
+    for canary in (
+        "ZapPathCanary",
+        "QUERY-CANARY",
+        "MIIE-CANARY",
+        "4821",
+        "ghp_literal_canary",
+    ):
+        assert canary not in message
+    # MODE=stream leaves the reason readable; credential-shaped text
+    # (token=...) is scrubbed.
+    assert message.endswith(
+        "remote: error sending request for url (http://127.0.0.1:5555/…), "
+        "expected id 1; fs: bad key [REDACTED], pat [REDACTED], "
+        "token=[REDACTED], stream closed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_codex_thread_start_error_drops_repeated_error_chain() -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(_mcp_configuration("slow"),),
+    )
+    process = _ThreadStartErrorProcess(
+        {
+            "code": -32603,
+            "message": (
+                "error creating thread: Fatal error: Failed to initialize session: "
+                "required MCP servers failed to initialize: slow: handshaking with "
+                "MCP server failed: uncorrelated error response: expected id 1, "
+                "error response carried 0: uncorrelated error response: expected "
+                "id 1, error response carried 0"
+            ),
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == (
+        "Codex thread/start failed (JSON-RPC -32603): "
+        "required MCP server failed to initialize: slow: handshaking with MCP "
+        "server failed: uncorrelated error response: expected id 1, error "
+        "response carried 0"
     )
 
 
@@ -1240,26 +1327,69 @@ async def test_codex_without_mapped_key_does_not_sign_in(
 
 
 @pytest.mark.asyncio
-async def test_codex_rejected_api_key_login_fails_startup_without_codex_text(
+async def test_codex_rejected_api_key_login_keeps_reason_without_credentials(
     tmp_path: Path,
 ) -> None:
+    # Codex can echo the key (via the adapter environment or the request) and
+    # any literal MCP credential in its login error.
     adapter = CodexHarnessAdapter(
         executable=str(CODEX_FIXTURE),
-        environment={"SOURCE_OPENAI_API_KEY": "CANARY"},
+        environment={"SOURCE_OPENAI_API_KEY": "KEY-CANARY"},
     )
-    launch = _api_key_launch("OPENAI_API_KEY")
+    launch = _launch(
+        Codex(
+            model="fixture",
+            credential_references={
+                "OPENAI_API_KEY": SecretReference(
+                    source="environment", name="SOURCE_OPENAI_API_KEY"
+                )
+            },
+        ),
+        configurations=(
+            _mcp_configuration(
+                "filesystem", headers={"Authorization": "MCP-HEADER-CANARY"}
+            ),
+        ),
+    )
     adapter.environment_for_launch(launch, tmp_path)
     process = _AccountProcess(
         {
             "account/login/start": {
-                "error": {"code": -32600, "message": "bad key CANARY"}
+                "error": {
+                    "code": -32600,
+                    "message": "invalid key KEY-CANARY\nrejected MCP-HEADER-CANARY: "
+                    "account is suspended",
+                }
             }
         }
     )
     with pytest.raises(HarnessStartupError) as exc_info:
         await adapter.initialize(process, launch)  # type: ignore[arg-type]
-    assert str(exc_info.value) == "Codex API key login failed (JSON-RPC -32600)"
+    assert str(exc_info.value) == (
+        "Codex API key login failed (JSON-RPC -32600): "
+        "invalid key [REDACTED] rejected [REDACTED]: account is suspended"
+    )
     assert "thread/start" not in process.methods
+
+
+@pytest.mark.asyncio
+async def test_codex_login_reason_redacts_the_api_key_without_launch_secrets() -> None:
+    # The key is redacted even when environment_for_launch never registered it.
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    launch = _api_key_launch("OPENAI_API_KEY")
+    adapter._api_key_login = " DIRECT-KEY-CANARY\n"
+    process = _AccountProcess(
+        {
+            "account/login/start": {
+                "error": {"code": -32600, "message": "bad DIRECT-KEY-CANARY"}
+            }
+        }
+    )
+    with pytest.raises(HarnessStartupError) as exc_info:
+        await adapter.initialize(process, launch)  # type: ignore[arg-type]
+    assert str(exc_info.value) == (
+        "Codex API key login failed (JSON-RPC -32600): bad [REDACTED]"
+    )
 
 
 @pytest.mark.asyncio
