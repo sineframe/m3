@@ -140,6 +140,35 @@ async def test_failed_startup_releases_its_slot(admission_root: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_during_failed_startup_cleanup_still_frees_the_slot(
+    admission_root: Path,
+) -> None:
+    async with AsyncMCPTestKit(_ONE_SLOT, env={}, cwd="/tmp/m3-no-project") as kit:
+        session = kit.agent_session(_spec(), adapter=_FailingStartupAdapter())
+        collect = session._collect_workspace
+        collecting, stalled = asyncio.Event(), True
+
+        async def slow_collect(*args: object, **kwargs: object) -> bool:
+            nonlocal stalled
+            if stalled:
+                stalled = False
+                collecting.set()
+                await asyncio.Event().wait()
+            return await collect(*args, **kwargs)  # type: ignore[arg-type]
+
+        session._collect_workspace = slow_collect  # type: ignore[method-assign]
+        entering = asyncio.create_task(session.__aenter__())
+        await asyncio.wait_for(collecting.wait(), 5)
+        # The startup failure handler is interrupted before adapter cleanup.
+        entering.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await entering
+        await asyncio.wait_for(session.aclose(), 5)
+        assert session._startup_slot is None
+        assert _tickets(admission_root) == []
+
+
+@pytest.mark.asyncio
 async def test_cancelling_a_queued_startup_leaves_no_ticket(
     admission_root: Path,
 ) -> None:

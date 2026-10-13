@@ -676,9 +676,6 @@ class AsyncAgentSession:
             # become the sanitized startup error's __context__.
             if not await _cleanup_succeeded(self._close_adapter(), BaseException):
                 cleanup_failure = True
-            # Cleanup has stopped (or failed to stop, recorded above) what this
-            # startup launched; hold the host slot no longer.
-            self._release_startup_slot()
             outcome = self._close_requested_outcome or (
                 ExecutionOutcome.CANCELLED
                 if isinstance(exc, asyncio.CancelledError)
@@ -1341,6 +1338,11 @@ class AsyncAgentSession:
                 if task.done():
                     self._runtime_lease_close_task = None
 
+        # Every owner startup launched has now been stopped or recorded as a
+        # cleanup failure.  Free the host startup slot here rather than in the
+        # startup handler: a cancel can interrupt that handler, and this method
+        # is retried by aclose() and kit close.
+        self._release_startup_slot()
         if cleanup_failed:
             raise CleanupError("session child cleanup failed")
 

@@ -137,6 +137,11 @@ def _prepare_root(root: Path) -> None:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
+def _release_enqueued(future: asyncio.Future[StartupSlot]) -> None:
+    if not future.cancelled() and future.exception() is None:
+        future.result().release()
+
+
 def _load_per_cpu() -> float:
     return os.getloadavg()[0] / (os.cpu_count() or 1)
 
@@ -154,7 +159,14 @@ async def acquire_startup_slot(
         )
     root = _admission_root() if root is None else root
     await asyncio.to_thread(_prepare_root, root)
-    slot = await asyncio.to_thread(_enqueue, root)
+    # Cancelling the caller cannot stop the worker thread, which may still
+    # create and lock a ticket; release it whenever the thread finishes.
+    enqueue = asyncio.ensure_future(asyncio.to_thread(_enqueue, root))
+    try:
+        slot = await asyncio.shield(enqueue)
+    except BaseException:
+        enqueue.add_done_callback(_release_enqueued)
+        raise
     try:
         loop = asyncio.get_running_loop()
         seconds = settings.queue_timeout_seconds

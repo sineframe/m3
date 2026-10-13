@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -188,6 +189,43 @@ async def test_cancelled_waiter_leaves_no_ticket(tmp_path: Path) -> None:
         await waiter
     assert _tickets(tmp_path) == [holder.path.name]
     holder.release()
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_enqueue_releases_the_ticket_it_creates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, proceed, created = threading.Event(), threading.Event(), threading.Event()
+    enqueue = admission._enqueue
+
+    def stalled_enqueue(root: Path) -> admission.StartupSlot:
+        entered.set()
+        proceed.wait(5)
+        try:
+            return enqueue(root)
+        finally:
+            created.set()
+
+    monkeypatch.setattr(admission, "_enqueue", stalled_enqueue)
+    waiter = asyncio.create_task(
+        acquire_startup_slot(_settings(slots=1), root=tmp_path)
+    )
+    await asyncio.to_thread(entered.wait, 5)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    proceed.set()
+    # The cancelled call's ticket now exists (or would, without the fix) and
+    # is ahead of the next one.
+    await asyncio.to_thread(created.wait, 5)
+    monkeypatch.setattr(admission, "_enqueue", enqueue)
+    # A leaked, still-locked ticket would sit ahead of this one forever.
+    slot = await acquire_startup_slot(
+        _settings(slots=1, queue_timeout_seconds=2), root=tmp_path
+    )
+    assert slot is not None
+    assert _tickets(tmp_path) == [slot.path.name]
+    slot.release()
 
 
 @pytest.mark.asyncio
