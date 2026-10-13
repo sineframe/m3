@@ -218,7 +218,7 @@ def test_setup_ready_environment_skips_install(
     )
     monkeypatch.setattr(setup, "_cli_version", lambda: "1.2.3")
     monkeypatch.setattr(setup, "resolve_target", lambda *_args, **_kwargs: target)
-    monkeypatch.setattr(setup, "_ready", lambda *_args: True)
+    monkeypatch.setattr(setup, "_ready", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         setup,
         "_install_sdk",
@@ -244,7 +244,7 @@ def test_setup_skips_skill_without_project_config(
     calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(setup, "_cli_version", lambda: "1.2.3")
     monkeypatch.setattr(setup, "resolve_target", lambda *_args, **_kwargs: target)
-    monkeypatch.setattr(setup, "_ready", lambda *_args: True)
+    monkeypatch.setattr(setup, "_ready", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         setup, "ensure_agent_skill", lambda *args, **kwargs: calls.append(args)
     )
@@ -266,7 +266,7 @@ def test_setup_mismatch_installs_and_existing_environment_survives_failure(
     target.path.mkdir()
     monkeypatch.setattr(setup, "_cli_version", lambda: "1.2.3")
     monkeypatch.setattr(setup, "resolve_target", lambda *_args, **_kwargs: target)
-    monkeypatch.setattr(setup, "_ready", lambda *_args: False)
+    monkeypatch.setattr(setup, "_ready", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(setup, "_install_sdk", lambda *_args: "uv")
     with pytest.raises(setup.SetupError):
         setup.run(SimpleNamespace(project_root=tmp_path, python=None, no_skill=False))
@@ -323,8 +323,8 @@ def test_ready_requires_exact_version_and_all_project_features(
             },
         )(),
     )
-    assert setup._ready(Path("/tmp/python"), "1.2.3", tmp_path)
-    assert not setup._ready(Path("/tmp/python"), "9.9.9", tmp_path)
+    assert setup._ready(Path("/tmp/python"), "1.2.3", tmp_path, timeout_seconds=15)
+    assert not setup._ready(Path("/tmp/python"), "9.9.9", tmp_path, timeout_seconds=15)
     monkeypatch.setattr(
         setup.subprocess,
         "run",
@@ -337,4 +337,53 @@ def test_ready_requires_exact_version_and_all_project_features(
             },
         )(),
     )
-    assert not setup._ready(Path("/tmp/python"), "1.2.3", tmp_path)
+    assert not setup._ready(Path("/tmp/python"), "1.2.3", tmp_path, timeout_seconds=15)
+
+
+def test_setup_readiness_uses_configured_project_python_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 60\n", encoding="utf-8"
+    )
+    target = setup.EnvironmentTarget(
+        tmp_path / ".venv", tmp_path / ".venv" / "bin" / "python", "project .venv"
+    )
+    timeouts: list[object] = []
+
+    def fake_run(*_args: object, **kwargs: object) -> object:
+        timeouts.append(kwargs["timeout"])
+        return type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"checks":{"pytest":true,"m3":true,"m3.pytest_plugin":true,"openai":true,"SQLiteExecutionStore":true},"version":"1.2.3"}',
+            },
+        )()
+
+    monkeypatch.setattr(setup, "_cli_version", lambda: "1.2.3")
+    monkeypatch.setattr(setup, "resolve_target", lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(setup.subprocess, "run", fake_run)
+    monkeypatch.setattr(setup, "ensure_agent_skill", lambda *_a, **_k: None)
+    args = SimpleNamespace(project_root=tmp_path, python=None, no_skill=True)
+    assert setup.run(args) == 0
+    assert timeouts == [60.0]
+
+
+def test_setup_invalid_timeout_fails_before_touching_an_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 0\n", encoding="utf-8"
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("touched an environment despite invalid configuration")
+
+    monkeypatch.setattr(setup, "resolve_target", forbidden)
+    monkeypatch.setattr(setup, "_ready", forbidden)
+    assert main(["setup", "--project-root", str(tmp_path)]) == 2
+    assert "invalid_configuration" in capsys.readouterr().err

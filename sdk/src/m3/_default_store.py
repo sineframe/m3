@@ -5,9 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-StoreFactory = Callable[[], Any]
+if TYPE_CHECKING:
+    from .configuration import Config
+
+StoreFactory = Callable[["Config"], Any]
 
 
 @dataclass(frozen=True)
@@ -43,10 +46,10 @@ def restore_default_store_factory(token: StoreFactoryToken) -> None:
             _factory, _token = token.previous_factory, token.previous_token
 
 
-def make_default_store() -> Any | None:
+def make_default_store(config: Config) -> Any | None:
     with _lock:
         factory = _factory
-    return factory() if factory is not None else None
+    return factory(config) if factory is not None else None
 
 
 def install_default_run_id_factory(

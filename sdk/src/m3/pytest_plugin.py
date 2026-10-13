@@ -209,6 +209,13 @@ def pytest_addoption(parser: _Any) -> None:
     group.addoption("--execution-timeout", action="store", default=None, type=float)
     group.addoption("--judge-max-requests", action="store", default=None, type=int)
     group.addoption(
+        "--m3-config",
+        action="store",
+        default=None,
+        metavar="PATH",
+        help="TOML file with [tool.m3] settings; replaces pyproject.toml discovery",
+    )
+    group.addoption(
         "--m3-ci",
         action="store_true",
         default=False,
@@ -247,6 +254,34 @@ def pytest_configure(config: _Any) -> None:
         raise
 
 
+def _configure_run_config(config: _Any) -> None:
+    from .configuration import (
+        Config,
+        _config_from_snapshot,
+        _install_run_config,
+        load_config,
+    )
+
+    workerinput = getattr(config, "workerinput", None)
+    snapshot = (
+        workerinput.get("m3_configuration") if isinstance(workerinput, dict) else None
+    )
+    try:
+        if snapshot is not None:
+            run_config = _config_from_snapshot(snapshot)
+        elif config.getoption("help"):
+            # --help must not depend on project settings.
+            run_config = Config()
+        else:
+            run_config = load_config(config_file=config.getoption("--m3-config"))
+    # ConfigError subclasses ValueError; its messages are value-free.
+    except ValueError as exc:
+        raise _pytest.UsageError(str(exc)) from None
+    config._m3_run_config = run_config
+    config._m3_busy_timeout_ms = round(run_config.results.busy_timeout_seconds * 1000)
+    config._m3_run_config_previous = _install_run_config(run_config)
+
+
 def _configure(config: _Any) -> None:
     raw_ci_metadata = config.getoption("--m3-ci-metadata")
     ci_metadata: dict[str, str] = {}
@@ -281,6 +316,7 @@ def _configure(config: _Any) -> None:
     }
     _os.environ.update(judge_values)
     config._m3_config_token = _PLUGIN_CONFIG.set(config)
+    _configure_run_config(config)
     config._m3_suite_validation_failed = False
     judge_limit = config.getoption("--judge-max-requests")
     if judge_limit is not None and judge_limit < 0:
@@ -359,7 +395,9 @@ def _configure(config: _Any) -> None:
             ) from exc
 
     with _timing.span("configure.store_open"):
-        config._m3_manifest_store = SQLiteExecutionStore(path)
+        config._m3_manifest_store = SQLiteExecutionStore(
+            path, busy_timeout_ms=config._m3_busy_timeout_ms
+        )
         if config._m3_project_id is not None:
             config._m3_manifest_store.ensure_project(
                 config._m3_project_id.root, config._m3_project_name
@@ -373,7 +411,11 @@ def _configure(config: _Any) -> None:
         lambda: config._m3_judge_max_requests
     )
     config._m3_store_token = _install_default_store_factory(
-        lambda: SQLiteExecutionStore(path, execution_queue=f"pytest-{_uuid4().hex}")
+        lambda kit_config: SQLiteExecutionStore(
+            path,
+            execution_queue=f"pytest-{_uuid4().hex}",
+            busy_timeout_ms=round(kit_config.results.busy_timeout_seconds * 1000),
+        )
     )
     config._m3_progress = _Progress(config)
     config._m3_progress.reporter = config.pluginmanager.getplugin("terminalreporter")
@@ -405,6 +447,9 @@ def _init_manifest(config: _Any, run_id: _Any, ci_metadata: dict[str, str]) -> N
     )
     if ci_metadata:
         run_record["ci"] = dict(ci_metadata)
+    from .configuration import configuration_digest
+
+    run_record["configuration_digest"] = configuration_digest(config._m3_run_config)
     config._m3_manifest_store.save_test_run(
         run_id.root,
         run_record,
@@ -915,6 +960,10 @@ def pytest_unconfigure(config: _Any) -> None:
     config_token = getattr(config, "_m3_config_token", None)
     if config_token is not None:
         _PLUGIN_CONFIG.reset(config_token)
+    if hasattr(config, "_m3_run_config_previous"):
+        from .configuration import _install_run_config
+
+        _install_run_config(config._m3_run_config_previous)
 
 
 def _pytest_configure_node(node: _Any) -> None:
@@ -926,6 +975,17 @@ def _pytest_configure_node(node: _Any) -> None:
     workerinput = getattr(node, "workerinput", None)
     if isinstance(workerinput, dict):
         workerinput["m3_run_id"] = run_id.root
+
+
+@_pytest.hookimpl(optionalhook=True)
+def pytest_configure_node(node: _Any) -> None:
+    """Send the controller's resolved settings to an xdist worker."""
+    run_config = getattr(getattr(node, "config", None), "_m3_run_config", None)
+    workerinput = getattr(node, "workerinput", None)
+    if run_config is not None and isinstance(workerinput, dict):
+        from .configuration import _config_snapshot
+
+        workerinput["m3_configuration"] = _config_snapshot(run_config)
 
 
 @_timing.timed("collection.select")
@@ -1737,7 +1797,9 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         from .feedback import build_feedback, export_feedback, load_run_entries
         from .storage import SQLiteExecutionStore
 
-        export_store = SQLiteExecutionStore(path)
+        export_store = SQLiteExecutionStore(
+            path, busy_timeout_ms=config._m3_busy_timeout_ms
+        )
         try:
             with _timing.span("finish.timeout_scan"):
                 timed_out_snapshots = []
@@ -3085,4 +3147,5 @@ __all__ = [  # noqa: RUF022
     "agent",
     "server",
     "pytest_collection_modifyitems",
+    "pytest_configure_node",
 ]

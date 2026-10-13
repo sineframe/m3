@@ -278,6 +278,8 @@ m3.sync_api.Config(
     *,
     artifact_policy: Literal['failed', 'always', 'never'] = 'failed',
     protocol_revision: str = 'auto',
+    cli: m3.configuration.CliSettings = ...,
+    results: m3.configuration.ResultsSettings = ...,
     sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin] = ...,
 ) -> None
 ```
@@ -290,6 +292,8 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `artifact_policy` | `Literal['failed', 'always', 'never']` | No | `'failed'` | — | — |
 | `protocol_revision` | `str` | No | `'auto'` | `strict=True` | — |
+| `cli` | `m3.configuration.CliSettings` | No | `factory m3.configuration.CliSettings()` | — | — |
+| `results` | `m3.configuration.ResultsSettings` | No | `factory m3.configuration.ResultsSettings()` | — | — |
 | `sources` | `collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` | No | `factory m3.configuration._default_origins()` | — | — |
 - `provenance` (property): Compatibility name for callers that call origins provenance.
 
@@ -1372,12 +1376,13 @@ m3.sync_api.load_config(
     *,
     env: _Mapping[str, str] | None = None,
     cwd: str | _Path | None = None,
+    config_file: str | _Path | None = None,
     artifact_policy: _Any = ...,
     protocol_revision: _Any = ...,
 ) -> Config
 ```
 
-Resolve SDK settings using explicit, environment, project, default order.
+Resolve SDK settings using explicit, environment, project (or `config_file`), default order.
 
 ## `AllowedCommands`
 

@@ -14,6 +14,7 @@ RESERVED_PYTEST_OPTIONS = frozenset(
         "--m3-run-id",
         "--m3-timings-owner",
         "--m3-ci-metadata",
+        "--m3-config",
     }
 )
 

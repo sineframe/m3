@@ -558,7 +558,11 @@ def test_ui_is_not_started_for_interrupted_or_collection_status(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     monkeypatch.setattr(
         supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns()
@@ -583,7 +587,11 @@ def test_ui_launches_for_ordinary_pytest_failure_and_keeps_status(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     monkeypatch.setattr(
         supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns()
@@ -892,6 +900,60 @@ def test_cli_forwards_project_root_to_pytest(
     assert command[index + 1] == str(tmp_path.resolve())
 
 
+def _capture_validation_timeout(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    timeouts: list[float] = []
+    monkeypatch.setattr(
+        supervisor,
+        "resolve_project_python",
+        lambda *_args, **_kwargs: Path(sys.executable),
+    )
+
+    def validate(*_args: object, timeout_seconds: float, **_kwargs: object) -> str:
+        timeouts.append(timeout_seconds)
+        return "0.2.0a13"
+
+    monkeypatch.setattr(supervisor, "validate_project_python", validate)
+    monkeypatch.setattr(
+        supervisor.subprocess, "Popen", lambda *_args, **_kwargs: _Process(0)
+    )
+    return timeouts
+
+
+def test_cli_timeout_is_read_from_invocation_dir_for_implicit_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    pkg = repo / "pkg"
+    pkg.mkdir(parents=True)
+    (repo / "m3.toml").write_text("schema_version = 1\n", encoding="utf-8")
+    (pkg / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 60\n", encoding="utf-8"
+    )
+    timeouts = _capture_validation_timeout(monkeypatch)
+    monkeypatch.chdir(pkg)
+    assert main(["test", "--", "-q"]) == 0
+    assert timeouts == [60.0]
+
+
+def test_cli_timeout_is_read_from_explicit_project_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "root"
+    other = tmp_path / "other"
+    root.mkdir()
+    other.mkdir()
+    (root / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 70\n", encoding="utf-8"
+    )
+    (other / "pyproject.toml").write_text(
+        "[tool.m3.cli]\nproject_python_timeout_seconds = 5\n", encoding="utf-8"
+    )
+    timeouts = _capture_validation_timeout(monkeypatch)
+    monkeypatch.chdir(other)
+    assert main(["test", "--project-root", str(root), "--", "-q"]) == 0
+    assert timeouts == [70.0]
+
+
 def test_cli_module_help() -> None:
     result = supervisor.subprocess.run(
         [sys.executable, "-m", "m3_cli", "--help"],
@@ -1136,7 +1198,11 @@ def test_plain_test_child_omits_access_token(monkeypatch, tmp_path, with_env_fil
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     captured = {}
 
@@ -1897,7 +1963,11 @@ def test_ui_prints_timing_summary_before_serving(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_a, **_k: 0)
 
@@ -2028,7 +2098,11 @@ def test_run_test_skips_pytest_header_after_printing_banner(
     monkeypatch.setattr(
         supervisor,
         "_prepare_test",
-        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+        lambda *_args, **_kwargs: (
+            Path(sys.executable),
+            tmp_path / "results.sqlite",
+            15.0,
+        ),
     )
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
@@ -2344,3 +2418,73 @@ def test_terminal_module_falls_back_without_source_files(
     )
     monkeypatch.setattr(terminal.importlib, "import_module", lambda _name: sentinel)
     assert terminal._load() is sentinel
+
+
+def test_pytest_command_forwards_config_file() -> None:
+    command = supervisor.pytest_command(
+        Path("python"), Path("db"), [], config_file=Path("/abs/c.toml")
+    )
+    index = command.index("--m3-config")
+    assert command[index + 1] == "/abs/c.toml"
+
+
+def test_project_python_timeout_is_configurable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    timeouts: list[float] = []
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        timeouts.append(kwargs["timeout"])
+        return subprocess.CompletedProcess(args, 1, "", "")
+
+    monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
+    with pytest.raises(supervisor.ProjectPythonError):
+        supervisor.validate_project_python(
+            Path(sys.executable), project_root=tmp_path, timeout_seconds=40
+        )
+    assert timeouts == [40]
+    timeouts.clear()
+    assert not supervisor.baseline_exists(
+        tmp_path / "db.sqlite",
+        "run-x",
+        python=Path(sys.executable),
+        project_root=tmp_path,
+        timeout_seconds=40,
+    )
+    assert timeouts == [40]
+
+
+def test_m3_config_passthrough_is_rejected(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["test", "--", "--m3-config", "x"]) == 2
+    assert (
+        "--m3-config must be set through m3, not pytest passthrough"
+        in capsys.readouterr().err
+    )
+
+
+def test_m3_test_missing_config_file_fails_before_pytest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_popen(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("pytest was started")
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", fail_popen)
+    assert (
+        main(
+            [
+                "test",
+                "--project-root",
+                str(tmp_path),
+                "--m3-config",
+                str(tmp_path / "missing.toml"),
+            ]
+        )
+        == 2
+    )
+    err = capsys.readouterr().err
+    assert "invalid_project: config_file from config-file:" in err
+    assert "file not found" in err

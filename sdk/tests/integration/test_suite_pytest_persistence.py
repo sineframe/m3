@@ -586,6 +586,106 @@ def test_xdist_timings_include_controller_and_workers(tmp_path: Path) -> None:
     assert any("worker" in name for name in processes)
 
 
+def test_xdist_workers_use_controller_configuration_after_file_removal(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("xdist")
+    cfg = tmp_path / "cfg.toml"
+    cfg.write_text("[tool.m3.results]\nbusy_timeout_seconds = 30\n")
+    (tmp_path / "conftest.py").write_text(
+        "import os, pytest\n"
+        "@pytest.hookimpl(trylast=True)\n"
+        "def pytest_configure(config):\n"
+        "    if not hasattr(config, 'workerinput'):\n"
+        "        os.remove(os.environ['CFG'])\n"
+    )
+    test_file = tmp_path / "test_cfg.py"
+    test_file.write_text(
+        "import pytest\n"
+        "from m3 import MCPTestKit\n"
+        "pytestmark = pytest.mark.m3(suite_name='cfg')\n"
+        "def _check():\n"
+        "    kit = MCPTestKit()\n"
+        "    try:\n"
+        "        assert kit.config.results.busy_timeout_seconds == 30.0\n"
+        "    finally:\n"
+        "        kit.close()\n"
+        "    kit = MCPTestKit()\n"
+        "    try:\n"
+        "        assert kit.store.busy_timeout_ms == 30000\n"
+        "    finally:\n"
+        "        kit.close()\n"
+        "    kit = MCPTestKit(config={'results': {'busy_timeout_seconds': 12}})\n"
+        "    try:\n"
+        "        assert kit.store.busy_timeout_ms == 12000\n"
+        "    finally:\n"
+        "        kit.close()\n"
+        "def test_a(): _check()\n"
+        "def test_b(): _check()\n"
+    )
+    result = _run(
+        tmp_path,
+        test_file,
+        xdist=True,
+        run_id="run-cfg",
+        pytest_args=("--m3-config", str(cfg)),
+        extra_env={"CFG": str(cfg)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+    assert not cfg.exists()
+    with sqlite3.connect(tmp_path / "xdist.sqlite") as db:
+        (record_json,) = db.execute(
+            "select record_json from v2_test_runs where run_id='run-cfg'"
+        ).fetchone()
+    assert json.loads(record_json)["configuration_digest"].startswith("sha256:")
+
+
+def test_plugin_discovers_configuration_from_cwd_not_project_root(
+    tmp_path: Path,
+) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 30\n"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.m3.results]\nbusy_timeout_seconds = 7\n"
+    )
+    test_file = tmp_path / "test_cwd.py"
+    test_file.write_text(
+        "from m3 import MCPTestKit\n"
+        "def test_cwd():\n"
+        "    kit = MCPTestKit()\n"
+        "    try:\n"
+        "        assert kit.config.results.busy_timeout_seconds == 7.0\n"
+        "    finally:\n"
+        "        kit.close()\n"
+    )
+    result = _run(
+        tmp_path,
+        test_file,
+        persist=False,
+        pytest_args=("--project-root", str(other)),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_help_ignores_invalid_configuration_but_runs_fail_fast(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.m3]\nartifact_policy = "bogus"\n')
+    test_file = tmp_path / "test_plain.py"
+    test_file.write_text("def test_plain(): pass\n")
+    helped = _run(tmp_path, persist=False, pytest_args=("--help",))
+    assert helped.returncode == 0, helped.stdout + helped.stderr
+    assert "--m3-config" in helped.stdout
+    failed = _run(tmp_path, test_file, persist=False)
+    assert failed.returncode != 0
+    assert "invalid_configuration" in failed.stdout + failed.stderr
+
+
 def test_suite_selection_normalizes_marker_for_plain_and_agent_tests(
     tmp_path: Path,
 ) -> None:

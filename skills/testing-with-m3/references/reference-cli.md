@@ -44,6 +44,8 @@ dependency manifest or lockfile.
 Options: `--project-root PATH`, `--python PATH`, `--no-skill`. Without
 `--project-root`, the project root is the nearest `m3.toml` at or above the
 current directory, stopping at the Git root; otherwise the current directory.
+The readiness check waits `cli.project_python_timeout_seconds` from
+`pyproject.toml`; see [Configuration](reference-configuration.md).
 
 On success, it installs or updates the `testing-with-m3` agent skill; see
 [Install the M3 agent skill](https://m3.sineframe.com/docs/guides/agents/skill).
@@ -56,6 +58,11 @@ configuration, binaries, harnesses, protocol, transport, or storage. Use
 nearest `m3.toml` at or above the current directory, stopping at the Git root;
 otherwise the current directory. Configuration checks load the project root
 `.env` automatically; `--env-file PATH` selects a custom file instead.
+
+`--m3-config PATH` reads `[tool.m3]` from PATH instead of discovering
+`pyproject.toml`. Doctor reads `cli.project_python_timeout_seconds` on every
+run, and a configuration error fails it even without a `config` requirement. See
+[Configuration](reference-configuration.md).
 
 ## `m3 test`
 
@@ -78,6 +85,7 @@ Run pytest in the project environment and save M3 history.
 | `--judge-max-requests N` | Judge request budget for the run. |
 | `--credential-env [KIND:]TARGET=SOURCE` | Map a credential variable. Repeatable. |
 | `--env-file PATH` | `.env` in the project root when present; otherwise none. Pass a path to load a custom dotenv file instead. |
+| `--m3-config PATH` | Read `[tool.m3]` settings from PATH instead of discovering `pyproject.toml`. The path is forwarded to pytest as an absolute path; it cannot be passed after `--`. See [Configuration](reference-configuration.md). |
 | `--upload` | Publish the run; see [Publishing](#publishing). Cannot be combined with `--ui`. |
 | `--ui` | Open the bundled viewer after pytest. |
 | `--port PORT` | Viewer port; `8000` by default. |

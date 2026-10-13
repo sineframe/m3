@@ -12,30 +12,31 @@ from m3._default_store import (
     restore_default_store_factory,
 )
 from m3.async_api import AsyncMCPTestKit
+from m3.configuration import Config
 from m3.storage import SQLiteExecutionStore
 
 
 def test_nested_default_store_scopes_restore_and_stale_tokens_are_safe() -> None:
     outer = object()
     inner = object()
-    first = install_default_store_factory(lambda: outer)
-    second = install_default_store_factory(lambda: inner)
+    first = install_default_store_factory(lambda _config: outer)
+    second = install_default_store_factory(lambda _config: inner)
     try:
-        assert make_default_store() is inner
+        assert make_default_store(Config()) is inner
         restore_default_store_factory(first)
-        assert make_default_store() is inner
+        assert make_default_store(Config()) is inner
         restore_default_store_factory(second)
-        assert make_default_store() is outer
+        assert make_default_store(Config()) is outer
     finally:
         restore_default_store_factory(first)
-    assert make_default_store() is None
+    assert make_default_store(Config()) is None
 
 
 def test_sync_scoped_store_explicit_precedence_and_owned_close(tmp_path: Path) -> None:
     path = (tmp_path / "scoped.sqlite").resolve()
     created: list[SQLiteExecutionStore] = []
 
-    def factory() -> SQLiteExecutionStore:
+    def factory(_config: Config) -> SQLiteExecutionStore:
         store = SQLiteExecutionStore(path)
         created.append(store)
         return store
@@ -69,7 +70,7 @@ def test_async_scoped_store_explicit_precedence_and_owned_close(tmp_path: Path) 
     path = (tmp_path / "async-scoped.sqlite").resolve()
     created: list[SQLiteExecutionStore] = []
 
-    def factory() -> SQLiteExecutionStore:
+    def factory(_config: Config) -> SQLiteExecutionStore:
         store = SQLiteExecutionStore(path)
         created.append(store)
         return store
@@ -106,7 +107,7 @@ def test_async_scoped_store_explicit_precedence_and_owned_close(tmp_path: Path) 
 
 def test_default_factory_shares_one_run_id_across_kits(tmp_path: Path) -> None:
     store_token = install_default_store_factory(
-        lambda: SQLiteExecutionStore((tmp_path / "shared.sqlite").resolve())
+        lambda _config: SQLiteExecutionStore((tmp_path / "shared.sqlite").resolve())
     )
     from m3.types import RunId
 

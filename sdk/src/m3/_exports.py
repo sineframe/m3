@@ -595,6 +595,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "agent",
         "server",
         "pytest_collection_modifyitems",
+        "pytest_configure_node",
     ),
     "m3.matrix": (
         "HarnessCase",
@@ -707,6 +708,7 @@ PUBLIC_EXPORTS["m3.pytest_plugin"] = (
     "agent",
     "server",
     "pytest_collection_modifyitems",
+    "pytest_configure_node",
 )
 PUBLIC_EXPORTS["m3.types"] = (
     "EVENT_SCHEMA_ID",

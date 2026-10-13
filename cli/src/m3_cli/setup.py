@@ -254,7 +254,9 @@ def _cli_version() -> str:
     return sdk
 
 
-def _ready(python: Path, version: str, project_root: Path) -> bool:
+def _ready(
+    python: Path, version: str, project_root: Path, *, timeout_seconds: float
+) -> bool:
     try:
         result = subprocess.run(
             [str(python), "-c", _VALIDATE_SCRIPT],
@@ -262,7 +264,7 @@ def _ready(python: Path, version: str, project_root: Path) -> bool:
             capture_output=True,
             text=True,
             check=False,
-            timeout=15,
+            timeout=timeout_seconds,
         )
         payload = json.loads(result.stdout.strip().splitlines()[-1])
         checks = payload.get("checks", {})
@@ -330,14 +332,24 @@ def _install_sdk(target: EnvironmentTarget, version: str) -> str:
 
 
 def run(args: Any) -> int:
+    from m3.configuration import ConfigError, load_config
+
     from .supervisor import resolve_project_root
 
     root = resolve_project_root(args.project_root)
+    try:
+        timeout = load_config(
+            env={}, cwd=args.project_root
+        ).cli.project_python_timeout_seconds
+    except ConfigError as exc:
+        raise SetupError(str(exc)) from None
     version = _cli_version()
     target = resolve_target(root, args.python)
     print(f"Installing M3 SDK {version}")
     print(f"Project environment: {target.path} ({target.source})")
-    if not target.created and _ready(target.python, version, root):
+    if not target.created and _ready(
+        target.python, version, root, timeout_seconds=timeout
+    ):
         print(f"Project environment ready: {target.path}")
         print(f"M3 SDK: {version}")
         print("Installer: skipped; environment is already ready")
@@ -361,7 +373,7 @@ def run(args: Any) -> int:
         print(f"[2/3] Installing matching SDK from {_sdk_source()}")
         installer = _install_sdk(target, version)
         print("[3/3] Verifying project environment")
-        if not _ready(target.python, version, root):
+        if not _ready(target.python, version, root, timeout_seconds=timeout):
             raise SetupError("project environment did not pass the M3 SDK checks")
     except SetupError:
         if created and target.path.exists():

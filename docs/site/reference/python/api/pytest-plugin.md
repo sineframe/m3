@@ -73,3 +73,13 @@ m3.pytest_plugin.pytest_collection_modifyitems(
     items: list[_Any],
 ) -> None
 ```
+
+## `pytest_configure_node`
+
+```python
+m3.pytest_plugin.pytest_configure_node(
+    node: _Any,
+) -> None
+```
+
+Send the controller's resolved settings to an xdist worker.
