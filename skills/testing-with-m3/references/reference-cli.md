@@ -44,6 +44,8 @@ dependency manifest or lockfile.
 Options: `--project-root PATH`, `--python PATH`, `--no-skill`. Without
 `--project-root`, the project root is the nearest `m3.toml` at or above the
 current directory, stopping at the Git root; otherwise the current directory.
+The readiness check waits `cli.project_python_timeout_seconds` from
+`pyproject.toml`; see [Configuration](reference-configuration.md).
 
 On success, it installs or updates the `testing-with-m3` agent skill; see
 [Install the M3 agent skill](https://m3.sineframe.com/docs/guides/agents/skill).
