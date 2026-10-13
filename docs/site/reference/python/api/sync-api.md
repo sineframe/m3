@@ -282,6 +282,8 @@ m3.sync_api.Config(
     results: m3.configuration.ResultsSettings = ...,
     harnesses: m3.configuration.HarnessSettings = ...,
     mcp_timeouts: m3.configuration.McpTimeoutSettings = ...,
+    harness_probes: m3.configuration.HarnessProbeSettings = ...,
+    startup_admission: m3.configuration.StartupAdmissionSettings = ...,
     sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin] = ...,
 ) -> None
 ```
@@ -298,6 +300,8 @@ Model fields:
 | `results` | `m3.configuration.ResultsSettings` | No | `factory m3.configuration.ResultsSettings()` | — | — |
 | `harnesses` | `m3.configuration.HarnessSettings` | No | `factory m3.configuration.HarnessSettings()` | — | — |
 | `mcp_timeouts` | `m3.configuration.McpTimeoutSettings` | No | `factory m3.configuration.McpTimeoutSettings()` | — | — |
+| `harness_probes` | `m3.configuration.HarnessProbeSettings` | No | `factory m3.configuration.HarnessProbeSettings()` | — | — |
+| `startup_admission` | `m3.configuration.StartupAdmissionSettings` | No | `factory m3.configuration.StartupAdmissionSettings()` | — | — |
 | `sources` | `collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` | No | `factory m3.configuration._default_origins()` | — | — |
 - `provenance` (property): Compatibility name for callers that call origins provenance.
 

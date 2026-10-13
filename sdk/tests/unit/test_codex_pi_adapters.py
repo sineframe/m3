@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from datetime import datetime, timezone
 
@@ -25,9 +26,10 @@ from m3.agent_session import (
     AsyncAgentSession,
     _require_elicitation_capability,
 )
+from m3.configuration import Config
 from m3.elicitation import expect_form
 from m3.errors import UnsupportedFeature
-from m3.harness._rpc_native import NativeRPCAdapter
+from m3.harness._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from m3.harness.codex import (
     CodexHarnessAdapter,
     codex_configuration,
@@ -59,6 +61,7 @@ from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
     Codex,
     FullToolPolicy,
+    HarnessTimeouts,
     PermissionPolicy,
     Pi,
     RestrictiveToolPolicy,
@@ -239,7 +242,9 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
 
     probes: list[str] = []
 
-    def fake_probe(executable: str, args: tuple[str, ...]) -> str | None:
+    def fake_probe(
+        executable: str, args: tuple[str, ...], **_kwargs: object
+    ) -> str | None:
         # Session startup must never run a probe on the event loop.
         assert threading.current_thread() is not threading.main_thread()
         order.append(f"probe:{executable}")
@@ -312,7 +317,7 @@ async def test_codex_capability_cache_tracks_executable_identity(
     managed_executable.write_text("managed codex placeholder\n")
     probes: list[str] = []
 
-    def fake_probe(executable: str, _args: tuple[str, ...]) -> str:
+    def fake_probe(executable: str, _args: tuple[str, ...], **_kwargs: object) -> str:
         probes.append(executable)
         return (
             "codex-cli 0.156.1"
@@ -322,11 +327,11 @@ async def test_codex_capability_cache_tracks_executable_identity(
 
     monkeypatch.setattr(codex_module, "probe_help", fake_probe)
     adapter = CodexHarnessAdapter(executable=str(system_executable))
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert not adapter.capabilities.interaction.supports_elicitation
 
     adapter.executable = str(managed_executable)
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert adapter.capabilities.interaction.supports_elicitation
     assert probes == [str(system_executable), str(managed_executable)]
 
@@ -338,17 +343,17 @@ async def test_codex_capability_cache_rechecks_binary_created_at_same_path(
     executable = tmp_path / "managed-codex"
     probes: list[str] = []
 
-    def fake_probe(path: str, _args: tuple[str, ...]) -> str | None:
+    def fake_probe(path: str, _args: tuple[str, ...], **_kwargs: object) -> str | None:
         probes.append(path)
         return "codex-cli 0.156.1" if executable.exists() else None
 
     monkeypatch.setattr(codex_module, "probe_help", fake_probe)
     adapter = CodexHarnessAdapter(executable=str(executable))
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert not adapter.capabilities.interaction.supports_elicitation
 
     executable.write_text("managed codex placeholder\n")
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert adapter.capabilities.interaction.supports_elicitation
     assert probes == [str(executable), str(executable)]
 
@@ -416,7 +421,13 @@ async def test_pi_rejected_second_open_leaves_the_live_session_alone() -> None:
 async def test_pi_open_closes_native_session_when_control_extension_does_not_connect() -> (
     None
 ):
-    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    launch = _launch(
+        Pi(
+            model="fixture",
+            executable=str(PI_FIXTURE),
+            timeouts=HarnessTimeouts(extension_connect_seconds=0.2),
+        )
+    )
     adapter = PiHarnessAdapter(
         executable=str(PI_FIXTURE),
         environment={
@@ -424,8 +435,12 @@ async def test_pi_open_closes_native_session_when_control_extension_does_not_con
             "M3_PI_FIXTURE_STDERR": "extension failed to load: TypeError",
         },
     )
-    with pytest.raises(HarnessStartupError, match="managed-control extension") as exc:
+    with pytest.raises(HarnessStartupError) as exc:
         await adapter.open(launch)
+    assert str(exc.value) == (
+        "Pi extension connection did not finish within 0.2s "
+        "(harnesses.pi.timeouts.extension_connect_seconds)"
+    )
     assert adapter.control_channel is None
     assert adapter._session is None
     assert adapter._process is None
@@ -2572,3 +2587,44 @@ async def test_codex_file_change_approval_gets_paths_from_started_item() -> None
     assert len(seen) == 1
     assert seen[0].resource == "/w/a.py,/w/b.py"
     assert dict(seen[0].context) == {"paths": ["/w/a.py", "/w/b.py"]}
+
+
+class _HangingStartupAdapter(NativeRPCAdapter):
+    """Spawns a long-lived child, then never finishes initialization."""
+
+    def __init__(self) -> None:
+        super().__init__(executable=sys.executable)
+        self.spawned: asyncio.Queue[int] = asyncio.Queue()
+
+    def process_argv(self, launch: HarnessLaunch) -> tuple[str, ...]:
+        return ("-c", "import time; time.sleep(60)")
+
+    async def initialize(self, process: JsonRpcProcess, launch: HarnessLaunch) -> str:
+        assert process.owner is not None and process.owner.process is not None
+        self.spawned.put_nowait(process.owner.process.pid)
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+@pytest.mark.process_lifecycle
+@pytest.mark.asyncio
+async def test_cancelled_native_startup_stops_its_child() -> None:
+    adapter = _HangingStartupAdapter()
+    opening = asyncio.create_task(adapter.open(_launch(Codex(model="fixture"))))
+    pid = await asyncio.wait_for(adapter.spawned.get(), 10)
+    opening.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await opening
+    for _ in range(300):
+        if not _process_exists(pid):
+            break
+        await asyncio.sleep(0.01)
+    assert not _process_exists(pid)

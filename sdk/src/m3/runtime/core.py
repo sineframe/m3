@@ -183,6 +183,22 @@ def _is_windows_system_path(
     return any(candidate == item or item in candidate.parents for item in blocked)
 
 
+def _platform_cache_base(env: Mapping[str, str] | None = None) -> Path:
+    """Return the per-user m3 cache directory for this platform."""
+    if sys.platform == "win32":
+        return (
+            Path(
+                _platform_env(env).get(
+                    "LOCALAPPDATA", Path.home() / "AppData" / "Local"
+                )
+            )
+            / "m3"
+        )
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "m3"
+    return Path(_platform_env(env).get("XDG_CACHE_HOME", Path.home() / ".cache")) / "m3"
+
+
 def resolve_cache_root(
     project_root: str | Path,
     explicit: str | Path | None = None,
@@ -202,24 +218,8 @@ def resolve_cache_root(
         if requested_root.is_symlink():
             raise RuntimeValidationError("runtime cache path contains a symlink")
         root = requested_root.resolve()
-    elif sys.platform == "win32":
-        root = (
-            Path(
-                _platform_env(env).get(
-                    "LOCALAPPDATA", Path.home() / "AppData" / "Local"
-                )
-            )
-            / "m3"
-            / "harnesses"
-        )
-    elif sys.platform == "darwin":
-        root = Path.home() / "Library" / "Caches" / "m3" / "harnesses"
     else:
-        root = (
-            Path(_platform_env(env).get("XDG_CACHE_HOME", Path.home() / ".cache"))
-            / "m3"
-            / "harnesses"
-        )
+        root = _platform_cache_base(env) / "harnesses"
     root = root.resolve()
     if sys.platform == "win32" and _is_windows_system_path(root, env):
         raise RuntimeValidationError(

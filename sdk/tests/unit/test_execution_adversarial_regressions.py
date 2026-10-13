@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from typing import cast
 
 import pytest
 from mcp.server.lowlevel import Server
 
+from m3 import _startup_admission
 from m3._types.specs import AgentSpec
 from m3.agent_session import AdapterTurn, AsyncAgentSession
 from m3.async_api import AsyncMCPTestKit
@@ -78,6 +80,87 @@ class _SlowStartupAdapter:
 
     async def close(self) -> None:
         self.close_count += 1
+
+
+class _FailingStartupAdapter(_SlowStartupAdapter):
+    async def start(self, _spec: AgentSpec) -> None:
+        self.start_count += 1
+        self.started.set()
+        raise RuntimeError("native startup failed")
+
+
+_ONE_SLOT = {"startup_admission": {"enabled": True, "slots": 1}}
+
+
+@pytest.fixture
+def admission_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(_startup_admission, "_admission_root", lambda: tmp_path)
+    return tmp_path
+
+
+def _tickets(root: Path) -> list[str]:
+    return sorted(path.name for path in (root / "tickets").iterdir())
+
+
+@pytest.mark.asyncio
+async def test_admission_holds_a_second_startup_until_the_first_finishes(
+    admission_root: Path,
+) -> None:
+    first, second = _SlowStartupAdapter(), _SlowStartupAdapter()
+    async with AsyncMCPTestKit(_ONE_SLOT, env={}, cwd="/tmp/m3-no-project") as kit:
+        sessions = [kit.agent_session(_spec(), adapter=a) for a in (first, second)]
+        entering = [asyncio.create_task(sessions[0].__aenter__())]
+        await asyncio.wait_for(first.started.wait(), 5)
+        entering.append(asyncio.create_task(sessions[1].__aenter__()))
+        await asyncio.sleep(0.3)
+        assert not second.started.is_set()
+        first.release.set()
+        await asyncio.wait_for(second.started.wait(), 5)
+        second.release.set()
+        await asyncio.wait_for(asyncio.gather(*entering), 5)
+        assert _tickets(admission_root) == []
+        for session in sessions:
+            await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_releases_its_slot(admission_root: Path) -> None:
+    failing, waiting = _FailingStartupAdapter(), _SlowStartupAdapter()
+    async with AsyncMCPTestKit(_ONE_SLOT, env={}, cwd="/tmp/m3-no-project") as kit:
+        with pytest.raises(Exception, match="agent session startup failed"):
+            await kit.agent_session(_spec(), adapter=failing).__aenter__()
+        assert failing.close_count == 1
+        assert _tickets(admission_root) == []
+        session = kit.agent_session(_spec(), adapter=waiting)
+        entering = asyncio.create_task(session.__aenter__())
+        await asyncio.wait_for(waiting.started.wait(), 2)
+        waiting.release.set()
+        await entering
+        await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_queued_startup_leaves_no_ticket(
+    admission_root: Path,
+) -> None:
+    holder, queued = _SlowStartupAdapter(), _SlowStartupAdapter()
+    async with AsyncMCPTestKit(_ONE_SLOT, env={}, cwd="/tmp/m3-no-project") as kit:
+        first = kit.agent_session(_spec(), adapter=holder)
+        holding = asyncio.create_task(first.__aenter__())
+        await asyncio.wait_for(holder.started.wait(), 5)
+        waiter = asyncio.create_task(
+            kit.agent_session(_spec(), adapter=queued).__aenter__()
+        )
+        while len(_tickets(admission_root)) < 2:
+            await asyncio.sleep(0.01)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert len(_tickets(admission_root)) == 1
+        assert queued.start_count == 0
+        holder.release.set()
+        await holding
+        await first.aclose()
 
 
 @pytest.mark.asyncio

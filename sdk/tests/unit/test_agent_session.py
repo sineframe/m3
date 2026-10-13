@@ -1248,7 +1248,7 @@ class _PreparedElicitingHarness(ElicitingHarness):
         super().__init__()
         self.prepared = 0
 
-    async def prepare_capabilities(self) -> None:
+    async def prepare_capabilities(self, config: object) -> None:
         self.prepared += 1
 
     @property  # type: ignore[override]

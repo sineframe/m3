@@ -189,8 +189,10 @@ Model fields:
 m3.types.HarnessTimeouts(
     *,
     initialize_seconds: float | None = None,
+    account_seconds: float | None = None,
     startup_seconds: float | None = None,
     session_creation_seconds: float | None = None,
+    extension_connect_seconds: float | None = None,
 ) -> None
 ```
 
@@ -201,8 +203,10 @@ Model fields:
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
 | `initialize_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
+| `account_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
 | `startup_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
 | `session_creation_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
+| `extension_connect_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
 
 ## `McpTimeouts`
 

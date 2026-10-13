@@ -107,6 +107,8 @@ class CodexTimeoutSettings(_FrozenModel):
     # thread/start returns after Codex has started the thread's MCP servers, so
     # this must leave room for their own startup budget.
     startup_seconds: float = _seconds(120.0)
+    # Bounds each account/login/start and account/read request during startup.
+    account_seconds: float = _seconds(15.0)
 
 
 class OpenCodeTimeoutSettings(_FrozenModel):
@@ -114,6 +116,13 @@ class OpenCodeTimeoutSettings(_FrozenModel):
 
     startup_seconds: float = _seconds(60.0)
     session_creation_seconds: float = _seconds(60.0)
+
+
+class PiTimeoutSettings(_FrozenModel):
+    """Limits m3 applies while it starts a Pi RPC session."""
+
+    initialize_seconds: float = _seconds(15.0)
+    extension_connect_seconds: float = _seconds(5.0)
 
 
 class CodexSettings(_FrozenModel):
@@ -124,11 +133,16 @@ class OpenCodeSettings(_FrozenModel):
     timeouts: OpenCodeTimeoutSettings = _Field(default_factory=OpenCodeTimeoutSettings)
 
 
+class PiSettings(_FrozenModel):
+    timeouts: PiTimeoutSettings = _Field(default_factory=PiTimeoutSettings)
+
+
 class HarnessSettings(_FrozenModel):
     """Per-harness settings, keyed by harness name."""
 
     codex: CodexSettings = _Field(default_factory=CodexSettings)
     opencode: OpenCodeSettings = _Field(default_factory=OpenCodeSettings)
+    pi: PiSettings = _Field(default_factory=PiSettings)
 
 
 class McpTimeoutSettings(_FrozenModel):
@@ -139,13 +153,33 @@ class McpTimeoutSettings(_FrozenModel):
     )
 
 
+class HarnessProbeSettings(_FrozenModel):
+    """Limit for each attempt of a harness capability probe (--help, --version)."""
+
+    timeout_seconds: float = _seconds(30.0)
+
+
+class StartupAdmissionSettings(_FrozenModel):
+    """Host-wide limit on concurrent native harness startups; off by default."""
+
+    enabled: bool = _Field(default=False, strict=True)
+    slots: int = _Field(default=4, ge=1, le=256, strict=True)
+    queue_timeout_seconds: float = _seconds(300.0)
+    max_load_per_cpu: float | None = _Field(
+        default=None, gt=0, le=64, allow_inf_nan=False, strict=True
+    )
+
+
 # Dotted path of each settings table below the root and the model of its leaves.
 _SECTIONS: dict[str, type[_FrozenModel]] = {
     "cli": CliSettings,
     "results": ResultsSettings,
     "harnesses.codex.timeouts": CodexTimeoutSettings,
     "harnesses.opencode.timeouts": OpenCodeTimeoutSettings,
+    "harnesses.pi.timeouts": PiTimeoutSettings,
     "mcp_timeouts": McpTimeoutSettings,
+    "harness_probes": HarnessProbeSettings,
+    "startup_admission": StartupAdmissionSettings,
 }
 _SETTING_NAMES: tuple[str, ...] = (
     "artifact_policy",
@@ -208,6 +242,10 @@ class Config(_FrozenModel):
     results: ResultsSettings = _Field(default_factory=ResultsSettings)
     harnesses: HarnessSettings = _Field(default_factory=HarnessSettings)
     mcp_timeouts: McpTimeoutSettings = _Field(default_factory=McpTimeoutSettings)
+    harness_probes: HarnessProbeSettings = _Field(default_factory=HarnessProbeSettings)
+    startup_admission: StartupAdmissionSettings = _Field(
+        default_factory=StartupAdmissionSettings
+    )
     sources: _Mapping[str, ConfigOrigin] = _Field(default_factory=_default_origins)
 
     @_field_validator("protocol_revision")
@@ -562,11 +600,15 @@ __all__ = [
     "ConfigError",
     "ConfigOrigin",
     "ConfigSource",
+    "HarnessProbeSettings",
     "HarnessSettings",
     "McpTimeoutSettings",
     "OpenCodeSettings",
     "OpenCodeTimeoutSettings",
+    "PiSettings",
+    "PiTimeoutSettings",
     "ResultsSettings",
+    "StartupAdmissionSettings",
     "configuration_digest",
     "load_config",
 ]

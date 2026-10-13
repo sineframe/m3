@@ -184,7 +184,15 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
                 k: v
                 for k, v in kwargs.items()
                 if k
-                in {"name", "model", "executable", "provider", "runtime", "version"}
+                in {
+                    "name",
+                    "model",
+                    "executable",
+                    "provider",
+                    "runtime",
+                    "version",
+                    "timeouts",
+                }
             },
         )
     if kind == "acp":
@@ -594,6 +602,7 @@ def expand(
                 "provider",
                 "credential_env",
                 "credential_references",
+                "timeouts",
                 "_case_id",
                 "_matrix_id",
                 "_cell_id",

@@ -36,9 +36,17 @@ The SDK resolves the settings below. Each can come from an explicit argument or 
 | `results.busy_timeout_seconds` | — | `[tool.m3.results]` `busy_timeout_seconds` | number from 0 to 3600 | `5` | SQLite lock wait for the stores the pytest plugin opens. The run manifest and feedback-export stores use the run's value; the default store of each kit uses that kit's resolved value, so `config={...}` or `cwd=` on a kit changes it. A store passed explicitly with `store=` keeps its own `busy_timeout_ms`. |
 | `harnesses.codex.timeouts.initialize_seconds` | — | `[tool.m3.harnesses.codex.timeouts]` `initialize_seconds` | number greater than 0, at most 3600 | `30` | Seconds the Codex App Server has to answer `initialize`. |
 | `harnesses.codex.timeouts.startup_seconds` | — | `[tool.m3.harnesses.codex.timeouts]` `startup_seconds` | number greater than 0, at most 3600 | `120` | Seconds Codex has to answer `thread/start`. Codex answers only after it has started the session's MCP servers, so this limit contains their MCP startup budget. One deadline covers the whole request; other frames Codex sends meanwhile do not extend it. |
+| `harnesses.codex.timeouts.account_seconds` | — | `[tool.m3.harnesses.codex.timeouts]` `account_seconds` | number greater than 0, at most 3600 | `15` | Seconds Codex has to answer each startup account request (`account/login/start`, `account/read`). One deadline per request; other frames do not extend it. |
 | `harnesses.opencode.timeouts.startup_seconds` | — | `[tool.m3.harnesses.opencode.timeouts]` `startup_seconds` | number greater than 0, at most 3600 | `60` | Seconds `opencode serve` has to print its endpoint. |
 | `harnesses.opencode.timeouts.session_creation_seconds` | — | `[tool.m3.harnesses.opencode.timeouts]` `session_creation_seconds` | number greater than 0, at most 3600 | `60` | Seconds OpenCode has to answer `POST /session`. |
+| `harnesses.pi.timeouts.initialize_seconds` | — | `[tool.m3.harnesses.pi.timeouts]` `initialize_seconds` | number greater than 0, at most 3600 | `15` | Seconds Pi has to answer `get_state`. |
+| `harnesses.pi.timeouts.extension_connect_seconds` | — | `[tool.m3.harnesses.pi.timeouts]` `extension_connect_seconds` | number greater than 0, at most 3600 | `5` | Seconds m3's Pi extension has to connect back to m3 after `get_state`. |
+| `harness_probes.timeout_seconds` | — | `[tool.m3.harness_probes]` `timeout_seconds` | number greater than 0, at most 3600 | `30` | Seconds each attempt of a harness capability probe (`--help`, `--version`) may run. A timed-out probe is retried once. |
 | `mcp_timeouts.startup_seconds` | — | `[tool.m3.mcp_timeouts]` `startup_seconds` | number greater than 0, at most 3600 | unset | MCP startup budget passed to the harness's own MCP client for every server. Unset keeps each harness's native default. See [MCP startup budgets](#mcp-startup-budgets). |
+| `startup_admission.enabled` | — | `[tool.m3.startup_admission]` `enabled` | `true` or `false` | `false` | Limits how many native harness sessions start at the same time on this host. See [Startup admission](#startup-admission). |
+| `startup_admission.slots` | — | `[tool.m3.startup_admission]` `slots` | integer from 1 to 256 | `4` | Native startups allowed at once, across every m3 process of the current user. |
+| `startup_admission.queue_timeout_seconds` | — | `[tool.m3.startup_admission]` `queue_timeout_seconds` | number greater than 0, at most 3600 | `300` | Seconds a session may wait for a slot (and for the load threshold) before startup fails. |
+| `startup_admission.max_load_per_cpu` | — | `[tool.m3.startup_admission]` `max_load_per_cpu` | number greater than 0, at most 64 | unset | When set, a session that holds a slot also waits until the 1-minute load average divided by the CPU count is at or below this value. |
 
 For each setting the highest-precedence source that provides a value wins:
 
@@ -71,7 +79,7 @@ startup_seconds = 60
 
 ### Harness startup limits
 
-The `harnesses.<name>.timeouts` settings bound how long m3 waits for a native harness to start a session. A typed harness can override them for its own sessions with `timeouts=HarnessTimeouts(...)`; fields left unset keep the resolved setting. Codex accepts `initialize_seconds` and `startup_seconds`; OpenCode accepts `startup_seconds` and `session_creation_seconds`. Any other field is a validation error when the harness value is built. Agent selections accept the same value as a `timeouts` key for `codex` and `opencode`.
+The `harnesses.<name>.timeouts` settings bound how long m3 waits for a native harness to start a session. A typed harness can override them for its own sessions with `timeouts=HarnessTimeouts(...)`; fields left unset keep the resolved setting. Codex accepts `initialize_seconds`, `account_seconds`, and `startup_seconds`; OpenCode accepts `startup_seconds` and `session_creation_seconds`; Pi accepts `initialize_seconds` and `extension_connect_seconds`. Any other field is a validation error when the harness value is built. Agent selections accept the same value as a `timeouts` key for `codex`, `opencode`, and `pi`.
 
 ```python
 from m3.types import Codex, HarnessTimeouts
@@ -99,6 +107,24 @@ from m3.types import McpTimeouts, StdioServer
 server = StdioServer(name="slow", command="python", args=("slow_mcp.py",), timeouts=McpTimeouts(startup_seconds=75))
 ```
 
+### Startup admission
+
+Many sessions starting at once (pytest-xdist workers, or several `m3 test` processes) can overload a host so that healthy harnesses miss their startup limits. With `[tool.m3.startup_admission] enabled = true`, a session waits for one of `slots` host-wide slots before it starts anything: capability probes, MCP servers, and the native harness. It keeps the slot until the harness has started, or, if startup fails, until startup cleanup has finished. Sessions are admitted in arrival order.
+
+```toml
+[tool.m3.startup_admission]
+enabled = true
+slots = 4
+queue_timeout_seconds = 300
+max_load_per_cpu = 1.5
+```
+
+- Slots are shared by every m3 process of the current OS user on the host. Queue state lives in the user cache directory (`~/Library/Caches/m3/admission` on macOS, `$XDG_CACHE_HOME/m3/admission` or `~/.cache/m3/admission` elsewhere). A process that dies frees its slot.
+- Time spent waiting does not count toward the harness startup limits, which start when the harness starts. It does count toward outer limits such as a test or execution timeout.
+- Claude Code initializes during its first turn, so its slot covers only starting the process.
+- When the wait exceeds `queue_timeout_seconds`, startup fails with `m3 startup admission did not finish within 300s (startup_admission.queue_timeout_seconds)`; if the load threshold kept it waiting, the message also reports the load.
+- Admission is supported on macOS and Linux. Enabling it on Windows fails session startup.
+
 ### Check the resolved settings
 
 `m3 doctor --require config` resolves the same settings and reports them, with the source of each value. Run it from the project directory, or pass `--project-root` to choose where `pyproject.toml` discovery starts:
@@ -116,10 +142,13 @@ The report's `configuration.settings` object has this shape; `origin` for a `pyp
   "cli": {"project_python_timeout_seconds": 15.0},
   "results": {"busy_timeout_seconds": 5.0},
   "harnesses": {
-    "codex": {"timeouts": {"initialize_seconds": 30.0, "startup_seconds": 120.0}},
-    "opencode": {"timeouts": {"startup_seconds": 60.0, "session_creation_seconds": 60.0}}
+    "codex": {"timeouts": {"initialize_seconds": 30.0, "startup_seconds": 120.0, "account_seconds": 15.0}},
+    "opencode": {"timeouts": {"startup_seconds": 60.0, "session_creation_seconds": 60.0}},
+    "pi": {"timeouts": {"initialize_seconds": 15.0, "extension_connect_seconds": 5.0}}
   },
   "mcp_timeouts": {"startup_seconds": null},
+  "harness_probes": {"timeout_seconds": 30.0},
+  "startup_admission": {"enabled": false, "slots": 4, "queue_timeout_seconds": 300.0, "max_load_per_cpu": null},
   "sources": {
     "artifact_policy": {"source": "environment", "origin": "env:M3_ARTIFACT_POLICY"},
     "protocol_revision": {"source": "default", "origin": "default"},
@@ -127,9 +156,17 @@ The report's `configuration.settings` object has this shape; `origin` for a `pyp
     "results.busy_timeout_seconds": {"source": "default", "origin": "default"},
     "harnesses.codex.timeouts.initialize_seconds": {"source": "default", "origin": "default"},
     "harnesses.codex.timeouts.startup_seconds": {"source": "default", "origin": "default"},
+    "harnesses.codex.timeouts.account_seconds": {"source": "default", "origin": "default"},
     "harnesses.opencode.timeouts.startup_seconds": {"source": "default", "origin": "default"},
     "harnesses.opencode.timeouts.session_creation_seconds": {"source": "default", "origin": "default"},
-    "mcp_timeouts.startup_seconds": {"source": "default", "origin": "default"}
+    "harnesses.pi.timeouts.initialize_seconds": {"source": "default", "origin": "default"},
+    "harnesses.pi.timeouts.extension_connect_seconds": {"source": "default", "origin": "default"},
+    "mcp_timeouts.startup_seconds": {"source": "default", "origin": "default"},
+    "harness_probes.timeout_seconds": {"source": "default", "origin": "default"},
+    "startup_admission.enabled": {"source": "default", "origin": "default"},
+    "startup_admission.slots": {"source": "default", "origin": "default"},
+    "startup_admission.queue_timeout_seconds": {"source": "default", "origin": "default"},
+    "startup_admission.max_load_per_cpu": {"source": "default", "origin": "default"}
   }
 }
 ```

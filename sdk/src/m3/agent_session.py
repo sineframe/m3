@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 from . import _timing
+from ._startup_admission import StartupSlot, acquire_startup_slot
 from ._types.agent_identity import project_agent_identity
 from ._types.specs import AgentSpec
 from .configuration import Config
@@ -297,11 +298,11 @@ def _validate_managed_input_round_limit(
     )
 
 
-async def _prepare_capabilities(adapter: object) -> None:
+async def _prepare_capabilities(adapter: object, config: Config) -> None:
     """Let an adapter finish blocking capability probes off the event loop."""
     prepare = getattr(adapter, "prepare_capabilities", None)
     if callable(prepare):
-        await prepare()
+        await prepare(config)
 
 
 def _require_elicitation_capability(adapter: object) -> None:
@@ -416,6 +417,9 @@ class AsyncAgentSession:
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
         self._config = config if config is not None else Config()
+        # Host startup slot held from admission until native startup finishes
+        # (or, on failure, until startup cleanup has run).
+        self._startup_slot: StartupSlot | None = None
         needs_elicitation = (
             managed_input_runtime is not None or spec.elicitation is not None
         )
@@ -672,6 +676,9 @@ class AsyncAgentSession:
             # become the sanitized startup error's __context__.
             if not await _cleanup_succeeded(self._close_adapter(), BaseException):
                 cleanup_failure = True
+            # Cleanup has stopped (or failed to stop, recorded above) what this
+            # startup launched; hold the host slot no longer.
+            self._release_startup_slot()
             outcome = self._close_requested_outcome or (
                 ExecutionOutcome.CANCELLED
                 if isinstance(exc, asyncio.CancelledError)
@@ -806,6 +813,11 @@ class AsyncAgentSession:
             return launch.with_tool_policy_evidence(evidence)
         return launch
 
+    def _release_startup_slot(self) -> None:
+        slot, self._startup_slot = self._startup_slot, None
+        if slot is not None:
+            slot.release()
+
     async def _start_adapter(self) -> None:
         if self._adapter_started:
             return
@@ -813,8 +825,15 @@ class AsyncAgentSession:
         # it must complete (or be cancelled) before server startup, probes, or
         # provider open can produce side effects.
         await self._prepare_managed_runtime()
+        # Admission precedes every step that starts processes: capability
+        # probes, MCP servers, and the harness itself.  Phase deadlines start
+        # inside adapter.open, so queueing here never consumes them.
+        with _timing.span("session.admission", key=self._policy_harness_name):
+            self._startup_slot = await acquire_startup_slot(
+                self._config.startup_admission
+            )
         if self._deferred_elicitation_capability_check:
-            await _prepare_capabilities(self.adapter)
+            await _prepare_capabilities(self.adapter, self._config)
             _require_elicitation_capability(self.adapter)
             self._deferred_elicitation_capability_check = False
         if self._server_manager is not None:
@@ -987,6 +1006,7 @@ class AsyncAgentSession:
         with _timing.span("harness.open"):
             if inspect.isawaitable(result):
                 result = await result
+        self._release_startup_slot()
         self._adapter_session = self._coerce_adapter_session(result)
         if self._managed_input_runtime is not None:
             target = result if result is not None else self.adapter
@@ -1694,7 +1714,7 @@ class AsyncAgentSession:
         )
         try:
             if elicitation is not None or self._managed_input_runtime is not None:
-                await _prepare_capabilities(self.adapter)
+                await _prepare_capabilities(self.adapter, self._config)
             if elicitation is not None:
                 _require_elicitation_capability(self.adapter)
             if self._managed_input_runtime is not None:

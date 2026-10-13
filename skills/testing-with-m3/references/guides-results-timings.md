@@ -198,6 +198,7 @@ brackets, such as `mcp.request[tools/call]`.
 | Step | Kind | Covers |
 | --- | --- | --- |
 | `session.start[<harness>]` | span | Starting an agent session. |
+| `session.admission[<harness>]` | span | Waiting for a host startup slot when [startup admission](reference-configuration.md#startup-admission) is enabled. |
 | `session.turn[<harness>]` | span | One turn of an agent session. |
 | `session.wire_replay` | span | Replaying a recorded wire exchange. |
 | `session.close` | span | Closing the session. |

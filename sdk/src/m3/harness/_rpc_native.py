@@ -8,6 +8,7 @@ messages to the Codex and Pi adapters.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import shutil
 import tempfile
@@ -378,8 +379,14 @@ class NativeRPCAdapter:
             self._launch, self._process = effective_launch, process
             self._session = NativeRPCSession(self, process, session_id)
             return self._session
-        except Exception as error:
-            await self._fail_startup(process, error)
+        except BaseException as error:
+            if isinstance(error, Exception):
+                await self._fail_startup(process, error)
+            else:
+                # A cancelled startup has no session for close() to reach, so
+                # the child must be stopped here or it outlives the session.
+                with contextlib.suppress(Exception):
+                    await process.close()
             raise
 
     async def _fail_startup(

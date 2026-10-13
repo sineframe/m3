@@ -56,6 +56,10 @@ class PiControlClosed(PiControlError):
     """The control channel is not connected or has been closed."""
 
 
+class PiControlTimeout(PiControlClosed):
+    """The control extension did not connect before its startup limit."""
+
+
 @dataclass(frozen=True)
 class PiControlScope:
     generation: str
@@ -360,7 +364,7 @@ class PiControlChannel:
         try:
             await asyncio.wait_for(self._connected.wait(), timeout or self.timeout)
         except asyncio.TimeoutError:
-            raise PiControlClosed("control extension did not connect") from None
+            raise PiControlTimeout("control extension did not connect") from None
 
     async def wait_disconnected(self) -> None:
         """Wait until the authenticated extension connection is lost."""
@@ -697,5 +701,6 @@ __all__ = [
     "PiControlError",
     "PiControlProtocolError",
     "PiControlScope",
+    "PiControlTimeout",
     "validate_control_envelope",
 ]

@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from m3._types.specs import AgentSpec
+from m3.configuration import Config, load_config
 from m3.harness import native as native_module
 from m3.harness.contracts import HarnessLaunch
 from m3.harness.opencode import OpenCodeHarnessAdapter
@@ -18,12 +19,14 @@ from m3.server_group import ServerGroupSnapshot
 from m3.types import ACPAgent, ServerBinding, StdioServer
 
 
-def _launch() -> HarnessLaunch:
+def _launch(config: Config | None = None) -> HarnessLaunch:
     spec = AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
     )
-    return HarnessLaunch(spec, ServerGroupSnapshot(), (), spec.tool_policy)
+    return HarnessLaunch(
+        spec, ServerGroupSnapshot(), (), spec.tool_policy, config=config or Config()
+    )
 
 
 def _executable(path: Path) -> str:
@@ -46,6 +49,7 @@ class _FakeRun:
         self.timeouts = dict(timeouts or {})
         self.delay = delay
         self.calls: Counter[tuple[str, ...]] = Counter()
+        self.limits: list[float | None] = []
         self._lock = threading.Lock()
 
     def __call__(
@@ -54,6 +58,7 @@ class _FakeRun:
         key = tuple(argv[1:])
         with self._lock:
             self.calls[key] += 1
+            self.limits.append(kwargs.get("timeout"))
             remaining = self.timeouts.get(key, 0)
             if remaining:
                 self.timeouts[key] = remaining - 1
@@ -91,6 +96,21 @@ async def test_opencode_preflight_retries_probe_timeout(
 
 
 @pytest.mark.asyncio
+async def test_probe_attempts_use_the_configured_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeRun(_OPENCODE_OUTPUTS)
+    monkeypatch.setattr(subprocess, "run", fake)
+    adapter = OpenCodeHarnessAdapter(executable=_executable(tmp_path / "opencode"))
+    config = load_config({"harness_probes": {"timeout_seconds": 7}}, env={})
+
+    readiness = await adapter.preflight(_launch(config))
+
+    assert readiness.ready, readiness.reason
+    assert fake.limits == [7.0, 7.0]
+
+
+@pytest.mark.asyncio
 async def test_missing_opencode_executable_is_not_ready(tmp_path: Path) -> None:
     adapter = OpenCodeHarnessAdapter(executable=str(tmp_path / "missing"))
 
@@ -123,7 +143,7 @@ def _codex_with_versions(
 
     probes: list[tuple[str, threading.Thread]] = []
 
-    def probe(executable: str, args: tuple[str, ...]) -> str | None:
+    def probe(executable: str, args: tuple[str, ...], **_kwargs: object) -> str | None:
         assert args == ("--version",)
         probes.append((executable, threading.current_thread()))
         return versions[executable].pop(0)
@@ -148,9 +168,9 @@ async def test_codex_capabilities_never_probe_and_prepare_probes_off_the_loop(
 
     assert not _elicitation(adapter)
     assert probes == []
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert _elicitation(adapter)
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert len(probes) == 1
     assert probes[0][1] is not threading.main_thread()
 
@@ -165,10 +185,10 @@ async def test_codex_retries_a_failed_version_probe_on_the_next_prepare(
     )
     adapter = codex_module.CodexHarnessAdapter(executable=executable)
 
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert not _elicitation(adapter)
     assert len(probes) == 1
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert _elicitation(adapter)
     assert len(probes) == 2
 
@@ -184,14 +204,14 @@ async def test_codex_capabilities_stay_with_their_executable(
     )
     adapter = codex_module.CodexHarnessAdapter(executable=first)
 
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert _elicitation(adapter)
     adapter.executable = second
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert not _elicitation(adapter)
     # A failed probe of another binary leaves the first binary's result alone.
     adapter.executable = first
     assert _elicitation(adapter)
-    await adapter.prepare_capabilities()
+    await adapter.prepare_capabilities(Config())
     assert _elicitation(adapter)
     assert [executable for executable, _ in probes] == [first, second]

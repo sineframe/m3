@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..agent_session import AdapterTurn
+from ..configuration import Config
 from ..elicitation import ElicitationPlan
 from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
@@ -61,6 +62,8 @@ _INITIALIZE_SETTING = "harnesses.codex.timeouts.initialize_seconds"
 # thread/start replies only after Codex has started the thread's MCP servers,
 # so this budget contains each server's own startup_timeout_sec.
 _STARTUP_SETTING = "harnesses.codex.timeouts.startup_seconds"
+# One deadline per account/login/start or account/read request.
+_ACCOUNT_SETTING = "harnesses.codex.timeouts.account_seconds"
 # Codex wording for a required MCP server that failed during thread/start.
 _MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
 # Bound for Codex's redacted error text kept in a startup error, and for how
@@ -72,8 +75,6 @@ _REASON_SCAN_LIMIT = 4 * _REASON_LIMIT
 # prefers them. The App Server reads neither from its environment, so M3 signs
 # it in with the key over the protocol.
 _CODEX_API_KEY_TARGETS = ("CODEX_API_KEY", "OPENAI_API_KEY")
-# Bounds one account request during startup; both are local to the App Server.
-_ACCOUNT_REQUEST_TIMEOUT_SECONDS = 15.0
 
 # App Server requests that wait for a user to approve a native command, file
 # change, or sandbox widening. Codex blocks the turn until each is answered.
@@ -456,7 +457,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             stat.st_size,
         )
 
-    async def prepare_capabilities(self) -> None:
+    async def prepare_capabilities(self, config: Config) -> None:
         """Probe the current binary's version off the event loop.
 
         A successful probe is kept for that executable identity; a failed one
@@ -465,7 +466,12 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         identity = self._executable_identity()
         if identity in self._interaction_by_executable:
             return
-        version = await asyncio.to_thread(probe_help, self.executable, ("--version",))
+        version = await asyncio.to_thread(
+            probe_help,
+            self.executable,
+            ("--version",),
+            timeout_seconds=config.harness_probes.timeout_seconds,
+        )
         if version is None:
             return
         supported = (version.splitlines() or [""])[0].strip() == "codex-cli 0.156.1"
@@ -735,12 +741,15 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         return environment
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        await self.prepare_capabilities()
+        await self.prepare_capabilities(launch.config)
         ready = await super().preflight(launch)
         if not ready.ready:
             return ready
         help_text = await asyncio.to_thread(
-            probe_help, self.executable, ("app-server", "--help")
+            probe_help,
+            self.executable,
+            ("app-server", "--help"),
+            timeout_seconds=launch.config.harness_probes.timeout_seconds,
         )
         if help_text is None or "app-server" not in help_text.lower():
             return Readiness(
@@ -866,12 +875,16 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         return self._thread_id
 
     async def _startup_request(
-        self, process: JsonRpcProcess, method: str, params: Mapping[str, Any]
+        self,
+        process: JsonRpcProcess,
+        launch: HarnessLaunch,
+        method: str,
+        params: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         """Send one startup request and return its response frame.
 
         Frames that arrive first are kept for the turn loop, as during
-        initialize and thread/start.
+        initialize and thread/start; they do not extend the request's deadline.
         """
 
         self._request_id += 1
@@ -880,11 +893,13 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             process,
             {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
         )
+        settings = launch.config.harnesses.codex.timeouts
+        seconds = harness_timeout(launch, settings, "account_seconds")
+        deadline = asyncio.get_running_loop().time() + seconds
         while True:
-            try:
-                frame = await process.next(_ACCOUNT_REQUEST_TIMEOUT_SECONDS)
-            except asyncio.TimeoutError:
-                raise HarnessStartupError(f"Codex {method} timed out") from None
+            frame = await _startup_frame(
+                process, deadline, method, _ACCOUNT_SETTING, seconds
+            )
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError(f"Codex {method} failed")
             if "method" not in frame and frame.get("id") == request_id:
@@ -904,7 +919,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
 
         if api_key is not None:
             response = await self._startup_request(
-                process, "account/login/start", {"type": "apiKey", "apiKey": api_key}
+                process,
+                launch,
+                "account/login/start",
+                {"type": "apiKey", "apiKey": api_key},
             )
             error = response.get("error")
             if error is not None or not isinstance(response.get("result"), Mapping):
@@ -922,7 +940,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 )
                 raise HarnessStartupError(f"{summary}: {reason}" if reason else summary)
         response = await self._startup_request(
-            process, "account/read", {"refreshToken": False}
+            process, launch, "account/read", {"refreshToken": False}
         )
         result = response.get("result")
         if not isinstance(result, Mapping):
