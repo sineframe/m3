@@ -26,7 +26,7 @@ See [Find slow steps in a test run](guides-results-timings.md), which also cover
 
 ## SDK settings
 
-The SDK resolves four settings. Each can come from an explicit argument, an `M3_*` environment variable, or a `[tool.m3]` table in `pyproject.toml`. `cli` and `results` settings are nested tables in `[tool.m3]` and have no environment variable.
+The SDK resolves the settings below. Each can come from an explicit argument or a `[tool.m3]` table in `pyproject.toml`; `artifact_policy` and `protocol_revision` can also come from an `M3_*` environment variable. The other settings are nested tables in `[tool.m3]` and have no environment variable.
 
 | Setting | Environment variable | `[tool.m3]` key | Values | Default | Effect |
 | --- | --- | --- | --- | --- | --- |
@@ -34,10 +34,15 @@ The SDK resolves four settings. Each can come from an explicit argument, an `M3_
 | `protocol_revision` | `M3_PROTOCOL_REVISION` | `protocol_revision` | `auto`, or a revision identifier made of letters, digits, `.`, `_`, and `-` that starts with a letter or digit | `auto` | Default MCP protocol revision for `kit.direct(...)` when the call passes no `protocol=` argument. `auto` and the revision of the bundled MCP client are accepted; any other revision makes `direct(...)` raise `UnsupportedFeature`. |
 | `cli.project_python_timeout_seconds` | — | `[tool.m3.cli]` `project_python_timeout_seconds` | number greater than 0, at most 3600 | `15` | Seconds `m3 setup`, `m3 test`, `m3 ci test`, and `m3 doctor` wait for the project-Python check, and `m3 test` and `m3 ci test` wait for the `--baseline` lookup. `m3 setup` reads it from `pyproject.toml` only; it has no `--m3-config`. |
 | `results.busy_timeout_seconds` | — | `[tool.m3.results]` `busy_timeout_seconds` | number from 0 to 3600 | `5` | SQLite lock wait for the stores the pytest plugin opens. The run manifest and feedback-export stores use the run's value; the default store of each kit uses that kit's resolved value, so `config={...}` or `cwd=` on a kit changes it. A store passed explicitly with `store=` keeps its own `busy_timeout_ms`. |
+| `harnesses.codex.timeouts.initialize_seconds` | — | `[tool.m3.harnesses.codex.timeouts]` `initialize_seconds` | number greater than 0, at most 3600 | `30` | Seconds the Codex App Server has to answer `initialize`. |
+| `harnesses.codex.timeouts.startup_seconds` | — | `[tool.m3.harnesses.codex.timeouts]` `startup_seconds` | number greater than 0, at most 3600 | `120` | Seconds Codex has to answer `thread/start`. Codex answers only after it has started the session's MCP servers, so this limit contains their MCP startup budget. One deadline covers the whole request; other frames Codex sends meanwhile do not extend it. |
+| `harnesses.opencode.timeouts.startup_seconds` | — | `[tool.m3.harnesses.opencode.timeouts]` `startup_seconds` | number greater than 0, at most 3600 | `60` | Seconds `opencode serve` has to print its endpoint. |
+| `harnesses.opencode.timeouts.session_creation_seconds` | — | `[tool.m3.harnesses.opencode.timeouts]` `session_creation_seconds` | number greater than 0, at most 3600 | `60` | Seconds OpenCode has to answer `POST /session`. |
+| `mcp_timeouts.startup_seconds` | — | `[tool.m3.mcp_timeouts]` `startup_seconds` | number greater than 0, at most 3600 | unset | MCP startup budget passed to the harness's own MCP client for every server. Unset keeps each harness's native default. See [MCP startup budgets](#mcp-startup-budgets). |
 
 For each setting the highest-precedence source that provides a value wins:
 
-1. An explicit argument: `load_config(artifact_policy="always")`, `load_config({"protocol_revision": "auto"})`, or a mapping passed as `MCPTestKit(config={...})`, including nested form such as `MCPTestKit(config={"results": {"busy_timeout_seconds": 30}})`.
+1. An explicit argument: `load_config(artifact_policy="always")`, `load_config({"protocol_revision": "auto"})`, or a mapping passed as `MCPTestKit(config={...})`, including nested form such as `MCPTestKit(config={"results": {"busy_timeout_seconds": 30}})` or `MCPTestKit(config={"harnesses": {"codex": {"timeouts": {"startup_seconds": 90}}}})`.
 2. The process environment. `MCPTestKit(env={...})` replaces it, so `MCPTestKit(env={})` ignores ambient `M3_*` variables.
 3. The `[tool.m3]` table of the nearest `pyproject.toml`, searching from the working directory (or `MCPTestKit(cwd=...)`) up through its parents. For `m3 test` and `m3 ci test` the working directory is the directory pytest runs in: the project root when `--project-root` is given, otherwise the directory you run the command from. Only the first `pyproject.toml` found is read, even if it has no `[tool.m3]` table. `--m3-config PATH` (on `m3 test`, `m3 ci test`, `m3 doctor`, and `pytest -p m3.pytest_plugin`) reads that file's `[tool.m3]` table instead, and `pyproject.toml` is not read. A relative path is relative to the directory you run the command from. A missing file, or a file without `[tool.m3]`, is an `invalid_project` error.
 4. The default.
@@ -56,6 +61,42 @@ project_python_timeout_seconds = 60
 
 [tool.m3.results]
 busy_timeout_seconds = 30
+
+[tool.m3.harnesses.codex.timeouts]
+startup_seconds = 90
+
+[tool.m3.mcp_timeouts]
+startup_seconds = 60
+```
+
+### Harness startup limits
+
+The `harnesses.<name>.timeouts` settings bound how long m3 waits for a native harness to start a session. A typed harness can override them for its own sessions with `timeouts=HarnessTimeouts(...)`; fields left unset keep the resolved setting. Codex accepts `initialize_seconds` and `startup_seconds`; OpenCode accepts `startup_seconds` and `session_creation_seconds`. Any other field is a validation error when the harness value is built. Agent selections accept the same value as a `timeouts` key for `codex` and `opencode`.
+
+```python
+from m3.types import Codex, HarnessTimeouts
+
+harness = Codex(model="gpt-6.1-sol", timeouts=HarnessTimeouts(startup_seconds=180))
+```
+
+When a limit runs out, session startup fails with a cause that names the phase, the limit, and the setting that controls it, for example `Codex thread/start did not finish within 120s (harnesses.codex.timeouts.startup_seconds)`.
+
+### MCP startup budgets
+
+`mcp_timeouts.startup_seconds` and `McpTimeouts(startup_seconds=...)` on a `StdioServer` or `HTTPServer` set the budget each harness's own MCP client has to start a server. A value on the server wins over the setting. When neither is set, m3 writes nothing and the harness's native default applies.
+
+| Harness | Native field m3 writes | Default when unset | Notes |
+| --- | --- | --- | --- |
+| Codex | `startup_timeout_sec` for each server in `config.toml` | Codex's own (30 seconds in Codex 0.162.1) | Per server. |
+| OpenCode | `timeout` (milliseconds) for each server in its config | OpenCode's own | Per server. OpenCode applies the same value to requests made to the server, not only to connecting. |
+| Claude Code | `MCP_TIMEOUT` (milliseconds) in its environment | Claude Code's own | One value for every server. Servers that resolve to different budgets, including one that keeps the native default, fail startup with `Claude Code applies one MCP startup timeout to every server`. |
+
+For Codex, MCP startup happens inside `thread/start`, so the earlier of `harnesses.codex.timeouts.startup_seconds` and the MCP budget ends a slow startup.
+
+```python
+from m3.types import McpTimeouts, StdioServer
+
+server = StdioServer(name="slow", command="python", args=("slow_mcp.py",), timeouts=McpTimeouts(startup_seconds=75))
 ```
 
 ### Check the resolved settings
@@ -74,11 +115,21 @@ The report's `configuration.settings` object has this shape; `origin` for a `pyp
   "protocol_revision": "auto",
   "cli": {"project_python_timeout_seconds": 15.0},
   "results": {"busy_timeout_seconds": 5.0},
+  "harnesses": {
+    "codex": {"timeouts": {"initialize_seconds": 30.0, "startup_seconds": 120.0}},
+    "opencode": {"timeouts": {"startup_seconds": 60.0, "session_creation_seconds": 60.0}}
+  },
+  "mcp_timeouts": {"startup_seconds": null},
   "sources": {
     "artifact_policy": {"source": "environment", "origin": "env:M3_ARTIFACT_POLICY"},
     "protocol_revision": {"source": "default", "origin": "default"},
     "cli.project_python_timeout_seconds": {"source": "default", "origin": "default"},
-    "results.busy_timeout_seconds": {"source": "default", "origin": "default"}
+    "results.busy_timeout_seconds": {"source": "default", "origin": "default"},
+    "harnesses.codex.timeouts.initialize_seconds": {"source": "default", "origin": "default"},
+    "harnesses.codex.timeouts.startup_seconds": {"source": "default", "origin": "default"},
+    "harnesses.opencode.timeouts.startup_seconds": {"source": "default", "origin": "default"},
+    "harnesses.opencode.timeouts.session_creation_seconds": {"source": "default", "origin": "default"},
+    "mcp_timeouts.startup_seconds": {"source": "default", "origin": "default"}
   }
 }
 ```
@@ -93,4 +144,4 @@ An invalid setting exits 2 and names the code, field, origin, and reason without
 m3 doctor: configuration error (code=invalid_configuration field=artifact_policy origin=env:M3_ARTIFACT_POLICY reason=must be one of failed, always, or never)
 ```
 
-The `code` is `invalid_configuration` for a bad value, `unknown_setting` for an unrecognized `[tool.m3]` key or nested key (the field is the dotted name, such as `results.foo`), and `invalid_project` for a `pyproject.toml` or `--m3-config` file that is not valid TOML or whose `[tool.m3]` is not a table, an `--m3-config` file that does not exist (`field=config_file`), or one without a `[tool.m3]` table. Exit 1 means the settings resolved but another requirement, such as the project Python environment, is not ready.
+The `code` is `invalid_configuration` for a bad value, `unknown_setting` for an unrecognized `[tool.m3]` key or nested key (the field is the dotted name, such as `results.foo` or `harnesses.claude_code`), and `invalid_project` for a `pyproject.toml` or `--m3-config` file that is not valid TOML or whose `[tool.m3]` is not a table, an `--m3-config` file that does not exist (`field=config_file`), or one without a `[tool.m3]` table. Exit 1 means the settings resolved but another requirement, such as the project Python environment, is not ready.

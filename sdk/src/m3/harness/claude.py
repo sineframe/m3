@@ -48,6 +48,7 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnRequest,
     HarnessTurnResult,
+    mcp_startup_seconds,
 )
 from .native import (
     MAX_QUEUE_ITEMS,
@@ -91,6 +92,25 @@ def _valid_identifier(value: object) -> bool:
 
 def _safe_identifier(value: object) -> str | dict[str, str]:
     return cast(str, value) if _valid_identifier(value) else dict(_MALFORMED)
+
+
+def _claude_mcp_startup(launch: HarnessLaunch) -> float | None:
+    """Return the one MCP startup budget Claude Code applies to every server.
+
+    ``MCP_TIMEOUT`` is process-wide, so servers that need different budgets
+    (including one that keeps the native default) cannot be expressed.
+    """
+
+    budgets = {
+        mcp_startup_seconds(launch, server)
+        for server in launch.configurations
+        if server.available
+    }
+    if len(budgets) > 1:
+        raise HarnessStartupError(
+            "Claude Code applies one MCP startup timeout to every server"
+        )
+    return next(iter(budgets), None)
 
 
 def _safe_json_value(value: object) -> JsonValue:
@@ -443,6 +463,9 @@ class ClaudeCodeHarnessAdapter:
         try:
             environment = _isolated_environment(root, self.environment)
             environment["DISABLE_UPDATES"] = "1"
+            budget = _claude_mcp_startup(launch)
+            if budget is not None:
+                environment["MCP_TIMEOUT"] = str(max(1, round(budget * 1000)))
             harness = launch.spec.harness
             if harness is None:
                 raise HarnessStartupError("Claude Code harness is unavailable")

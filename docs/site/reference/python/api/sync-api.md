@@ -280,6 +280,8 @@ m3.sync_api.Config(
     protocol_revision: str = 'auto',
     cli: m3.configuration.CliSettings = ...,
     results: m3.configuration.ResultsSettings = ...,
+    harnesses: m3.configuration.HarnessSettings = ...,
+    mcp_timeouts: m3.configuration.McpTimeoutSettings = ...,
     sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin] = ...,
 ) -> None
 ```
@@ -294,6 +296,8 @@ Model fields:
 | `protocol_revision` | `str` | No | `'auto'` | `strict=True` | — |
 | `cli` | `m3.configuration.CliSettings` | No | `factory m3.configuration.CliSettings()` | — | — |
 | `results` | `m3.configuration.ResultsSettings` | No | `factory m3.configuration.ResultsSettings()` | — | — |
+| `harnesses` | `m3.configuration.HarnessSettings` | No | `factory m3.configuration.HarnessSettings()` | — | — |
+| `mcp_timeouts` | `m3.configuration.McpTimeoutSettings` | No | `factory m3.configuration.McpTimeoutSettings()` | — | — |
 | `sources` | `collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` | No | `factory m3.configuration._default_origins()` | — | — |
 - `provenance` (property): Compatibility name for callers that call origins provenance.
 

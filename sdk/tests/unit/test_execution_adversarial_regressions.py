@@ -188,6 +188,35 @@ async def test_fork_preserves_runtime_loopback_registration_and_fresh_identity()
     assert child_adapter.last_launch.configurations[-1].endpoint is not None
 
 
+@pytest.mark.asyncio
+async def test_fork_launches_with_the_source_sessions_settings() -> None:
+    settings = {
+        "harnesses": {"codex": {"timeouts": {"startup_seconds": 300}}},
+        "mcp_timeouts": {"startup_seconds": 90},
+    }
+    source_adapter = DeterministicHarnessAdapter()
+    async with AsyncMCPTestKit(settings, env={}, cwd="/tmp/m3-no-project") as kit:
+        source = kit.agent_session(_spec(), adapter=source_adapter)
+        async with source:
+            await source.send("source")
+        request = SessionForkRequest(
+            mode="replay",
+            replay_inputs=(UserMessage(content=(TextContent(text="replay"),)),),
+            source_turn_id=source.result.turns[0].snapshot.turn_id,
+        )
+        child_adapter = DeterministicHarnessAdapter()
+        child = await source.fork(
+            request, adapter_factory=lambda _spec, _provenance: child_adapter
+        )
+        async with child:
+            await child.send("replay")
+
+    assert child_adapter.last_launch is not None
+    config = child_adapter.last_launch.config
+    assert config.harnesses.codex.timeouts.startup_seconds == 300
+    assert config.mcp_timeouts.startup_seconds == 90
+
+
 class _ToolEvidenceAdapter:
     supported_content_kinds = frozenset({"text"})
 

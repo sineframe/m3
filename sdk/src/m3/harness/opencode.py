@@ -57,6 +57,9 @@ from .contracts import (
     HarnessStartupError,
     HarnessTurnRequest,
     HarnessTurnResult,
+    harness_timeout,
+    mcp_startup_seconds,
+    startup_timeout,
 )
 from .native import (
     MAX_FRAME_BYTES,
@@ -86,6 +89,8 @@ from .observations import (
 )
 
 _URL = re.compile(r"https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+")
+_STARTUP_SETTING = "harnesses.opencode.timeouts.startup_seconds"
+_SESSION_CREATION_SETTING = "harnesses.opencode.timeouts.session_creation_seconds"
 _DIALECT_PROBE_CONTROL_KEYS = frozenset(
     {"M3_OPENCODE_MODE", "M3_PROBE_MARKER", "M3_VERSION_MARKER"}
 )
@@ -156,6 +161,7 @@ def opencode_configuration(
     servers: dict[str, dict[str, Any]] = {}
     for name, value in raw_servers.items():
         source = source_servers.get(name)
+        budget = None if source is None else mcp_startup_seconds(launch, source)
         if "command" in value:
             item: dict[str, Any] = {
                 "type": "local",
@@ -181,6 +187,10 @@ def opencode_configuration(
                     for key, raw in headers.items()
                 },
             }
+        # OpenCode's per-server ``timeout`` (milliseconds) bounds connecting to
+        # the server and its requests; its own default applies when unset.
+        if budget is not None:
+            item["timeout"] = max(1, round(budget * 1000))
         servers[name] = item
     policy = launch.tool_policy
     if isinstance(policy, NativeToolPolicy):
@@ -613,7 +623,11 @@ class OpenCodeHarnessAdapter:
                 cwd=workspace,
             )
             assert owner.process is not None and owner.process.stdout is not None
-            base_url = await self._read_server_url(owner.process.stdout)
+            settings = launch.config.harnesses.opencode.timeouts
+            base_url = await self._read_server_url(
+                owner.process.stdout,
+                harness_timeout(launch, settings, "startup_seconds"),
+            )
             # OpenCode scopes server sessions to a project directory.  The
             # official API accepts this as a request header, not as a
             # session-body field.
@@ -622,24 +636,20 @@ class OpenCodeHarnessAdapter:
                 timeout=httpx.Timeout(30.0, connect=5.0),
                 headers={"x-opencode-directory": str(workspace)},
             )
-            async with client.stream("POST", "/session", json={}) as response:
-                if response.status_code >= 400:
-                    try:
-                        error_body = await self._read_bounded_response(response)
-                    except _ResponseTooLarge:
-                        error_body = b""
-                    message, _ = self._native_failure(
-                        f"OpenCode session could not be created "
-                        f"(HTTP {response.status_code})",
-                        _native_error_object(error_body),
-                    )
-                    raise HarnessStartupError(message)
-                try:
-                    body = json.loads(await self._read_bounded_response(response))
-                except json.JSONDecodeError:
-                    raise HarnessStartupError(
-                        "OpenCode session response is invalid"
-                    ) from None
+            creation_seconds = harness_timeout(
+                launch, settings, "session_creation_seconds"
+            )
+            try:
+                body = await asyncio.wait_for(
+                    self._create_session(client, creation_seconds), creation_seconds
+                )
+            except (asyncio.TimeoutError, httpx.TimeoutException):
+                raise startup_timeout(
+                    "OpenCode",
+                    "session creation",
+                    _SESSION_CREATION_SETTING,
+                    creation_seconds,
+                ) from None
             session_id = body.get("id") if isinstance(body, Mapping) else None
             if not isinstance(session_id, str) or not session_id:
                 raise HarnessStartupError("OpenCode session identity was unavailable")
@@ -663,6 +673,33 @@ class OpenCodeHarnessAdapter:
             except BaseException:
                 pass
             raise
+
+    async def _create_session(self, client: httpx.AsyncClient, seconds: float) -> Any:
+        """POST /session and return its decoded body."""
+
+        async with client.stream(
+            "POST",
+            "/session",
+            json={},
+            timeout=httpx.Timeout(seconds, connect=min(5.0, seconds)),
+        ) as response:
+            if response.status_code >= 400:
+                try:
+                    error_body = await self._read_bounded_response(response)
+                except _ResponseTooLarge:
+                    error_body = b""
+                message, _ = self._native_failure(
+                    f"OpenCode session could not be created "
+                    f"(HTTP {response.status_code})",
+                    _native_error_object(error_body),
+                )
+                raise HarnessStartupError(message)
+            try:
+                return json.loads(await self._read_bounded_response(response))
+            except json.JSONDecodeError:
+                raise HarnessStartupError(
+                    "OpenCode session response is invalid"
+                ) from None
 
     async def start(self, spec: Any) -> None:
         raise HarnessStartupError("OpenCode requires a resolved harness launch")
@@ -717,18 +754,27 @@ class OpenCodeHarnessAdapter:
         if self._session is not None:
             await self._session.cancel()
 
-    async def _read_server_url(self, stream: asyncio.StreamReader) -> str:
-        for _ in range(100):
+    async def _read_server_url(
+        self, stream: asyncio.StreamReader, seconds: float
+    ) -> str:
+        """Return the endpoint ``opencode serve`` prints, within ``seconds``."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+        while True:
             try:
-                line = await asyncio.wait_for(read_bounded_line(stream), timeout=0.2)
+                line = await asyncio.wait_for(
+                    read_bounded_line(stream), timeout=max(0.0, deadline - loop.time())
+                )
             except asyncio.TimeoutError:
-                continue
+                raise startup_timeout(
+                    "OpenCode", "server startup", _STARTUP_SETTING, seconds
+                ) from None
             if not line:
-                break
+                raise HarnessStartupError("OpenCode server endpoint was unavailable")
             match = _URL.search(line.decode("utf-8"))
             if match is not None:
                 return match.group(0)
-        raise HarnessStartupError("OpenCode server endpoint was unavailable")
 
     @staticmethod
     async def _read_bounded_response(response: httpx.Response) -> bytes:

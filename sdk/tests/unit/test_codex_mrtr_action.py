@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from m3.configuration import Config
 from m3.elicitation import (
     ElicitationResponse,
     expect_form,
@@ -1616,7 +1617,7 @@ def test_codex_modern_mcp_configuration_preserves_explicit_server_protocol() -> 
         "connection-1",
         command="mcp-server",
     )
-    launch = SimpleNamespace(configurations=(server,))
+    launch = SimpleNamespace(configurations=(server,), config=Config())
 
     config = codex_configuration(launch)
     assert config["features"]["mcp_2026_07_28"] is True
@@ -1631,7 +1632,7 @@ def test_codex_modern_mcp_configuration_preserves_explicit_server_protocol() -> 
 
     legacy = replace(server, environment={"CODEX_MCP_PROTOCOL_VERSION": "2025-06-18"})
     with pytest.raises(HarnessStartupError, match="protocol version is unsupported"):
-        codex_configuration(SimpleNamespace(configurations=(legacy,)))
+        codex_configuration(SimpleNamespace(configurations=(legacy,), config=Config()))
 
 
 def test_codex_planned_mrtr_rejects_only_the_legacy_target_server() -> None:

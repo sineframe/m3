@@ -22,6 +22,7 @@ from uuid import uuid4
 from . import _timing
 from ._types.agent_identity import project_agent_identity
 from ._types.specs import AgentSpec
+from .configuration import Config
 from .elicitation import ElicitationPlan
 from .errors import (
     CleanupError,
@@ -409,10 +410,12 @@ class AsyncAgentSession:
         runtime_models_dir: str | Path | None = None,
         runtime_project_root: str | Path | None = None,
         managed_input_runtime: ManagedInputRuntime | None = None,
+        config: Config | None = None,
     ) -> None:
         self.spec = spec
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
+        self._config = config if config is not None else Config()
         needs_elicitation = (
             managed_input_runtime is not None or spec.elicitation is not None
         )
@@ -910,6 +913,7 @@ class AsyncAgentSession:
                     self._interactions,
                     str(self._workspace.root),
                     capture=self._server_manager.capture,
+                    config=self._config,
                 )
                 launch = await self._preflight_launch(launch)
                 result = opener(launch)
@@ -926,6 +930,7 @@ class AsyncAgentSession:
                         self._interactions,
                         str(self._workspace.root),
                         capture=self._server_manager.capture,
+                        config=self._config,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -949,6 +954,7 @@ class AsyncAgentSession:
                     self.spec.tool_policy,
                     self._interactions,
                     str(self._workspace.root),
+                    config=self._config,
                 )
                 launch = await self._preflight_launch(launch)
                 result = opener(launch)
@@ -965,6 +971,7 @@ class AsyncAgentSession:
                         self.spec.tool_policy,
                         self._interactions,
                         str(self._workspace.root),
+                        config=self._config,
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
@@ -3119,6 +3126,7 @@ class AsyncAgentSession:
             runtime_invocation_dir=self._runtime_invocation_dir,
             runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,
+            config=self._config,
         )
 
     async def aclose(self) -> None:

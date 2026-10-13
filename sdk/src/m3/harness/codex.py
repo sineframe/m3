@@ -41,6 +41,9 @@ from .contracts import (
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
+    harness_timeout,
+    mcp_startup_seconds,
+    startup_timeout,
 )
 from .native import launch_secrets, probe_help
 from .observations import (
@@ -54,8 +57,10 @@ from .observations import (
     UsageObservedObservation,
 )
 
-# Covers Codex's own per-server MCP startup timeout (10 seconds by default).
-_THREAD_START_TIMEOUT_SECONDS = 30.0
+_INITIALIZE_SETTING = "harnesses.codex.timeouts.initialize_seconds"
+# thread/start replies only after Codex has started the thread's MCP servers,
+# so this budget contains each server's own startup_timeout_sec.
+_STARTUP_SETTING = "harnesses.codex.timeouts.startup_seconds"
 # Codex wording for a required MCP server that failed during thread/start.
 _MCP_STARTUP_FAILURE = "required MCP servers failed to initialize:"
 # Bound for Codex's redacted error text kept in a startup error, and for how
@@ -197,6 +202,8 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
             if config.required:
                 raise HarnessStartupError("required MCP server is unavailable")
             continue
+        budget = mcp_startup_seconds(launch, config)
+        startup = {} if budget is None else {"startup_timeout_sec": float(budget)}
         if config.transport.value == "stdio":
             if not config.command:
                 raise HarnessStartupError("MCP server command is unavailable")
@@ -230,6 +237,7 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 "required": config.required,
                 **({"env": literal_env} if literal_env else {}),
                 **({"env_vars": env_vars} if env_vars else {}),
+                **startup,
             }
         else:
             if not config.endpoint:
@@ -249,6 +257,7 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 "required": config.required,
                 **({"http_headers": literal_headers} if literal_headers else {}),
                 **({"env_http_headers": env_headers} if env_headers else {}),
+                **startup,
             }
     # A ChatGPT login can expose account-connected apps even in an isolated
     # home. Disable apps and plugins so managed tests do not inherit tools,
@@ -281,6 +290,8 @@ def render_codex_config(launch: HarnessLaunch) -> str:
         # control characters (and is valid TOML basic-string syntax).
         lines.append(f"\n[mcp_servers.{json.dumps(name)}]")
         lines.append(f"required = {str(server['required']).lower()}")
+        if "startup_timeout_sec" in server:
+            lines.append(f"startup_timeout_sec = {server['startup_timeout_sec']!r}")
         if "command" in server:
             lines.append(f"command = {json.dumps(server['command'])}")
             lines.append(f"args = {json.dumps(server.get('args', []))}")
@@ -303,6 +314,22 @@ def _config_value(value: Any) -> str:
     if isinstance(value, SecretReference):
         return "${" + value.name + "}"
     return str(value)
+
+
+async def _startup_frame(
+    process: JsonRpcProcess,
+    deadline: float,
+    phase: str,
+    setting: str,
+    seconds: float,
+) -> Mapping[str, Any] | None:
+    """Read one startup frame without passing the phase's deadline."""
+
+    remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+    try:
+        return await process.next(remaining)
+    except asyncio.TimeoutError:
+        raise startup_timeout("Codex", phase, setting, seconds) from None
 
 
 def _canonical_native_json(value: Any) -> str | None:
@@ -757,8 +784,17 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 },
             },
         )
+        settings = launch.config.harnesses.codex.timeouts
+        initialize_seconds = harness_timeout(launch, settings, "initialize_seconds")
+        deadline = asyncio.get_running_loop().time() + initialize_seconds
         while True:
-            frame = await process.next(5.0)
+            frame = await _startup_frame(
+                process,
+                deadline,
+                "App Server initialization",
+                _INITIALIZE_SETTING,
+                initialize_seconds,
+            )
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex App Server initialization failed")
             if frame.get("id") == self._request_id:
@@ -796,8 +832,13 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         )
         # thread/start replies only after Codex has started the thread's MCP
         # servers, which regularly takes several seconds for a stdio server.
+        # One deadline covers the request: unrelated frames do not extend it.
+        startup_seconds = harness_timeout(launch, settings, "startup_seconds")
+        deadline = asyncio.get_running_loop().time() + startup_seconds
         while True:
-            frame = await process.next(_THREAD_START_TIMEOUT_SECONDS)
+            frame = await _startup_frame(
+                process, deadline, "thread/start", _STARTUP_SETTING, startup_seconds
+            )
             if frame is None or frame.get("__invalid_frame__"):
                 raise HarnessStartupError("Codex thread could not be started")
             if frame.get("id") == self._request_id:

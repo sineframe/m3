@@ -147,6 +147,7 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
         "manifest",
         "agent_mode_id",
         "session_config",
+        "timeouts",
     ):
         if field in entry:
             kwargs[field] = entry[field]
@@ -172,7 +173,8 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k in {"name", "model", "executable", "runtime", "version"}
+                if k
+                in {"name", "model", "executable", "runtime", "version", "timeouts"}
             },
         )
     if kind == "pi":
@@ -559,6 +561,7 @@ def expand(
                 "version",
                 "credential_env",
                 "credential_references",
+                "timeouts",
                 "_case_id",
                 "_matrix_id",
                 "_cell_id",
@@ -575,6 +578,7 @@ def expand(
                 "dialect",
                 "credential_env",
                 "credential_references",
+                "timeouts",
                 "_case_id",
                 "_matrix_id",
                 "_cell_id",

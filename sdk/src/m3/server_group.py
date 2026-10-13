@@ -163,10 +163,17 @@ class HarnessServerConfig:
     cwd: str | None = None
     tools: tuple[str, ...] = ()
     loopback_only: bool = False
+    # Per-server MCP startup budget from the server definition; ``None`` falls
+    # back to the run's ``mcp_timeouts`` setting.
+    mcp_startup_seconds: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", dict(self.environment))
         object.__setattr__(self, "headers", dict(self.headers))
+
+
+def _mcp_startup(server: StdioServer | HTTPServer) -> float | None:
+    return None if server.timeouts is None else server.timeouts.startup_seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -864,6 +871,7 @@ class ServerGroupManager:
                         args=server.args,
                         cwd=server.cwd,
                         environment=server.environment,
+                        mcp_startup_seconds=_mcp_startup(server),
                         reason=record.reason,
                         tools=record.tools,
                     )
@@ -879,6 +887,7 @@ class ServerGroupManager:
                         endpoint=record.endpoint or server.url,
                         headers=server.headers,
                         loopback_only=server.loopback_only,
+                        mcp_startup_seconds=_mcp_startup(server),
                         reason=record.reason,
                         tools=record.tools,
                     )
