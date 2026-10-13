@@ -3126,6 +3126,7 @@ class AsyncAgentSession:
             runtime_invocation_dir=self._runtime_invocation_dir,
             runtime_models_dir=self._runtime_models_dir,
             runtime_project_root=self._runtime_project_root,
+            config=self._config,
         )
 
     async def aclose(self) -> None:
