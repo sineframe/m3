@@ -26,7 +26,12 @@ from m3.harness.contracts import (
     HarnessTurnRequest,
     HarnessTurnResult,
 )
-from m3.harness.native import MAX_FRAME_BYTES, _server_configuration, write_config
+from m3.harness.native import (
+    MAX_FRAME_BYTES,
+    _server_configuration,
+    launch_secrets,
+    write_config,
+)
 from m3.harness.observation_sink import HarnessObservationSink
 from m3.harness.observations import (
     MessageChunkObservation,
@@ -2701,6 +2706,187 @@ async def test_claude_uses_workspace_cwd_and_separate_control_directory(
     assert Path(observed["config"]).resolve().parent != workspace.resolve()
     assert observed["config_exists"]
     await adapter.close()
+
+
+def _opencode_session_error_fixture(path: Path) -> str:
+    return _executable(
+        path,
+        """\
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+if "--version" in sys.argv:
+    print("1.18.15")
+    raise SystemExit(0)
+if "--help" in sys.argv:
+    print("serve")
+    raise SystemExit(0)
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args): pass
+    def do_POST(self):
+        data = json.dumps({"name": "UnknownError", "data": {"message": "bad key " + os.environ["OPENCODE_API_KEY"] + " " + os.environ["M3_LITERALS"]}}).encode()
+        self.send_response(500); self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(data)
+    def do_DELETE(self): self.send_response(204); self.end_headers()
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+print("http://127.0.0.1:%d" % server.server_address[1], flush=True)
+server.serve_forever()
+""",
+    )
+
+
+@pytest.mark.asyncio
+async def test_opencode_session_create_failure_keeps_status_and_redacted_cause(
+    tmp_path: Path,
+) -> None:
+    canary = "opencode-startup-canary-77aa"
+    header_canary = "Bearer opencode-literal-header-5e1f"
+    env_canary = "opencode-literal-env-8c20"
+    executable = _opencode_session_error_fixture(tmp_path / "opencode-error.py")
+    base = _launch()
+    spec = base.spec.model_copy(
+        update={
+            "harness": OpenCode(
+                model="fixture",
+                credential_references={
+                    "OPENCODE_API_KEY": SecretReference(
+                        source="environment", name="OPENCODE_API_KEY"
+                    )
+                },
+            )
+        }
+    )
+    configurations = (
+        HarnessServerConfig(
+            key="http",
+            transport=TransportKind.STREAMABLE_HTTP,
+            required=True,
+            available=True,
+            connection_id="h",
+            endpoint="https://example.test/mcp",
+            headers={"Authorization": header_canary, "X-Region": "eu-west"},
+        ),
+        HarnessServerConfig(
+            key="stdio",
+            transport=TransportKind.STDIO,
+            required=True,
+            available=True,
+            connection_id="s",
+            command="python",
+            environment={"API_TOKEN": env_canary, "RETRIES": "1"},
+        ),
+    )
+    launch = HarnessLaunch(spec, base.servers, configurations, base.tool_policy)
+    adapter = OpenCodeHarnessAdapter(
+        executable=executable,
+        environment={
+            "OPENCODE_API_KEY": canary,
+            "M3_LITERALS": f"{header_canary} {env_canary} RETRIES=1 eu-west",
+        },
+    )
+    with pytest.raises(HarnessStartupError) as caught:
+        await adapter.open(launch)
+    await adapter.close()
+    message = str(caught.value)
+    assert message.startswith("OpenCode session could not be created (HTTP 500)")
+    assert "UnknownError" in message and "bad key" in message
+    assert canary not in message
+    assert header_canary not in message and env_canary not in message
+    # Non-sensitive literals are not credentials and stay readable.
+    assert "RETRIES=1 eu-west" in message
+
+
+@pytest.mark.asyncio
+async def test_opencode_turn_error_keeps_native_name_and_redacted_reason() -> None:
+    canary = "opencode-turn-canary-31bd"
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    adapter._runtime_secrets = {canary}
+    error = {
+        "name": "UnknownError",
+        "data": {"message": f"Unexpected\nserver error {canary} " + "x" * 2000},
+    }
+    for client in (
+        _TurnFixture({"info": {"finish": "error", "error": error}, "parts": []}),
+        _TurnFixture({"error": error}, status=500),
+    ):
+        adapter._client = cast(Any, client)
+        result = await adapter._send(
+            HarnessTurnRequest.from_message("hello"), 1, "session"
+        )
+        assert result.status == "failed" and result.error is not None
+        assert result.error.message.startswith("OpenCode turn failed: UnknownError: ")
+        assert "Unexpected server error" in result.error.message
+        assert result.error.details["native_error"] == "UnknownError"
+        reason = result.error.details["reason"]
+        assert reason.endswith("…") and len(reason) == 1024
+        assert canary not in repr(result)
+    # An unusable error object leaves the fixed message.
+    adapter._client = cast(
+        Any, _TurnFixture({"info": {"finish": "error", "error": True}, "parts": []})
+    )
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.error is not None
+    assert result.error.message == "OpenCode turn failed"
+    assert not result.error.details
+
+
+@pytest.mark.asyncio
+async def test_opencode_turn_reason_redacts_urls_and_launch_credentials() -> None:
+    pem = "-----BEGIN PRIVATE KEY-----\nMIIE-CANARY\n-----END PRIVATE KEY-----"
+    endpoint = "http://127.0.0.1:5555/api/mcp/s/ZapPathCanary/mcp?k=QUERY-CANARY"
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch_secrets = launch_secrets(
+        HarnessLaunch(
+            base.spec,
+            base.servers,
+            (
+                HarnessServerConfig(
+                    key="remote",
+                    transport=TransportKind.STREAMABLE_HTTP,
+                    required=True,
+                    available=True,
+                    connection_id="remote-connection",
+                    endpoint=endpoint,
+                    environment={
+                        "PRIVATE_KEY": pem,
+                        "API_TOKEN": "ghp_literal_canary",
+                        "MODE": "stream",
+                    },
+                ),
+            ),
+            base.tool_policy,
+        )
+    )
+    message, details = adapter._native_failure(
+        "OpenCode turn failed",
+        {
+            "name": "UnknownError",
+            "data": {
+                "message": f"fetch {endpoint} failed (id 1); bad key {pem}, "
+                "pat ghp_literal_canary, token=4821, stream closed"
+            },
+        },
+    )
+    for canary in (
+        "ZapPathCanary",
+        "QUERY-CANARY",
+        "MIIE-CANARY",
+        "4821",
+        "ghp_literal_canary",
+    ):
+        assert canary not in message and canary not in repr(details)
+    assert message == (
+        "OpenCode turn failed: UnknownError: fetch http://127.0.0.1:5555/… failed "
+        "(id 1); bad key [REDACTED], pat [REDACTED], token=[REDACTED], "
+        "stream closed"
+    )
 
 
 @pytest.mark.asyncio

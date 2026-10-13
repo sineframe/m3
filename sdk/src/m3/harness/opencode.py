@@ -26,7 +26,12 @@ import httpx
 
 from ..agent_session import AdapterTurn
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
+from ..trace.redaction import (
+    RedactionConfig,
+    is_sensitive_key,
+    redact_for_api,
+    redact_native_text,
+)
 from ..types import (
     Capability,
     CapabilityStatus,
@@ -61,6 +66,7 @@ from .native import (
     _isolated_environment,
     _server_configuration,
     _text,
+    launch_secrets,
     probe_help,
     read_bounded_line,
     run_probe,
@@ -108,6 +114,9 @@ _MALFORMED_MARKER: dict[str, str] = {
     "capture": "unavailable",
     "reason": "malformed_source",
 }
+# Bound for OpenCode's redacted error message surfaced in an ErrorInfo.
+_NATIVE_ERROR_REASON_LIMIT = 1024
+_NATIVE_ERROR_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
 _INVALID_METADATA = object()
 _MISSING_IDENTIFIER = object()
 
@@ -121,6 +130,18 @@ def _valid_identifier(value: object) -> bool:
         and len(value) <= 256
         and all(ord(char) >= 0x20 and ord(char) != 0x7F for char in value)
     )
+
+
+def _native_error_object(body: bytes) -> object:
+    """Return the OpenCode error object of an HTTP error body, if parseable."""
+
+    try:
+        decoded = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if isinstance(decoded, Mapping) and isinstance(decoded.get("error"), Mapping):
+        return decoded["error"]
+    return decoded
 
 
 def opencode_configuration(
@@ -346,6 +367,10 @@ class OpenCodeHarnessAdapter:
         # are used to protect adapter results before they reach the public
         # session boundary; they are never included in a launch descriptor.
         self._runtime_secrets: set[str] = set()
+        # The launch's MCP credentials (resolved and literal). Kept apart from
+        # runtime secrets: they only redact OpenCode's error text, not
+        # captures.
+        self._launch_secrets: frozenset[str] = frozenset()
         self.last_policy_evidence: Any = None
 
     @property
@@ -533,6 +558,7 @@ class OpenCodeHarnessAdapter:
                         raise HarnessStartupError("OpenCode credential is unavailable")
                     environment[variable] = value
                     runtime_secrets.add(value)
+            self._launch_secrets = launch_secrets(launch)
             for server in launch.configurations:
                 for value in server.environment.values():
                     _resolve_opencode_environment_value(
@@ -598,7 +624,16 @@ class OpenCodeHarnessAdapter:
             )
             async with client.stream("POST", "/session", json={}) as response:
                 if response.status_code >= 400:
-                    raise HarnessStartupError("OpenCode session could not be created")
+                    try:
+                        error_body = await self._read_bounded_response(response)
+                    except _ResponseTooLarge:
+                        error_body = b""
+                    message, _ = self._native_failure(
+                        f"OpenCode session could not be created "
+                        f"(HTTP {response.status_code})",
+                        _native_error_object(error_body),
+                    )
+                    raise HarnessStartupError(message)
                 try:
                     body = json.loads(await self._read_bounded_response(response))
                 except json.JSONDecodeError:
@@ -620,6 +655,7 @@ class OpenCodeHarnessAdapter:
             return self._session
         except BaseException:
             self._runtime_secrets.clear()
+            self._launch_secrets = frozenset()
             if client is not None:
                 await client.aclose()
             try:
@@ -675,6 +711,7 @@ class OpenCodeHarnessAdapter:
         self._launch = None
         self._root = None
         self._runtime_secrets.clear()
+        self._launch_secrets = frozenset()
 
     async def cancel(self) -> None:
         if self._session is not None:
@@ -752,11 +789,16 @@ class OpenCodeHarnessAdapter:
                         turn_wall_time=turn_wall_time,
                     )
                 if response.status_code >= 400:
+                    message, details = self._native_failure(
+                        "OpenCode turn failed",
+                        _native_error_object(response_body),
+                    )
                     return self._failure_result(
                         sequence,
                         "failed",
                         ErrorCode.TRANSPORT_ERROR,
-                        "OpenCode turn failed",
+                        message,
+                        details=details,
                         raw_body=response_body,
                         status_code=response.status_code,
                         content_type=response.headers.get("content-type"),
@@ -1289,6 +1331,9 @@ class OpenCodeHarnessAdapter:
             }
         )
         turn_status: _TurnStatus = "failed" if failed else "completed"
+        failure_message, failure_details = self._native_failure(
+            "OpenCode turn failed", info.get("error")
+        )
         return HarnessTurnResult(
             sequence=sequence,
             status=turn_status,
@@ -1298,7 +1343,9 @@ class OpenCodeHarnessAdapter:
             error=None
             if not failed
             else ErrorInfo(
-                code=ErrorCode.TRANSPORT_ERROR, message="OpenCode turn failed"
+                code=ErrorCode.TRANSPORT_ERROR,
+                message=failure_message,
+                details=failure_details,
             ),
             tool_calls=tool_calls,
             evidence=evidence,
@@ -1798,6 +1845,7 @@ class OpenCodeHarnessAdapter:
         raw_body: bytes | None = None,
         status_code: int | None = None,
         content_type: object = None,
+        details: Mapping[str, Any] | None = None,
         turn_started: float,
         turn_wall_time: datetime,
     ) -> HarnessTurnResult:
@@ -1826,7 +1874,7 @@ class OpenCodeHarnessAdapter:
         return HarnessTurnResult(
             sequence=sequence,
             status=status,
-            error=ErrorInfo(code=code, message=message),
+            error=ErrorInfo(code=code, message=message, details=details or {}),
             evidence={
                 "process_observed": False,
                 "transport_observed": "http",
@@ -1843,6 +1891,45 @@ class OpenCodeHarnessAdapter:
                 limitations=limitations,
             ),
         )
+
+    def _native_failure(
+        self, summary: str, error: object
+    ) -> tuple[str, dict[str, str]]:
+        """Append OpenCode's error name and redacted message to ``summary``.
+
+        The ``name`` is kept only when it is a short identifier. The message
+        is free text that can echo a credential, so it is redacted on the raw
+        text (secrets can contain whitespace) with the runtime secrets and the
+        launch's MCP credentials, embedded URLs are reduced to their origin,
+        and only then is it normalized and bounded.
+        """
+
+        if not isinstance(error, Mapping):
+            return summary, {}
+        details: dict[str, str] = {}
+        name = error.get("name")
+        if isinstance(name, str) and _NATIVE_ERROR_NAME.fullmatch(name):
+            details["native_error"] = name
+        data = error.get("data")
+        text = data.get("message") if isinstance(data, Mapping) else None
+        if isinstance(text, str):
+            config = RedactionConfig.from_environment(
+                secrets=self._runtime_secrets | self._launch_secrets
+            )
+            try:
+                redacted = redact_native_text(text, config)
+            except Exception:
+                redacted = ""
+            reason = " ".join(redacted[: 4 * _NATIVE_ERROR_REASON_LIMIT].split())
+            if reason:
+                # Truncate only after redaction so a cut cannot split a secret.
+                if len(reason) > _NATIVE_ERROR_REASON_LIMIT:
+                    reason = reason[: _NATIVE_ERROR_REASON_LIMIT - 1] + "…"
+                details["reason"] = reason
+        cause = ": ".join(
+            details[key] for key in ("native_error", "reason") if key in details
+        )
+        return (f"{summary}: {cause}" if cause else summary), details
 
     @staticmethod
     def _safe_evidence_identifier(value: object, config: RedactionConfig) -> str | None:
