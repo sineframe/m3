@@ -47,7 +47,7 @@ For each setting the highest-precedence source that provides a value wins:
 
 Passing a ready-made `Config` object to `MCPTestKit` uses it as is, without reading the environment or `pyproject.toml`. A setting that is present but invalid is an error, not a fallback to the next source, and so is an unknown key in `[tool.m3]`. The resolved `Config` records where each value came from in `config.sources` (`explicit`, `environment`, `project`, or `default`).
 
-**Inside a pytest run.** The pytest plugin resolves settings once when pytest starts. pytest-xdist workers receive that resolved copy and do not read `pyproject.toml`, the `--m3-config` file, or `M3_*` again, so editing or deleting the file during a run has no effect. `MCPTestKit()` and `AsyncMCPTestKit()` created without `env=` or `cwd=` use that copy, with any `config={...}` mapping applied on top. Passing `env=` or `cwd=` resolves on its own, as outside pytest.
+**Inside a pytest run.** The pytest plugin resolves settings once when pytest starts, so an invalid setting stops the run before collection, even if no test uses M3; `pytest --help` ignores project settings. pytest-xdist workers receive that resolved copy and do not read `pyproject.toml`, the `--m3-config` file, or `M3_*` again, so editing or deleting the file during a run has no effect. `MCPTestKit()` and `AsyncMCPTestKit()` created without `env=` or `cwd=` use that copy, with any `config={...}` mapping applied on top. Passing `env=` or `cwd=` resolves on its own, as outside pytest.
 
 ```toml
 # pyproject.toml
