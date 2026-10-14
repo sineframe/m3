@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import unicodedata as _unicodedata
 from collections.abc import Mapping as _Mapping
 from collections.abc import Sequence as _Sequence
+from pathlib import PurePosixPath as _PurePosixPath
+from pathlib import PureWindowsPath as _PureWindowsPath
 from typing import Annotated as _Annotated
 from typing import Any as _Any
 from typing import Literal as _Literal
@@ -116,6 +119,211 @@ def _supported_timeouts(
     unsupported = sorted(set(timeouts.model_fields_set) - phases)
     if unsupported:
         raise ValueError(f"{harness} has no {unsupported[0]} startup phase")
+
+
+# Codex special filesystem paths that take one access value.
+_CODEX_SPECIAL_PATHS = frozenset({":root", ":minimal", ":tmpdir", ":slash_tmp"})
+# The special path that also takes rules for paths inside each workspace root.
+_CODEX_WORKSPACE_ROOTS = ":workspace_roots"
+
+
+def _codex_config_text(path: str) -> None:
+    """Reject text the rendered ``config.toml`` cannot hold.
+
+    The renderer writes TOML basic strings with ASCII escapes, which turn a
+    character beyond U+FFFF into a surrogate pair TOML rejects, and leaves
+    DEL unescaped, which TOML also rejects. Control characters are never part
+    of a usable path.
+    """
+
+    if any(
+        ord(char) > 0xFFFF
+        or 0xD800 <= ord(char) <= 0xDFFF
+        or _unicodedata.category(char) == "Cc"
+        for char in path
+    ):
+        raise ValueError(
+            f"Codex filesystem path {path!r} contains a control character or a "
+            "character beyond U+FFFF, which the Codex config cannot hold"
+        )
+
+
+def _codex_subpath(path: str) -> None:
+    _codex_config_text(path)
+    if path == ".":
+        return
+    parts = path.replace("\\", "/").split("/")
+    if (
+        _PurePosixPath(path).is_absolute()
+        or _PureWindowsPath(path).is_absolute()
+        or path.startswith("~")
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise ValueError(
+            f"Codex filesystem subpath {path!r} must be '.' or a relative path "
+            "without '.' or '..' components"
+        )
+
+
+def _codex_filesystem_rule(path: str, rule: _Any) -> None:
+    scoped = isinstance(rule, _Mapping)
+    _codex_config_text(path)
+    if path.startswith(":"):
+        if path not in _CODEX_SPECIAL_PATHS and path != _CODEX_WORKSPACE_ROOTS:
+            raise ValueError(f"unknown Codex special filesystem path {path!r}")
+        if scoped and path != _CODEX_WORKSPACE_ROOTS:
+            raise ValueError(f"Codex special path {path!r} takes one access value")
+    elif not (
+        _PurePosixPath(path).is_absolute()
+        or _PureWindowsPath(path).is_absolute()
+        or path.startswith(("~/", "~\\"))
+    ):
+        raise ValueError(
+            f"Codex filesystem path {path!r} must be absolute, start with '~/', "
+            "or name a special path"
+        )
+    if scoped:
+        if not rule:
+            raise ValueError(f"Codex filesystem rules for {path!r} are empty")
+        for subpath in rule:
+            _codex_subpath(subpath)
+
+
+class CodexPermissions(FrozenModel):
+    """Native sandbox for the commands Codex runs in a session.
+
+    Build one with :meth:`profile` (a Codex permission profile) or
+    :meth:`sandbox` (a legacy Codex sandbox mode). The two modes are
+    mutually exclusive: Codex ignores a permission profile whenever a sandbox
+    mode is set. Neither confines MCP servers, which Codex does not sandbox.
+    """
+
+    mode: _Literal["profile", "sandbox"]
+    # Profile mode.
+    name: str | None = _Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    extends: _Literal[":read-only", ":workspace"] | None = None
+    filesystem: _Mapping[
+        str,
+        _Literal["read", "write", "deny"]
+        | _Mapping[str, _Literal["read", "write", "deny"]],
+    ] = _Field(default_factory=dict)
+    network_enabled: bool | None = None
+    # Sandbox mode.
+    sandbox_mode: (
+        _Literal["read-only", "workspace-write", "danger-full-access"] | None
+    ) = None
+    network_access: bool | None = None
+    acknowledge_risk: bool = False
+
+    @classmethod
+    def profile(
+        cls,
+        *,
+        name: str = "m3",
+        extends: _Literal[":read-only", ":workspace"] | None = None,
+        filesystem: _Mapping[
+            str,
+            _Literal["read", "write", "deny"]
+            | _Mapping[str, _Literal["read", "write", "deny"]],
+        ]
+        | None = None,
+        network_enabled: bool | None = None,
+    ) -> CodexPermissions:
+        """Run Codex's commands under the permission profile ``name``.
+
+        ``filesystem`` maps a path (absolute, ``~/...``, or one of ``:root``,
+        ``:minimal``, ``:tmpdir``, ``:slash_tmp``, ``:workspace_roots``) to
+        ``"read"``, ``"write"`` or ``"deny"``, or to a mapping of subpaths
+        (``"."`` for the path itself) to those values.
+        """
+
+        return cls(
+            mode="profile",
+            name=name,
+            extends=extends,
+            filesystem=filesystem or {},
+            network_enabled=network_enabled,
+        )
+
+    @classmethod
+    def sandbox(
+        cls,
+        mode: _Literal["read-only", "workspace-write", "danger-full-access"],
+        *,
+        network_access: bool | None = None,
+        acknowledge_risk: bool = False,
+    ) -> CodexPermissions:
+        """Run Codex's commands in a legacy sandbox mode.
+
+        ``network_access`` applies to ``workspace-write`` only;
+        ``danger-full-access`` requires ``acknowledge_risk=True``.
+        """
+
+        return cls(
+            mode="sandbox",
+            sandbox_mode=mode,
+            network_access=network_access,
+            acknowledge_risk=acknowledge_risk,
+        )
+
+    @property
+    def profile_name(self) -> str:
+        """The Codex profile id: ``name``, or ``"m3"`` when unset."""
+
+        return self.name or "m3"
+
+    @_model_validator(mode="after")
+    def _one_mode(self) -> CodexPermissions:
+        if self.mode == "profile":
+            if (
+                self.sandbox_mode is not None
+                or self.network_access is not None
+                or self.acknowledge_risk
+            ):
+                raise ValueError(
+                    "a Codex permission profile cannot set sandbox_mode, "
+                    "network_access or acknowledge_risk"
+                )
+            if self.extends is None and not self.filesystem:
+                raise ValueError(
+                    "a Codex permission profile needs extends or filesystem rules"
+                )
+            for path, rule in self.filesystem.items():
+                _codex_filesystem_rule(path, rule)
+            return self
+        if (
+            self.name is not None
+            or self.extends is not None
+            or self.filesystem
+            or self.network_enabled is not None
+        ):
+            raise ValueError(
+                "a Codex sandbox cannot set name, extends, filesystem or "
+                "network_enabled"
+            )
+        if self.sandbox_mode is None:
+            raise ValueError("a Codex sandbox requires sandbox_mode")
+        if self.network_access is not None and self.sandbox_mode != "workspace-write":
+            raise ValueError(
+                "network_access applies only to the workspace-write sandbox"
+            )
+        if (self.sandbox_mode == "danger-full-access") != self.acknowledge_risk:
+            raise ValueError(
+                "the danger-full-access sandbox requires acknowledge_risk=True"
+                if self.sandbox_mode == "danger-full-access"
+                else "acknowledge_risk applies only to the danger-full-access sandbox"
+            )
+        return self
+
+    @_model_serializer(mode="wrap")
+    def _omit_unset(self, handler: _Any) -> dict[str, _Any]:
+        return {
+            key: value
+            for key, value in handler(self).items()
+            if value is not None
+            and not (key == "filesystem" and not value)
+            and not (key == "acknowledge_risk" and value is False)
+        }
 
 
 class ServerDefinition(FrozenModel):
@@ -246,6 +454,8 @@ class HarnessValue(FrozenModel):
             value.pop("version", None)
         if value.get("timeouts", ...) is None:
             value.pop("timeouts")
+        if value.get("permissions", ...) is None:
+            value.pop("permissions")
         return value
 
     def with_model(self, model: str) -> HarnessValue:
@@ -328,6 +538,7 @@ class Codex(HarnessValue):
     name: str = "codex"
     credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
     timeouts: HarnessTimeouts | None = None
+    permissions: CodexPermissions | None = None
 
     @_field_validator("credential_references")
     @classmethod
@@ -681,6 +892,33 @@ class AgentSpec(_ExecutionSpecBase):
             )
         return self
 
+    @_model_validator(mode="after")
+    def _codex_permissions_fit_workspace(self) -> AgentSpec:
+        reason = codex_workspace_conflict(self.harness, self.workspace)
+        if reason is not None:
+            raise ValueError(reason)
+        return self
+
+
+def codex_workspace_conflict(harness: _Any, workspace: WorkspacePolicy) -> str | None:
+    """Why a Codex harness's permissions cannot run in ``workspace``, if so.
+
+    A read-only workspace runs Codex in its read-only sandbox, so only that
+    sandbox fits it.
+    """
+
+    permissions = harness.permissions if isinstance(harness, Codex) else None
+    if permissions is None or workspace.kind is not WorkspaceKind.READ_ONLY:
+        return None
+    if permissions.mode == "profile":
+        return "a read-only workspace cannot use a Codex permission profile"
+    if permissions.sandbox_mode != "read-only":
+        return (
+            "a read-only workspace requires the read-only Codex sandbox, "
+            f"not {permissions.sandbox_mode}"
+        )
+    return None
+
 
 ExecutionSpec = _Annotated[DirectSpec | AgentSpec, _Field(discriminator="kind")]
 
@@ -717,6 +955,7 @@ __all__ = [
     "CallTool",
     "ClaudeCode",
     "Codex",
+    "CodexPermissions",
     "ContentBlock",
     "DirectOperation",
     "DirectSpec",

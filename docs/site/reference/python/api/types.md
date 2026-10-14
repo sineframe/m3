@@ -225,6 +225,61 @@ Model fields:
 | --- | --- | --- | --- | --- | --- |
 | `startup_seconds` | `float \| None` | No | `None` | `gt=0, le=3600, allow_inf_nan=False` | — |
 
+## `CodexPermissions`
+
+```python
+m3.types.CodexPermissions(
+    *,
+    mode: Literal['profile', 'sandbox'],
+    name: str | None = None,
+    extends: Literal[':read-only', ':workspace'] | None = None,
+    filesystem: collections.abc.Mapping[str, Literal['read', 'write', 'deny'] | collections.abc.Mapping[str, Literal['read', 'write', 'deny']]] = ...,
+    network_enabled: bool | None = None,
+    sandbox_mode: Literal['read-only', 'workspace-write', 'danger-full-access'] | None = None,
+    network_access: bool | None = None,
+    acknowledge_risk: bool = False,
+) -> None
+```
+
+Native sandbox for the commands Codex runs in a session.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `mode` | `Literal['profile', 'sandbox']` | Yes | — | — | — |
+| `name` | `str \| None` | No | `None` | `pattern='^[A-Za-z0-9_-]{1,64}$'` | — |
+| `extends` | `Literal[':read-only', ':workspace'] \| None` | No | `None` | — | — |
+| `filesystem` | `collections.abc.Mapping[str, Literal['read', 'write', 'deny'] \| collections.abc.Mapping[str, Literal['read', 'write', 'deny']]]` | No | `factory builtins.dict()` | — | — |
+| `network_enabled` | `bool \| None` | No | `None` | — | — |
+| `sandbox_mode` | `Literal['read-only', 'workspace-write', 'danger-full-access'] \| None` | No | `None` | — | — |
+| `network_access` | `bool \| None` | No | `None` | — | — |
+| `acknowledge_risk` | `bool` | No | `False` | — | — |
+
+```python
+profile(
+    cls,
+    *,
+    name: str = 'm3',
+    extends: _Literal[':read-only', ':workspace'] | None = None,
+    filesystem: _Mapping[str, _Literal['read', 'write', 'deny'] | _Mapping[str, _Literal['read', 'write', 'deny']]] | None = None,
+    network_enabled: bool | None = None,
+) -> CodexPermissions
+```
+Run Codex's commands under the permission profile ``name``.
+
+```python
+sandbox(
+    cls,
+    mode: _Literal['read-only', 'workspace-write', 'danger-full-access'],
+    *,
+    network_access: bool | None = None,
+    acknowledge_risk: bool = False,
+) -> CodexPermissions
+```
+Run Codex's commands in a legacy sandbox mode.
+- `profile_name` (property): The Codex profile id: ``name``, or ``"m3"`` when unset.
+
 ## `SecretReference`
 
 ```python

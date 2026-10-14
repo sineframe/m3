@@ -3226,6 +3226,7 @@ class TraceProjector:
                     model_id=native_value("model"),
                     finish_reason=native_value("finish_reason"),
                     sandbox=native_value("sandbox"),
+                    permission_profile=native_value("permission_profile"),
                     usage=_native_usage(native_usage_payload),
                 )
             return PiTrace(

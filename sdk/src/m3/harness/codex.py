@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .._types.specs import codex_workspace_conflict
 from ..agent_session import AdapterTurn
 from ..configuration import Config
 from ..elicitation import ElicitationPlan
@@ -26,6 +27,7 @@ from ..trace.redaction import (
 )
 from ..types import (
     Codex,
+    CodexPermissions,
     ErrorCode,
     ErrorInfo,
     NativeToolPolicy,
@@ -85,6 +87,18 @@ _NATIVE_APPROVAL_OPERATIONS = {
     "execCommandApproval": "command_execution",
     "applyPatchApproval": "file_change",
 }
+
+# thread/start's legacy `sandbox` policy type for each requested sandbox mode.
+_SANDBOX_POLICY_TYPES = {
+    "read-only": "readOnly",
+    "workspace-write": "workspaceWrite",
+    "danger-full-access": "dangerFullAccess",
+}
+
+
+def _codex_permissions(launch: Any) -> CodexPermissions | None:
+    harness = getattr(getattr(launch, "spec", None), "harness", None)
+    return harness.permissions if isinstance(harness, Codex) else None
 
 
 def _approval_target(
@@ -193,9 +207,12 @@ class _NativeMcpToolItem:
 
 
 def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
-    """Return the isolated App Server MCP configuration shape.
+    """Return the isolated App Server configuration shape.
 
-    Codex accepts stdio and Streamable HTTP servers.
+    Codex accepts stdio and Streamable HTTP servers. A Codex permission
+    profile becomes ``default_permissions`` and its ``[permissions.<name>]``
+    table; a workspace-write sandbox's network access becomes
+    ``[sandbox_workspace_write]``.
     """
     servers: dict[str, dict[str, Any]] = {}
     for config in launch.configurations:
@@ -263,7 +280,7 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
     # A ChatGPT login can expose account-connected apps even in an isolated
     # home. Disable apps and plugins so managed tests do not inherit tools,
     # skills, or hooks from account-connected or installed integrations.
-    return {
+    configuration: dict[str, Any] = {
         "features": {
             "apps": False,
             "plugins": False,
@@ -272,11 +289,34 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
         },
         "mcp_servers": servers,
     }
+    permissions = _codex_permissions(launch)
+    if permissions is not None and permissions.mode == "profile":
+        profile: dict[str, Any] = {}
+        if permissions.extends is not None:
+            profile["extends"] = permissions.extends
+        if permissions.filesystem:
+            profile["filesystem"] = _plain_json(permissions.filesystem)
+        if permissions.network_enabled is not None:
+            profile["network"] = {"enabled": permissions.network_enabled}
+        configuration["default_permissions"] = permissions.profile_name
+        configuration["permissions"] = {permissions.profile_name: profile}
+    elif permissions is not None and permissions.network_access is not None:
+        configuration["sandbox_workspace_write"] = {
+            "network_access": permissions.network_access
+        }
+    return configuration
 
 
 def render_codex_config(launch: HarnessLaunch) -> str:
     """Render a minimal TOML config without embedding credential values."""
-    lines = [
+    configuration = codex_configuration(launch)
+    # Top-level keys must precede the first table.
+    lines = (
+        [f"default_permissions = {json.dumps(configuration['default_permissions'])}"]
+        if "default_permissions" in configuration
+        else []
+    )
+    lines += [
         "[features]",
         "apps = false",
         "plugins = false",
@@ -285,7 +325,7 @@ def render_codex_config(launch: HarnessLaunch) -> str:
         "",
         "[mcp_servers]",
     ]
-    for name, server in codex_configuration(launch)["mcp_servers"].items():
+    for name, server in configuration["mcp_servers"].items():
         # TOML quoted keys preserve arbitrary valid server aliases verbatim.
         # json.dumps emits the required escapes for quotes, backslashes, and
         # control characters (and is valid TOML basic-string syntax).
@@ -308,13 +348,88 @@ def render_codex_config(launch: HarnessLaunch) -> str:
                 lines.append(
                     f"env_http_headers = {_toml_inline(server['env_http_headers'])}"
                 )
+    for name, profile in configuration.get("permissions", {}).items():
+        lines.extend(_profile_lines(name, profile))
+    if "sandbox_workspace_write" in configuration:
+        network = configuration["sandbox_workspace_write"]["network_access"]
+        lines.append("\n[sandbox_workspace_write]")
+        lines.append(f"network_access = {str(network).lower()}")
     return "\n".join(lines) + "\n"
+
+
+def _profile_lines(name: str, profile: Mapping[str, Any]) -> list[str]:
+    """TOML tables of one ``[permissions.<name>]`` profile."""
+
+    key = f"permissions.{json.dumps(name)}"
+    lines: list[str] = []
+    if "extends" in profile:
+        lines.append(f"\n[{key}]")
+        lines.append(f"extends = {json.dumps(profile['extends'])}")
+    filesystem = profile.get("filesystem", {})
+    direct = {path: rule for path, rule in filesystem.items() if isinstance(rule, str)}
+    if direct:
+        lines.append(f"\n[{key}.filesystem]")
+        lines.extend(
+            f"{json.dumps(path)} = {json.dumps(rule)}" for path, rule in direct.items()
+        )
+    for path, rules in filesystem.items():
+        if isinstance(rules, Mapping):
+            lines.append(f"\n[{key}.filesystem.{json.dumps(path)}]")
+            lines.extend(
+                f"{json.dumps(subpath)} = {json.dumps(rule)}"
+                for subpath, rule in rules.items()
+            )
+    if "network" in profile:
+        lines.append(f"\n[{key}.network]")
+        lines.append(f"enabled = {str(profile['network']['enabled']).lower()}")
+    return lines
 
 
 def _config_value(value: Any) -> str:
     if isinstance(value, SecretReference):
         return "${" + value.name + "}"
     return str(value)
+
+
+def _applied_permissions(
+    permissions: CodexPermissions | None, started: Mapping[str, Any]
+) -> dict[str, str]:
+    """Check that thread/start applied the requested permissions.
+
+    Returns the session metadata that records them. Codex silently falls
+    back to its legacy sandbox when it ignores a profile, so a profile that
+    is not the thread's active profile fails startup.
+    """
+
+    if permissions is None:
+        return {}
+    if permissions.mode == "profile":
+        active = started.get("activePermissionProfile")
+        active_id = active.get("id") if isinstance(active, Mapping) else None
+        if active_id != permissions.profile_name:
+            reported = repr(active_id[:64]) if isinstance(active_id, str) else "none"
+            raise HarnessStartupError(
+                f"Codex did not apply permission profile {permissions.profile_name!r} "
+                f"(active profile: {reported})"
+            )
+        return {"permission_profile": permissions.profile_name}
+    sandbox = started.get("sandbox")
+    policy = sandbox.get("type") if isinstance(sandbox, Mapping) else None
+    if permissions.sandbox_mode is None or policy != _SANDBOX_POLICY_TYPES.get(
+        permissions.sandbox_mode
+    ):
+        raise HarnessStartupError(
+            f"Codex did not start the thread in the {permissions.sandbox_mode} sandbox"
+        )
+    if (
+        permissions.network_access is not None
+        and isinstance(sandbox, Mapping)
+        and sandbox.get("networkAccess") is not permissions.network_access
+    ):
+        raise HarnessStartupError(
+            "Codex did not apply the requested sandbox network access"
+        )
+    return {}
 
 
 async def _startup_frame(
@@ -767,6 +882,11 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         except HarnessStartupError as exc:
             return Readiness(ready=False, reason=str(exc))
         harness = launch.spec.harness
+        # Profile resolution can replace the harness after the spec was
+        # validated, so the final request is checked again before launch.
+        conflict = codex_workspace_conflict(harness, launch.spec.workspace)
+        if conflict is not None:
+            return Readiness(ready=False, reason=conflict)
         if isinstance(harness, Codex):
             for reference in harness.credential_references.values():
                 if (
@@ -815,12 +935,19 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         await self._authenticate(process, launch, api_key)
         self._request_id += 1
         workspace = launch.workspace_root or str(process.root or Path.cwd())
-        sandbox = (
-            "read-only"
-            if getattr(launch.spec.workspace.kind, "value", "") == "read_only"
-            else "workspace-write"
-        )
-        params = {
+        permissions = _codex_permissions(launch)
+        sandbox: str | None
+        if permissions is None:
+            sandbox = (
+                "read-only"
+                if getattr(launch.spec.workspace.kind, "value", "") == "read_only"
+                else "workspace-write"
+            )
+        else:
+            # A permission profile applies only when thread/start carries no
+            # sandbox: Codex ignores `default_permissions` otherwise.
+            sandbox = permissions.sandbox_mode
+        params: dict[str, Any] = {
             "model": getattr(launch.spec.harness, "model", None),
             "cwd": workspace,
             # MCP tools require Codex's approval-capable mode; ``never`` makes
@@ -830,6 +957,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "sandbox": sandbox,
             "ephemeral": True,
         }
+        if sandbox is None:
+            del params["sandbox"]
         await self._write_frame(
             process,
             {
@@ -844,6 +973,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         # One deadline covers the request: unrelated frames do not extend it.
         startup_seconds = harness_timeout(launch, settings, "startup_seconds")
         deadline = asyncio.get_running_loop().time() + startup_seconds
+        started: Mapping[str, Any] = {}
         while True:
             frame = await _startup_frame(
                 process, deadline, "thread/start", _STARTUP_SETTING, startup_seconds
@@ -856,6 +986,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     raise self._thread_start_failure(error, launch)
                 result = frame.get("result")
                 if isinstance(result, Mapping):
+                    started = result
                     thread = result.get("thread", result)
                     if isinstance(thread, Mapping) and isinstance(
                         thread.get("id"), str
@@ -870,7 +1001,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "model": str(params["model"])
             if isinstance(params.get("model"), str)
             else "",
-            "sandbox": sandbox,
+            **({"sandbox": sandbox} if sandbox is not None else {}),
+            **_applied_permissions(permissions, started),
         }
         return self._thread_id
 
@@ -958,12 +1090,14 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     def _thread_start_failure(
         self, error: Mapping[str, Any], launch: HarnessLaunch
     ) -> HarnessStartupError:
-        """Describe a thread/start error, keeping only a redacted MCP reason.
+        """Describe a thread/start error, keeping only a redacted reason.
 
         Codex can echo any credential it was started with (environment, native
         login, MCP environment, headers or endpoint URL). The summary holds the
         JSON-RPC code. When Codex names configured MCP servers that failed to
         start, its reason follows with every credential M3 knows of redacted.
+        With requested Codex permissions, any reason follows the same way,
+        because Codex rejects the permissions it cannot load or enforce here.
         Any other message is dropped.
         """
 
@@ -983,7 +1117,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             }
         )
         if not failed:
-            return HarnessStartupError(summary)
+            if _codex_permissions(launch) is None:
+                return HarnessStartupError(summary)
+            reason = self._redacted_reason(message, launch)
+            return HarnessStartupError(f"{summary}: {reason}" if reason else summary)
         reason = self._redacted_reason(rest, launch) or ", ".join(failed)
         return HarnessStartupError(
             f"{summary}: required MCP server failed to initialize: {reason}"

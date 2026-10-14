@@ -75,3 +75,42 @@ Codex can reuse eligible host authentication when no explicit credential referen
 These adapters do not have identical capabilities. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`. That limit does not apply to direct SDK elicitation. The [compatibility reference](reference-compatibility.md) has the feature-specific support notes.
 
 If M3 reports a capability as unavailable, keep the assertion and inspect readiness or the execution result. Next: [compare agent harnesses and versions](guides-agents-versions.md), [pin a managed runtime](guides-agents-managed-runtimes.md), or [configure an ACP agent](guides-agents-acp.md).
+
+## Confine Codex's shell commands
+
+Codex runs the model's shell commands in its own sandbox. By default M3 starts each Codex thread in the `workspace-write` sandbox (`read-only` for a read-only workspace), without network access. Set `permissions` on the Codex harness to choose that sandbox yourself. The setting is either a Codex permission profile or a legacy sandbox mode, never both:
+
+```python
+from m3.types import Codex, CodexPermissions
+
+# A permission profile: workspace writes, one extra writable directory,
+# no reads of ~/.ssh, and network access.
+profile = Codex(
+    model="gpt-6-luna",
+    permissions=CodexPermissions.profile(
+        extends=":workspace",
+        filesystem={
+            ":minimal": "read",
+            "~/.ssh": "deny",
+            "/srv/trial-data": "write",
+            ":workspace_roots": {".": "write", "**/*.env": "deny"},
+        },
+        network_enabled=True,
+    ),
+)
+
+# A legacy sandbox mode, here with network access.
+sandbox = Codex(
+    model="gpt-6-luna",
+    permissions=CodexPermissions.sandbox("workspace-write", network_access=True),
+)
+```
+
+A selection dictionary takes the same value as a mapping, for example `"permissions": {"mode": "sandbox", "sandbox_mode": "workspace-write", "network_access": True}`.
+
+- **Profile.** M3 writes the profile into the session's Codex `config.toml` as `[permissions.<name>]` (`name` defaults to `m3`), makes it `default_permissions`, and starts the thread without a sandbox mode, because Codex ignores a profile whenever one is set. `filesystem` maps an absolute path, a `~/` path, or one of `:root`, `:minimal`, `:tmpdir`, `:slash_tmp` and `:workspace_roots` to `read`, `write` or `deny`; `:workspace_roots` and real paths also take a mapping of relative subpaths (`.` for the path itself). Paths and subpaths cannot contain control characters or characters beyond U+FFFF, such as emoji. `extends` can be `:workspace` or `:read-only`. See Codex's [permissions documentation](https://developers.openai.com/codex/permissions) for how rules combine.
+- **Sandbox mode.** `read-only`, `workspace-write` or `danger-full-access`. `network_access` applies to `workspace-write` only, and `danger-full-access` requires `acknowledge_risk=True`.
+
+Startup fails if Codex does not report the requested profile as the thread's active profile, or starts the thread in a different sandbox or network mode, so a setting Codex ignored never runs silently. When Codex rejects the permissions, for example a write rule its sandbox cannot enforce on this platform, the startup error keeps Codex's reason, with credentials redacted. A read-only workspace accepts only `CodexPermissions.sandbox("read-only")`.
+
+The session's Codex trace records the active profile as `permission_profile`, or the sandbox mode as `sandbox`. These settings confine only the commands Codex runs: Codex does not sandbox MCP servers, and approvals for blocked commands still go through the session's permission policy, which denies them by default.

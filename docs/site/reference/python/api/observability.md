@@ -153,6 +153,7 @@ m3.observability.CodexTrace(
     model_id: m3.observability.Observation[str] = ...,
     finish_reason: m3.observability.Observation[str] = ...,
     sandbox: m3.observability.Observation[str] = ...,
+    permission_profile: m3.observability.Observation[str] = ...,
     usage: m3.observability.Observation[m3.observability.UsageValue] = ...,
 ) -> None
 ```
@@ -167,6 +168,7 @@ Model fields:
 | `model_id` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `finish_reason` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `sandbox` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
+| `permission_profile` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `usage` | `m3.observability.Observation[m3.observability.UsageValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 
 ## `ConflictField`

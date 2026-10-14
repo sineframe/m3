@@ -39,6 +39,7 @@ this release. Use the capability pages to see how the objects work together.
 - <a id="m3.types.InProcessServer"></a><a id="inprocessserver-1"></a>[`InProcessServer`](api/types.md#inprocessserver)
 - <a id="m3.types.HarnessTimeouts"></a><a id="harnesstimeouts"></a>[`HarnessTimeouts`](api/types.md#harnesstimeouts)
 - <a id="m3.types.McpTimeouts"></a><a id="mcptimeouts"></a>[`McpTimeouts`](api/types.md#mcptimeouts)
+- <a id="m3.types.CodexPermissions"></a><a id="codexpermissions"></a>[`CodexPermissions`](api/types.md#codexpermissions)
 - <a id="m3.types.SecretReference"></a><a id="secretreference"></a>[`SecretReference`](api/types.md#secretreference)
 - <a id="m3.types.ServerBinding"></a><a id="serverbinding"></a>[`ServerBinding`](api/types.md#serverbinding)
 - <a id="m3.types.ServerValue"></a><a id="servervalue"></a>[`ServerValue`](api/types.md#servervalue)

@@ -818,6 +818,7 @@ class CodexTrace(_FrozenModel):
     model_id: Observation[str] = _Field(default_factory=_not_emitted)
     finish_reason: Observation[str] = _Field(default_factory=_not_emitted)
     sandbox: Observation[str] = _Field(default_factory=_not_emitted)
+    permission_profile: Observation[str] = _Field(default_factory=_not_emitted)
     usage: Observation[UsageValue] = _Field(default_factory=_not_emitted)
 
 

@@ -21,6 +21,7 @@
     {"page": "guides-agents-first-test", "label": "shipping server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-first-test", "label": "first agent test", "source": "test_agent.py", "kind": "file"},
     {"page": "guides-agents-harnesses", "label": "harness selection test", "source": "test_harness.py", "kind": "file"},
+    {"page": "guides-agents-harnesses", "label": "Codex permissions", "source": "test_harness.py", "kind": "snippet", "context": "Pass either Codex value as the harness, or the equivalent permissions mapping in the kit.agents selection of test_harness.py."},
     {"page": "guides-agents-sessions", "label": "session test", "source": "test_session.py", "kind": "file"},
     {"page": "guides-agents-matrices", "label": "agent matrix test", "source": "test_agent_matrix.py", "kind": "file"}
   ],
