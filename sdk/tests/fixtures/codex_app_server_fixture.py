@@ -43,6 +43,8 @@ def thread_permissions(params: dict) -> dict:
 
     A `sandbox` param selects the legacy sandbox and makes Codex ignore
     `default_permissions`; without one, the config's default profile is active.
+    A config.toml that does not parse raises ValueError, which thread/start
+    reports the way Codex does.
     """
 
     try:
@@ -50,7 +52,7 @@ def thread_permissions(params: dict) -> dict:
             os.path.join(os.environ.get("CODEX_HOME", ""), "config.toml"), "rb"
         ) as handle:
             config = tomllib.load(handle)
-    except (OSError, ValueError):
+    except OSError:
         config = {}
     mode = params.get("sandbox")
     if mode is None and config.get("default_permissions") in config.get(
@@ -111,19 +113,21 @@ for line in sys.stdin:
             flush=True,
         )
     elif method == "thread/start":
-        print(
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": ident,
-                    "result": {
-                        "thread": {"id": thread},
-                        **thread_permissions(frame.get("params", {})),
-                    },
+        try:
+            reply = {
+                "result": {
+                    "thread": {"id": thread},
+                    **thread_permissions(frame.get("params", {})),
                 }
-            ),
-            flush=True,
-        )
+            }
+        except ValueError as exc:
+            reply = {
+                "error": {
+                    "code": -32600,
+                    "message": f"failed to load configuration: {exc}",
+                }
+            }
+        print(json.dumps({"jsonrpc": "2.0", "id": ident, **reply}), flush=True)
     elif method == "turn/start":
         turn += 1
         print(

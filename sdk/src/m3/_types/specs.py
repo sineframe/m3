@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata as _unicodedata
 from collections.abc import Mapping as _Mapping
 from collections.abc import Sequence as _Sequence
 from pathlib import PurePosixPath as _PurePosixPath
@@ -126,7 +127,29 @@ _CODEX_SPECIAL_PATHS = frozenset({":root", ":minimal", ":tmpdir", ":slash_tmp"})
 _CODEX_WORKSPACE_ROOTS = ":workspace_roots"
 
 
+def _codex_config_text(path: str) -> None:
+    """Reject text the rendered ``config.toml`` cannot hold.
+
+    The renderer writes TOML basic strings with ASCII escapes, which turn a
+    character beyond U+FFFF into a surrogate pair TOML rejects, and leaves
+    DEL unescaped, which TOML also rejects. Control characters are never part
+    of a usable path.
+    """
+
+    if any(
+        ord(char) > 0xFFFF
+        or 0xD800 <= ord(char) <= 0xDFFF
+        or _unicodedata.category(char) == "Cc"
+        for char in path
+    ):
+        raise ValueError(
+            f"Codex filesystem path {path!r} contains a control character or a "
+            "character beyond U+FFFF, which the Codex config cannot hold"
+        )
+
+
 def _codex_subpath(path: str) -> None:
+    _codex_config_text(path)
     if path == ".":
         return
     parts = path.replace("\\", "/").split("/")
@@ -144,6 +167,7 @@ def _codex_subpath(path: str) -> None:
 
 def _codex_filesystem_rule(path: str, rule: _Any) -> None:
     scoped = isinstance(rule, _Mapping)
+    _codex_config_text(path)
     if path.startswith(":"):
         if path not in _CODEX_SPECIAL_PATHS and path != _CODEX_WORKSPACE_ROOTS:
             raise ValueError(f"unknown Codex special filesystem path {path!r}")

@@ -161,6 +161,20 @@ class _StartupProcess:
             lambda: CodexPermissions.sandbox("workspace-write", acknowledge_risk=True),
             "applies only to the danger-full-access sandbox",
         ),
+        (
+            lambda: CodexPermissions.profile(filesystem={"/tmp/\U0001f600": "read"}),
+            "beyond U\\+FFFF",
+        ),
+        (
+            lambda: CodexPermissions.profile(filesystem={"/tmp/a\x7fb": "read"}),
+            "contains a control character",
+        ),
+        (
+            lambda: CodexPermissions.profile(
+                filesystem={":workspace_roots": {"docs/\U0001f600": "deny"}}
+            ),
+            "beyond U\\+FFFF",
+        ),
     ],
 )
 def test_invalid_codex_permissions_are_rejected(build: Any, message: str) -> None:
@@ -277,6 +291,22 @@ def test_workspace_write_sandbox_renders_its_network_access(
 def test_default_codex_configuration_has_no_permission_settings() -> None:
     rendered = tomllib.loads(render_codex_config(_launch(None)))
     assert set(rendered) == {"features", "mcp_servers"}
+
+
+def test_non_ascii_paths_render_a_config_codex_can_load() -> None:
+    launch = _launch(
+        CodexPermissions.profile(
+            filesystem={
+                "/srv/données": "read",
+                ":workspace_roots": {"数据": "write"},
+            }
+        )
+    )
+    rendered = tomllib.loads(render_codex_config(launch))
+    assert rendered["permissions"]["m3"]["filesystem"] == {
+        "/srv/données": "read",
+        ":workspace_roots": {"数据": "write"},
+    }
 
 
 @pytest.mark.asyncio
