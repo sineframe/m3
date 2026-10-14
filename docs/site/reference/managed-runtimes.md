@@ -158,16 +158,26 @@ managed OpenCode, M3 writes a `.npmrc` into the session's OpenCode
 configuration directory (where that install runs) that points npm's cache at
 the `npm` directory inside the runtime cache root. Sessions share npm's download
 cache for that install only: each session still gets its own private install,
-and after the first one it installs from the cache without contacting the npm
-registry. npm's cache is safe for concurrent use.
+and after the first one the package data comes from the cache. npm may still
+check the registry for newer package information, but in testing with an
+unreachable or unresponsive proxy a warm install finished in under 2 seconds
+instead of failing. npm's cache is safe for concurrent use.
 
 The setting is not an environment variable, so npm or npx run by the agent from
 its workspace keeps the session's private `~/.npm`, and one trial's packages do
 not reach another. M3 does not sandbox the harness, so this is not a security
-boundary against an agent that seeks out the shared directory. An
-`npm_config_cache` in the adapter environment overrides the `.npmrc`. An adapter
-environment that sets `XDG_CONFIG_HOME` gets no shared cache, and M3 does not
-write into that directory. System OpenCode is unchanged.
+boundary against an agent that seeks out the shared directory.
+
+The shared cache is not used, and the install behaves as before, when:
+
+- the cache directory cannot be created or written, for example a read-only or
+  another user's cache root;
+- the cache path contains `${`, which npm would expand;
+- the adapter environment sets `XDG_CONFIG_HOME` (M3 does not write into that
+  directory) or npm cache configuration such as `npm_config_cache` in any case,
+  which takes precedence over the `.npmrc`.
+
+System OpenCode is unchanged.
 
 ## Cache location and precedence
 

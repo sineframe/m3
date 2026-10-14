@@ -1193,11 +1193,15 @@ class AsyncAgentSession:
             opencode_adapter.environment["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
             # OpenCode npm-installs its plugin package into every fresh home.
             # Share npm's content-addressed download cache (safe for
-            # concurrent use) for that install only, so later sessions skip
-            # the registry; the installed tree stays private to the session.
+            # concurrent use) for that install only; the installed tree stays
+            # private to the session. The adapter applies it to managed
+            # launches only, so a reused adapter cannot carry it elsewhere.
             cache_root = getattr(manager, "cache_root", None)
-            if isinstance(cache_root, (str, os.PathLike)):
-                opencode_adapter.npm_cache_dir = Path(cache_root) / "npm"
+            opencode_adapter.npm_cache_dir = (
+                Path(cache_root) / "npm"
+                if isinstance(cache_root, (str, os.PathLike))
+                else None
+            )
         provenance = getattr(result, "provenance", {})
         resolved_version = (
             provenance.get("version") if isinstance(provenance, Mapping) else None
