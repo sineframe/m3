@@ -2121,6 +2121,36 @@ async def test_opencode_shared_npm_cache_reaches_only_the_plugin_install(
     assert not Path(observed["cwd"]).is_relative_to(observed["xdg_config_home"])
 
 
+@pytest.mark.asyncio
+async def test_opencode_shared_npm_cache_never_touches_a_caller_config_home(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "npm.json"
+    executable = str(
+        Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py"
+    )
+    user_config = tmp_path / "user-config"
+    user_npmrc = user_config / "opencode" / ".npmrc"
+    user_npmrc.parent.mkdir(parents=True)
+    user_npmrc.write_text("//registry.example/:_authToken=keep\n", encoding="utf-8")
+    adapter = OpenCodeHarnessAdapter(
+        executable=executable,
+        environment={"M3_MARKER": str(marker), "XDG_CONFIG_HOME": str(user_config)},
+    )
+    adapter.npm_cache_dir = tmp_path / "shared-npm"
+    try:
+        await adapter.open(_launch())
+        observed = await _wait_for_marker(
+            marker, lambda value: value.get("session_post_count") == 1
+        )
+    finally:
+        await adapter.close()
+    assert observed["plugin_npmrc"] == "//registry.example/:_authToken=keep\n"
+    assert user_npmrc.read_text(encoding="utf-8") == (
+        "//registry.example/:_authToken=keep\n"
+    )
+
+
 async def _open_opencode_fixture(
     marker: Path,
     *,

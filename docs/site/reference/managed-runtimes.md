@@ -165,8 +165,9 @@ The setting is not an environment variable, so npm or npx run by the agent from
 its workspace keeps the session's private `~/.npm`, and one trial's packages do
 not reach another. M3 does not sandbox the harness, so this is not a security
 boundary against an agent that seeks out the shared directory. An
-`npm_config_cache` in the adapter environment overrides the `.npmrc`. System
-OpenCode is unchanged.
+`npm_config_cache` in the adapter environment overrides the `.npmrc`. An adapter
+environment that sets `XDG_CONFIG_HOME` gets no shared cache, and M3 does not
+write into that directory. System OpenCode is unchanged.
 
 ## Cache location and precedence
 

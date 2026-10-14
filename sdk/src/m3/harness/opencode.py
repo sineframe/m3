@@ -340,20 +340,25 @@ class _HistorySnapshot(NamedTuple):
     end_offset_ms: float = 0.0
 
 
-def _write_plugin_npmrc(config_home: Path, cache: Path) -> None:
+def _write_plugin_npmrc(root: Path, cache: Path) -> None:
     """Point OpenCode's plugin install at a shared npm download cache.
 
     OpenCode installs its plugin package in ``$XDG_CONFIG_HOME/opencode`` and
     reads that directory's ``.npmrc``. npm run from the workspace does not, so
-    the agent's own npm/npx keeps the session's private ``~/.npm``.
+    the agent's own npm/npx keeps the session's private ``~/.npm``. Only the
+    session root's own config directory is written, and never over a file.
     """
 
-    directory = config_home / "opencode"
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    # A JSON string is a quoted ini value: any path survives verbatim.
-    (directory / ".npmrc").write_text(
-        f"cache={json.dumps(str(cache))}\n", encoding="utf-8"
+    directory = root / "config" / "opencode"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    descriptor = os.open(
+        directory / ".npmrc",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
     )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as npmrc:
+        # A JSON string is a quoted ini value: any path survives verbatim.
+        npmrc.write(f"cache={json.dumps(str(cache))}\n")
 
 
 class OpenCodeHarnessAdapter:
@@ -563,10 +568,12 @@ class OpenCodeHarnessAdapter:
         try:
             harness = launch.spec.harness
             environment = _isolated_environment(root, self.environment)
-            if self.npm_cache_dir is not None:
-                _write_plugin_npmrc(
-                    Path(environment["XDG_CONFIG_HOME"]), self.npm_cache_dir
-                )
+            # An adapter environment may point XDG_CONFIG_HOME at a real user
+            # directory; then OpenCode installs there and m3 leaves it alone.
+            if self.npm_cache_dir is not None and Path(
+                environment["XDG_CONFIG_HOME"]
+            ) == (root / "config"):
+                _write_plugin_npmrc(root, self.npm_cache_dir)
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             if isinstance(harness, OpenCode) and harness.runtime == "managed":
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
