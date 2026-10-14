@@ -2092,6 +2092,102 @@ async def test_opencode_managed_launch_disables_network_bootstrap(
         await adapter.close()
 
 
+async def _open_for_npm(
+    adapter: OpenCodeHarnessAdapter,
+    marker: Path,
+    runtime: Literal["managed", "system"] = "managed",
+) -> dict[str, Any]:
+    marker.unlink(missing_ok=True)
+    base = _launch()
+    spec = base.spec.model_copy(
+        update={"harness": OpenCode(model="fixture", runtime=runtime)}
+    )
+    try:
+        await adapter.open(
+            HarnessLaunch(spec, base.servers, base.configurations, base.tool_policy)
+        )
+        return await _wait_for_marker(
+            marker, lambda value: value.get("session_post_count") == 1
+        )
+    finally:
+        await adapter.close()
+
+
+def _npm_fixture_adapter(marker: Path, **environment: str) -> OpenCodeHarnessAdapter:
+    return OpenCodeHarnessAdapter(
+        executable=str(
+            Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py"
+        ),
+        environment={"M3_MARKER": str(marker), **environment},
+    )
+
+
+@pytest.mark.asyncio
+async def test_opencode_shared_npm_cache_reaches_only_the_plugin_install(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "npm.json"
+    cache = tmp_path / 'shared "npm" #1;x'
+    adapter = _npm_fixture_adapter(marker)
+    adapter.npm_cache_dir = cache
+    observed = await _open_for_npm(adapter, marker)
+    # OpenCode's installer reads the install directory's .npmrc; npm run by
+    # the agent from the workspace does not, and no npm variable is inherited.
+    npmrc = observed["plugin_npmrc"]
+    assert npmrc.startswith("cache=") and npmrc.endswith("\n")
+    assert json.loads(npmrc.removeprefix("cache=")) == str(cache)
+    assert cache.is_dir()
+    assert observed["npm_environment"] == {}
+    assert not Path(observed["cwd"]).is_relative_to(observed["xdg_config_home"])
+
+    # The same adapter reused for a system-runtime session shares nothing.
+    assert (await _open_for_npm(adapter, marker, "system"))["plugin_npmrc"] is None
+
+
+@pytest.mark.asyncio
+async def test_opencode_shared_npm_cache_never_touches_a_caller_config_home(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "npm.json"
+    user_config = tmp_path / "user-config"
+    user_npmrc = user_config / "opencode" / ".npmrc"
+    user_npmrc.parent.mkdir(parents=True)
+    user_npmrc.write_text("//registry.example/:_authToken=keep\n", encoding="utf-8")
+    adapter = _npm_fixture_adapter(marker, XDG_CONFIG_HOME=str(user_config))
+    adapter.npm_cache_dir = tmp_path / "shared-npm"
+    observed = await _open_for_npm(adapter, marker)
+    assert observed["plugin_npmrc"] == "//registry.example/:_authToken=keep\n"
+    assert user_npmrc.read_text(encoding="utf-8") == (
+        "//registry.example/:_authToken=keep\n"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("problem", ("read-only", "env-reference"))
+async def test_opencode_unusable_shared_npm_cache_keeps_the_private_one(
+    tmp_path: Path, problem: str
+) -> None:
+    marker = tmp_path / "npm.json"
+    if problem == "read-only":
+        if os.name != "posix" or os.geteuid() == 0:
+            pytest.skip("needs POSIX permissions as a non-root user")
+        locked = tmp_path / "locked"
+        locked.mkdir(mode=0o500)
+        cache = locked / "npm"
+    else:
+        # npm would expand ${HOME} inside the .npmrc value.
+        cache = tmp_path / "${HOME}" / "npm"
+    adapter = _npm_fixture_adapter(marker)
+    adapter.npm_cache_dir = cache
+    try:
+        observed = await _open_for_npm(adapter, marker)
+    finally:
+        if problem == "read-only":
+            locked.chmod(0o700)
+    assert observed["plugin_npmrc"] is None
+    assert observed["session_post_count"] == 1
+
+
 async def _open_opencode_fixture(
     marker: Path,
     *,

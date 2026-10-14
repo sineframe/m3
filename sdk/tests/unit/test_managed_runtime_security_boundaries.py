@@ -182,6 +182,19 @@ def test_prune_keeps_active_leases_and_removes_free_entries(tmp_path: Path) -> N
     assert leased.exists()
 
 
+def test_prune_leaves_the_shared_npm_cache_in_place(tmp_path: Path) -> None:
+    # A session may be installing into it at any moment, leased or not yet.
+    root = tmp_path / "cache"
+    entry = root / "opencode" / "1.0.0" / "target" / "sha256-entry"
+    entry.mkdir(parents=True)
+    (entry / "receipt.json").write_text("{}", encoding="utf-8")
+    npm_cache = root / "npm" / "_cacache"
+    npm_cache.mkdir(parents=True)
+
+    assert prune_cache(root) == [entry]
+    assert npm_cache.is_dir()
+
+
 def test_receipt_without_current_format_is_reported_as_outdated(
     tmp_path: Path,
 ) -> None:

@@ -340,6 +340,49 @@ class _HistorySnapshot(NamedTuple):
     end_offset_ms: float = 0.0
 
 
+def _usable_npm_cache(cache: Path) -> bool:
+    """Whether the shared npm cache can be handed to OpenCode's installer.
+
+    A cache npm cannot write (a read-only or another user's cache root) would
+    turn a slow install into a failed one, so such a session keeps its private
+    cache. npm expands ``${VAR}`` in ``.npmrc`` values, so such paths are refused.
+    """
+
+    if "${" in str(cache):
+        return False
+    try:
+        cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return (
+        not cache.is_symlink()
+        and cache.is_dir()
+        and os.access(cache, os.W_OK | os.X_OK)
+    )
+
+
+def _write_plugin_npmrc(root: Path, cache: Path) -> None:
+    """Point OpenCode's plugin install at a shared npm download cache.
+
+    OpenCode installs its plugin package in ``$XDG_CONFIG_HOME/opencode`` and
+    reads that directory's ``.npmrc``. npm run from the workspace does not, so
+    the agent's own npm/npx keeps the session's private ``~/.npm``. Only the
+    session root's own config directory is written, and never over a file.
+    """
+
+    directory = root / "config" / "opencode"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    descriptor = os.open(
+        directory / ".npmrc",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as npmrc:
+        # A quoted ini value is parsed as a JSON string, so quotes, `#`, `;`
+        # and non-ASCII survive; `${` is refused by _usable_npm_cache.
+        npmrc.write(f"cache={json.dumps(str(cache))}\n")
+
+
 class OpenCodeHarnessAdapter:
     """One isolated OpenCode server and attached conversation session."""
 
@@ -355,6 +398,10 @@ class OpenCodeHarnessAdapter:
         self.executable = _executable(executable, "opencode")
         self.environment = dict(environment or {})
         self._resolver_environment = environment
+        # Shared npm download cache for OpenCode's own plugin install; set by
+        # managed runtime preparation. Scoped through the install directory's
+        # .npmrc, so npm/npx run by the agent keeps the session's private cache.
+        self.npm_cache_dir: Path | None = None
         self._capabilities = HarnessAdapterCapabilities(
             name="opencode",
             supports_multiturn=True,
@@ -543,8 +590,19 @@ class OpenCodeHarnessAdapter:
         try:
             harness = launch.spec.harness
             environment = _isolated_environment(root, self.environment)
+            managed = isinstance(harness, OpenCode) and harness.runtime == "managed"
+            # Only managed sessions share the cache, and only through m3's own
+            # config directory: an adapter environment may point
+            # XDG_CONFIG_HOME at a real user directory, which m3 leaves alone.
+            if (
+                managed
+                and self.npm_cache_dir is not None
+                and Path(environment["XDG_CONFIG_HOME"]) == root / "config"
+                and _usable_npm_cache(self.npm_cache_dir)
+            ):
+                _write_plugin_npmrc(root, self.npm_cache_dir)
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
-            if isinstance(harness, OpenCode) and harness.runtime == "managed":
+            if managed:
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
                 environment["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
                 environment["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "1"

@@ -62,6 +62,9 @@ marker_name = os.environ.get("M3_MARKER")
 marker = Path(marker_name) if marker_name else None
 state_lock = threading.Lock()
 session_id = uuid.uuid4().hex
+# The .npmrc OpenCode's plugin install would read, if XDG_CONFIG_HOME is set.
+config_home = os.environ.get("XDG_CONFIG_HOME")
+plugin_npmrc = Path(config_home, "opencode", ".npmrc") if config_home else None
 state: dict[str, object] = {
     "mode": mode,
     "serve_pid": os.getpid(),
@@ -86,6 +89,16 @@ state: dict[str, object] = {
             "OPENCODE_DISABLE_MODELS_FETCH",
             "OPENCODE_DISABLE_LSP_DOWNLOAD",
         )
+    },
+    "plugin_npmrc": (
+        plugin_npmrc.read_text(encoding="utf-8")
+        if plugin_npmrc is not None and plugin_npmrc.is_file()
+        else None
+    ),
+    "npm_environment": {
+        key: value
+        for key, value in os.environ.items()
+        if key.lower().startswith("npm_")
     },
     "config_exists": False,
     "config_content": None,
