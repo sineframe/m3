@@ -200,6 +200,12 @@ npx --yes skills@1.7.0 add sineframe/m3#vVERSION --skill testing-with-m3 --agent
 The SDK and CLI use separate environments. The CLI runs pytest in the project
 environment and saves history; tests import the SDK.
 
+## Research
+
+- [How to design an MCP server that works on cheap models](https://m3.sineframe.com/blog/mcp-server-design-small-models): Haiku matched Opus on a well-built server, 1,248 runs
+- [Claude Code and Codex break on different MCP features](https://m3.sineframe.com/blog/claude-code-vs-codex-mcp)
+- [Your MCP server passed. Did the agent call it?](https://m3.sineframe.com/blog/did-the-agent-call-it)
+
 ## Development
 
 Read [Architecture](https://github.com/sineframe/m3/blob/main/docs/architecture.md), then use the package README for the
