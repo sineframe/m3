@@ -1605,6 +1605,7 @@ def prune_cache(
     root = Path(cache_root).expanduser().resolve()
     now = time.time()
     removed: list[Path] = []
+    active_entries = False
     candidates = {Path(str(item["path"])) for item in list_cache(root)}
     for lock in root.glob("*/*/*/sha256-*.lock"):
         if (
@@ -1629,12 +1630,26 @@ def prune_cache(
                 else:
                     lease.unlink(missing_ok=True)
             if active_lease:
+                active_entries = True
                 continue
             if max_age is not None and now - path.stat().st_mtime < max_age:
                 continue
             removed.append(path)
             if not dry_run:
                 shutil.rmtree(path)
+    # Managed OpenCode sessions share npm's download cache here. Only leased
+    # sessions use it, so it is removable once no runtime entry is leased; it
+    # has no meaningful age, so age-limited prunes leave it alone.
+    npm_cache = root / "npm"
+    if (
+        not active_entries
+        and max_age is None
+        and npm_cache.is_dir()
+        and not npm_cache.is_symlink()
+    ):
+        removed.append(npm_cache)
+        if not dry_run:
+            shutil.rmtree(npm_cache)
     return removed
 
 

@@ -179,6 +179,64 @@ async def test_failed_opencode_catalog_preparation_prevents_open_and_releases_le
 
 
 @pytest.mark.asyncio
+async def test_managed_opencode_shares_the_npm_cache_unless_one_is_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENCODE_MODELS_PATH", raising=False)
+    models = tmp_path / "models.json"
+    models.write_bytes(
+        (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
+    )
+    seen: list[dict[str, str]] = []
+
+    class OpenCodeAdapter(OpenCodeHarnessAdapter):
+        async def preflight(self, launch: Any) -> Readiness:
+            return Readiness(ready=True)
+
+        async def open(self, launch: Any) -> Any:
+            seen.append(dict(self.environment))
+            return object()
+
+    class RuntimeLease(Lease):
+        # A real lease replaces the adapter environment wholesale.
+        environment: ClassVar[dict[str, str]] = {"PATH": "/runtime/bin"}
+
+    class CacheManager(Manager):
+        cache_root = tmp_path / "harnesses"
+
+    def session(adapter: OpenCodeHarnessAdapter, runtime: str) -> AsyncAgentSession:
+        return AsyncAgentSession(
+            _spec(runtime=runtime).model_copy(
+                update={"harness": OpenCode(model="fixture", runtime=runtime)}
+            ),
+            adapter,
+            runtime_manager=CacheManager(RuntimeLease()),
+            runtime_models_dir=tmp_path,
+        )
+
+    explicit = {"OPENCODE_MODELS_PATH": str(models)}
+    for adapter, runtime in (
+        (OpenCodeAdapter(executable="fixture", environment=explicit), "managed"),
+        (
+            OpenCodeAdapter(
+                executable="fixture",
+                environment={**explicit, "NPM_CONFIG_CACHE": "/custom/npm"},
+            ),
+            "managed",
+        ),
+        (OpenCodeAdapter(executable="fixture", environment=explicit), "system"),
+    ):
+        async with session(adapter, runtime):
+            pass
+
+    shared, custom, system = seen
+    assert shared["npm_config_cache"] == str(tmp_path / "harnesses" / "npm")
+    assert custom["NPM_CONFIG_CACHE"] == "/custom/npm"
+    assert "npm_config_cache" not in custom
+    assert not any(name.lower() == "npm_config_cache" for name in system)
+
+
+@pytest.mark.asyncio
 async def test_managed_acquire_precedes_preflight_and_open_and_emits_resolution() -> (
     None
 ):

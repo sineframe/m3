@@ -263,6 +263,15 @@ def _terminal_turn_error(error: object) -> ErrorInfo | None:
     )
 
 
+def _npm_cache_setting(environment: Mapping[str, str]) -> tuple[str, str] | None:
+    """Return an explicit npm cache setting; npm reads the name case-insensitively."""
+
+    for name, value in environment.items():
+        if name.lower() == "npm_config_cache":
+            return name, value
+    return None
+
+
 def _validate_elicitation_arguments(
     elicitation: ElicitationPlan | None, elicitation_round_limit: int
 ) -> None:
@@ -1091,10 +1100,12 @@ class AsyncAgentSession:
             self.adapter if isinstance(self.adapter, OpenCodeHarnessAdapter) else None
         )
         models_source = None
+        npm_cache: tuple[str, str] | None = None
         if opencode_adapter is not None:
             models_source = opencode_adapter.environment.get(
                 "OPENCODE_MODELS_PATH"
             ) or os.environ.get("OPENCODE_MODELS_PATH")
+            npm_cache = _npm_cache_setting(opencode_adapter.environment)
         manager = self._runtime_manager
         if manager is None:
             try:
@@ -1191,6 +1202,19 @@ class AsyncAgentSession:
                 ) from None
             opencode_adapter.environment["OPENCODE_MODELS_PATH"] = str(models_path)
             opencode_adapter.environment["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
+            # OpenCode npm-installs its plugin package into every fresh home.
+            # Share npm's content-addressed download cache (safe for
+            # concurrent use) so later sessions install without the registry;
+            # the installed tree itself stays private to the session.
+            if npm_cache is None:
+                npm_cache = _npm_cache_setting(opencode_adapter.environment)
+            cache_root = getattr(manager, "cache_root", None)
+            if npm_cache is not None:
+                opencode_adapter.environment[npm_cache[0]] = npm_cache[1]
+            elif isinstance(cache_root, (str, os.PathLike)):
+                opencode_adapter.environment["npm_config_cache"] = str(
+                    Path(cache_root) / "npm"
+                )
         provenance = getattr(result, "provenance", {})
         resolved_version = (
             provenance.get("version") if isinstance(provenance, Mapping) else None

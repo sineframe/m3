@@ -146,8 +146,17 @@ and validates its provider/model structure instead of downloading from
 `models.opencode.ai`; an existing valid run snapshot takes precedence. An invalid
 saved snapshot can be replaced with a corrected explicit source. Preparation
 failures stop OpenCode startup.
-This removes per-session catalog downloads; OpenCode can still perform its
-independent npm dependency installation.
+This removes per-session catalog downloads.
+
+## OpenCode npm cache
+
+OpenCode npm-installs its plugin package into each session's fresh home. For
+managed OpenCode, M3 sets `npm_config_cache` to the `npm` directory inside the
+runtime cache root, so sessions share npm's download cache. Each session still
+gets its own private install, but after the first one it installs from the
+cache without contacting the npm registry. npm's cache is safe for concurrent
+use and verifies the content it reads. A `npm_config_cache` (any case) in the
+adapter environment takes precedence. System OpenCode is unchanged.
 
 ## Cache location and precedence
 
@@ -208,9 +217,10 @@ target, digest, and status:
 
 Progress events report resolution, download, verification, extraction,
 readiness, and cache hits; download URLs omit query values. The cache stores
-immutable executable assets and receipts. Adapter configuration, credentials,
-MCP server state, and harness home/config files are per execution and are not
-shared as cache assets.
+immutable executable assets and receipts, plus the managed OpenCode npm
+download cache described above. Adapter configuration, credentials, MCP server
+state, and harness home/config files are per execution and are not shared as
+cache assets.
 
 Runtime acquisitions and sessions share cache entries. M3 serializes entry
 installation and pruning with a lock. An active session holds a lease, shown
@@ -235,7 +245,8 @@ close sessions and kits, then run:
 m3 runtime cache prune
 ```
 
-Pruning removes entries without active leases, including corrupt and outdated entries.
+Pruning removes entries without active leases, including corrupt and outdated
+entries. When no entry is leased, it also removes the shared `npm` directory.
 Later tests reacquire any runtimes they need. Keep the cache between comparison
 runs to retain the download savings. Use the same `--cache-dir PATH` override
 if your tests use a custom cache.

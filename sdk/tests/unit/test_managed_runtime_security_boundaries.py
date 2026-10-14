@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import stat
 import tarfile
 import zipfile
@@ -180,6 +181,29 @@ def test_prune_keeps_active_leases_and_removes_free_entries(tmp_path: Path) -> N
     removed = prune_cache(root, max_age=-1)
     assert free in removed
     assert leased.exists()
+
+
+def test_prune_removes_shared_npm_cache_only_when_no_entry_is_leased(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cache"
+    entry = root / "opencode" / "1.0.0" / "target" / "sha256-entry"
+    entry.mkdir(parents=True)
+    (entry / "receipt.json").write_text("{}", encoding="utf-8")
+    lease = entry / "lease-active"
+    lease.write_text(str(os.getpid()), encoding="ascii")
+    npm_cache = root / "npm" / "_cacache"
+    npm_cache.mkdir(parents=True)
+
+    assert prune_cache(root) == []
+    assert npm_cache.is_dir()
+
+    lease.unlink()
+    assert prune_cache(root, max_age=3600) == []
+    assert npm_cache.is_dir()
+
+    assert set(prune_cache(root)) == {entry, root.resolve() / "npm"}
+    assert not (root / "npm").exists()
 
 
 def test_receipt_without_current_format_is_reported_as_outdated(

@@ -113,6 +113,7 @@ def cache_command(
             print(json.dumps(list_cache(root), sort_keys=True))
         else:
             sizes = {path: _entry_size(path) for path in _entry_paths(root)}
+            sizes[root / "npm"] = _entry_size(root / "npm")
             removed = prune_cache(root)
             bytes_removed = sum(sizes.get(path, 0) for path in removed)
             print(
