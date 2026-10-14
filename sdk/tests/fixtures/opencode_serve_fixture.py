@@ -87,6 +87,20 @@ state: dict[str, object] = {
             "OPENCODE_DISABLE_LSP_DOWNLOAD",
         )
     },
+    "plugin_npmrc": (
+        plugin_npmrc.read_text(encoding="utf-8")
+        if (
+            plugin_npmrc := Path(os.environ.get("XDG_CONFIG_HOME", "/nonexistent"))
+            / "opencode"
+            / ".npmrc"
+        ).is_file()
+        else None
+    ),
+    "npm_environment": {
+        key: value
+        for key, value in os.environ.items()
+        if key.lower().startswith("npm_")
+    },
     "config_exists": False,
     "config_content": None,
     "api_hits": [],

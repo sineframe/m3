@@ -340,6 +340,22 @@ class _HistorySnapshot(NamedTuple):
     end_offset_ms: float = 0.0
 
 
+def _write_plugin_npmrc(config_home: Path, cache: Path) -> None:
+    """Point OpenCode's plugin install at a shared npm download cache.
+
+    OpenCode installs its plugin package in ``$XDG_CONFIG_HOME/opencode`` and
+    reads that directory's ``.npmrc``. npm run from the workspace does not, so
+    the agent's own npm/npx keeps the session's private ``~/.npm``.
+    """
+
+    directory = config_home / "opencode"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # A JSON string is a quoted ini value: any path survives verbatim.
+    (directory / ".npmrc").write_text(
+        f"cache={json.dumps(str(cache))}\n", encoding="utf-8"
+    )
+
+
 class OpenCodeHarnessAdapter:
     """One isolated OpenCode server and attached conversation session."""
 
@@ -355,6 +371,10 @@ class OpenCodeHarnessAdapter:
         self.executable = _executable(executable, "opencode")
         self.environment = dict(environment or {})
         self._resolver_environment = environment
+        # Shared npm download cache for OpenCode's own plugin install; set by
+        # managed runtime preparation. Scoped through the install directory's
+        # .npmrc, so npm/npx run by the agent keeps the session's private cache.
+        self.npm_cache_dir: Path | None = None
         self._capabilities = HarnessAdapterCapabilities(
             name="opencode",
             supports_multiturn=True,
@@ -543,6 +563,10 @@ class OpenCodeHarnessAdapter:
         try:
             harness = launch.spec.harness
             environment = _isolated_environment(root, self.environment)
+            if self.npm_cache_dir is not None:
+                _write_plugin_npmrc(
+                    Path(environment["XDG_CONFIG_HOME"]), self.npm_cache_dir
+                )
             environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             if isinstance(harness, OpenCode) and harness.runtime == "managed":
                 environment["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"

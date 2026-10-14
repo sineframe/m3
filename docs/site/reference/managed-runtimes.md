@@ -154,12 +154,19 @@ This removes per-session catalog downloads.
 ## OpenCode npm cache
 
 OpenCode npm-installs its plugin package into each session's fresh home. For
-managed OpenCode, M3 sets `npm_config_cache` to the `npm` directory inside the
-runtime cache root, so sessions share npm's download cache. Each session still
-gets its own private install, but after the first one it installs from the
-cache without contacting the npm registry. npm's cache is safe for concurrent
-use and verifies the content it reads. A `npm_config_cache` (any case) in the
-adapter environment takes precedence. System OpenCode is unchanged.
+managed OpenCode, M3 writes a `.npmrc` into the session's OpenCode
+configuration directory (where that install runs) that points npm's cache at
+the `npm` directory inside the runtime cache root. Sessions share npm's download
+cache for that install only: each session still gets its own private install,
+and after the first one it installs from the cache without contacting the npm
+registry. npm's cache is safe for concurrent use.
+
+The setting is not an environment variable, so npm or npx run by the agent from
+its workspace keeps the session's private `~/.npm`, and one trial's packages do
+not reach another. M3 does not sandbox the harness, so this is not a security
+boundary against an agent that seeks out the shared directory. An
+`npm_config_cache` in the adapter environment overrides the `.npmrc`. System
+OpenCode is unchanged.
 
 ## Cache location and precedence
 
@@ -249,7 +256,10 @@ m3 runtime cache prune
 ```
 
 Pruning removes entries without active leases, including corrupt and outdated
-entries. When no entry is leased, it also removes the shared `npm` directory.
+entries. It leaves the shared `npm` directory alone, because a starting session
+may be installing into it. To reclaim that space (about 100 MB per OpenCode
+version), delete the directory while no M3 sessions are running; the next
+session refills it.
 Later tests reacquire any runtimes they need. Keep the cache between comparison
 runs to retain the download savings. Use the same `--cache-dir PATH` override
 if your tests use a custom cache.

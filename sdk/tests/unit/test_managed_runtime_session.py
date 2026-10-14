@@ -179,7 +179,7 @@ async def test_failed_opencode_catalog_preparation_prevents_open_and_releases_le
 
 
 @pytest.mark.asyncio
-async def test_managed_opencode_shares_the_npm_cache_unless_one_is_set(
+async def test_managed_opencode_scopes_the_shared_npm_cache_to_the_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("OPENCODE_MODELS_PATH", raising=False)
@@ -187,53 +187,40 @@ async def test_managed_opencode_shares_the_npm_cache_unless_one_is_set(
     models.write_bytes(
         (Path(__file__).parents[1] / "fixtures" / "opencode_models.json").read_bytes()
     )
-    seen: list[dict[str, str]] = []
+    seen: list[tuple[Path | None, dict[str, str]]] = []
 
     class OpenCodeAdapter(OpenCodeHarnessAdapter):
         async def preflight(self, launch: Any) -> Readiness:
             return Readiness(ready=True)
 
         async def open(self, launch: Any) -> Any:
-            seen.append(dict(self.environment))
+            seen.append((self.npm_cache_dir, dict(self.environment)))
             return object()
-
-    class RuntimeLease(Lease):
-        # A real lease replaces the adapter environment wholesale.
-        environment: ClassVar[dict[str, str]] = {"PATH": "/runtime/bin"}
 
     class CacheManager(Manager):
         cache_root = tmp_path / "harnesses"
 
-    def session(adapter: OpenCodeHarnessAdapter, runtime: str) -> AsyncAgentSession:
-        return AsyncAgentSession(
+    for runtime in ("managed", "system"):
+        adapter = OpenCodeAdapter(
+            executable="fixture", environment={"OPENCODE_MODELS_PATH": str(models)}
+        )
+        session = AsyncAgentSession(
             _spec(runtime=runtime).model_copy(
                 update={"harness": OpenCode(model="fixture", runtime=runtime)}
             ),
             adapter,
-            runtime_manager=CacheManager(RuntimeLease()),
+            runtime_manager=CacheManager(),
             runtime_models_dir=tmp_path,
         )
-
-    explicit = {"OPENCODE_MODELS_PATH": str(models)}
-    for adapter, runtime in (
-        (OpenCodeAdapter(executable="fixture", environment=explicit), "managed"),
-        (
-            OpenCodeAdapter(
-                executable="fixture",
-                environment={**explicit, "NPM_CONFIG_CACHE": "/custom/npm"},
-            ),
-            "managed",
-        ),
-        (OpenCodeAdapter(executable="fixture", environment=explicit), "system"),
-    ):
-        async with session(adapter, runtime):
+        async with session:
             pass
 
-    shared, custom, system = seen
-    assert shared["npm_config_cache"] == str(tmp_path / "harnesses" / "npm")
-    assert custom["NPM_CONFIG_CACHE"] == "/custom/npm"
-    assert "npm_config_cache" not in custom
-    assert not any(name.lower() == "npm_config_cache" for name in system)
+    (managed_cache, managed_env), (system_cache, _) = seen
+    assert managed_cache == tmp_path / "harnesses" / "npm"
+    # The process environment is inherited by the agent's tools; the shared
+    # cache must not travel through it.
+    assert not any(name.lower().startswith("npm_") for name in managed_env)
+    assert system_cache is None
 
 
 @pytest.mark.asyncio

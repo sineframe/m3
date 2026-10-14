@@ -2092,6 +2092,35 @@ async def test_opencode_managed_launch_disables_network_bootstrap(
         await adapter.close()
 
 
+@pytest.mark.asyncio
+async def test_opencode_shared_npm_cache_reaches_only_the_plugin_install(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "npm.json"
+    executable = str(
+        Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py"
+    )
+    cache = tmp_path / 'shared "npm" #1;x'
+    adapter = OpenCodeHarnessAdapter(
+        executable=executable, environment={"M3_MARKER": str(marker)}
+    )
+    adapter.npm_cache_dir = cache
+    try:
+        await adapter.open(_launch())
+        observed = await _wait_for_marker(
+            marker, lambda value: value.get("session_post_count") == 1
+        )
+    finally:
+        await adapter.close()
+    # OpenCode's installer reads the install directory's .npmrc; npm run by
+    # the agent from the workspace does not, and no npm variable is inherited.
+    npmrc = observed["plugin_npmrc"]
+    assert npmrc.startswith("cache=") and npmrc.endswith("\n")
+    assert json.loads(npmrc.removeprefix("cache=")) == str(cache)
+    assert observed["npm_environment"] == {}
+    assert not Path(observed["cwd"]).is_relative_to(observed["xdg_config_home"])
+
+
 async def _open_opencode_fixture(
     marker: Path,
     *,
