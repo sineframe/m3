@@ -17,12 +17,14 @@ from m3.harness.claude import _claude_mcp_startup
 from m3.harness.codex import CodexHarnessAdapter, render_codex_config
 from m3.harness.contracts import HarnessLaunch, HarnessStartupError
 from m3.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
+from m3.harness.pi import PiHarnessAdapter
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.types import (
     Codex,
     HarnessTimeouts,
     McpTimeouts,
     OpenCode,
+    Pi,
     RestrictiveToolPolicy,
     ServerBinding,
     StdioServer,
@@ -129,6 +131,93 @@ async def test_codex_thread_start_deadline_is_not_extended_by_other_frames(
     )
 
 
+class _AccountStallProcess:
+    """App Server that answers initialize, then never answers account/read."""
+
+    root: Path | None = None
+
+    def __init__(self) -> None:
+        self.written: list[dict[str, object]] = []
+
+    async def write(self, payload: dict[str, object]) -> None:
+        self.written.append(payload)
+
+    async def next(self, timeout: float | None = None) -> dict[str, object]:
+        request = self.written[-1]
+        if request.get("method") == "initialize":
+            return {"jsonrpc": "2.0", "id": request["id"], "result": {}}
+        await asyncio.wait_for(asyncio.sleep(0.05), timeout)
+        return {"jsonrpc": "2.0", "method": "mcpServer/startupStatus", "params": {}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("harness", "config", "limit"),
+    (
+        (
+            Codex(model="fixture"),
+            load_config(
+                {"harnesses": {"codex": {"timeouts": {"account_seconds": 0.3}}}}, env={}
+            ),
+            "0.3s",
+        ),
+        (
+            Codex(model="fixture", timeouts=HarnessTimeouts(account_seconds=0.2)),
+            Config(),
+            "0.2s",
+        ),
+    ),
+    ids=("run-setting", "typed-harness-wins"),
+)
+async def test_codex_account_request_has_one_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: Codex,
+    config: Config,
+    limit: str,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+    adapter = CodexHarnessAdapter(executable="codex")
+    launch = _launch(harness, config=config)
+    adapter.environment_for_launch(launch, tmp_path)
+    with pytest.raises(HarnessStartupError) as caught:
+        await asyncio.wait_for(adapter.initialize(_AccountStallProcess(), launch), 5)  # type: ignore[arg-type]
+    assert str(caught.value) == (
+        f"Codex account/read did not finish within {limit} "
+        "(harnesses.codex.timeouts.account_seconds)"
+    )
+
+
+class _SilentPiProcess:
+    """Pi RPC process that emits startup events but never answers get_state."""
+
+    root: Path | None = None
+
+    async def write(self, payload: dict[str, object]) -> None:
+        del payload
+
+    async def next(self, timeout: float | None = None) -> dict[str, object]:
+        await asyncio.wait_for(asyncio.sleep(0.05), timeout)
+        return {"type": "session_start"}
+
+
+@pytest.mark.asyncio
+async def test_pi_get_state_uses_the_configured_limit() -> None:
+    config = load_config(
+        {"harnesses": {"pi": {"timeouts": {"initialize_seconds": 0.2}}}}, env={}
+    )
+    launch = _launch(Pi(model="fixture"), config=config)
+    with pytest.raises(HarnessStartupError) as caught:
+        await asyncio.wait_for(
+            PiHarnessAdapter(executable="pi").initialize(_SilentPiProcess(), launch),  # type: ignore[arg-type]
+            5,
+        )
+    assert str(caught.value) == (
+        "Pi get_state did not finish within 0.2s "
+        "(harnesses.pi.timeouts.initialize_seconds)"
+    )
+
+
 def test_codex_mcp_startup_budget_is_written_only_when_set() -> None:
     config = load_config({"mcp_timeouts": {"startup_seconds": 45}}, env={})
     rendered = tomllib.loads(
@@ -213,7 +302,15 @@ def test_nested_timeout_tables_resolve_from_project_file(tmp_path: Path) -> None
         "[tool.m3.harnesses.codex.timeouts]\n"
         "startup_seconds = 90\n"
         "[tool.m3.mcp_timeouts]\n"
-        "startup_seconds = 60\n",
+        "startup_seconds = 60\n"
+        "[tool.m3.harnesses.pi.timeouts]\n"
+        "extension_connect_seconds = 20\n"
+        "[tool.m3.harness_probes]\n"
+        "timeout_seconds = 45\n"
+        "[tool.m3.startup_admission]\n"
+        "enabled = true\n"
+        "slots = 2\n"
+        "max_load_per_cpu = 1.5\n",
         encoding="utf-8",
     )
     config = load_config(env={}, cwd=tmp_path)
@@ -221,6 +318,13 @@ def test_nested_timeout_tables_resolve_from_project_file(tmp_path: Path) -> None
     assert config.harnesses.codex.timeouts.initialize_seconds == 30.0
     assert config.harnesses.opencode.timeouts.startup_seconds == 60.0
     assert config.mcp_timeouts.startup_seconds == 60.0
+    assert config.harnesses.pi.timeouts.extension_connect_seconds == 20.0
+    assert config.harnesses.pi.timeouts.initialize_seconds == 15.0
+    assert config.harness_probes.timeout_seconds == 45.0
+    assert config.startup_admission.enabled is True
+    assert config.startup_admission.slots == 2
+    assert config.startup_admission.queue_timeout_seconds == 300.0
+    assert config.startup_admission.max_load_per_cpu == 1.5
     origin = config.source_for("harnesses.codex.timeouts.startup_seconds").origin
     assert origin == f"pyproject:{tmp_path / 'pyproject.toml'}"
     assert (
@@ -269,11 +373,31 @@ def test_timeout_settings_reject_invalid_durations(value: object) -> None:
     assert caught.value.field == "harnesses.opencode.timeouts.startup_seconds"
 
 
+@pytest.mark.parametrize(
+    ("leaf", "value"),
+    (
+        ("slots", 0),
+        ("slots", True),
+        ("slots", "4"),
+        ("slots", 2.5),
+        ("enabled", "yes"),
+        ("max_load_per_cpu", 0),
+        ("queue_timeout_seconds", 3601),
+    ),
+)
+def test_startup_admission_rejects_invalid_values(leaf: str, value: object) -> None:
+    with pytest.raises(ConfigError) as caught:
+        load_config({"startup_admission": {leaf: value}}, env={})
+    assert caught.value.field == f"startup_admission.{leaf}"
+
+
 def test_harness_rejects_timeouts_for_a_phase_it_does_not_have() -> None:
     with pytest.raises(ValidationError, match="Codex has no session_creation_seconds"):
         Codex(model="fixture", timeouts=HarnessTimeouts(session_creation_seconds=5))
     with pytest.raises(ValidationError, match="OpenCode has no initialize_seconds"):
         OpenCode(model="fixture", timeouts=HarnessTimeouts(initialize_seconds=5))
+    with pytest.raises(ValidationError, match="Pi has no startup_seconds"):
+        Pi(model="fixture", timeouts=HarnessTimeouts(startup_seconds=1))
 
 
 def test_unset_timeouts_are_omitted_from_serialized_specs() -> None:

@@ -409,7 +409,10 @@ class OpenCodeHarnessAdapter:
                 ready=False, capabilities=(capability,), reason="executable unavailable"
             )
         help_text = await asyncio.to_thread(
-            probe_help, self.executable, ("serve", "--help")
+            probe_help,
+            self.executable,
+            ("serve", "--help"),
+            timeout_seconds=launch.config.harness_probes.timeout_seconds,
         )
         if help_text is None or "serve" not in help_text.lower():
             capability = Capability(
@@ -506,7 +509,6 @@ class OpenCodeHarnessAdapter:
         return self._capabilities.readiness()
 
     def _detect_dialect(self, launch: HarnessLaunch) -> str:
-        del launch
         result = run_probe(
             self.executable,
             ("--version",),
@@ -515,6 +517,7 @@ class OpenCodeHarnessAdapter:
                 for key, value in self.environment.items()
                 if key in _DIALECT_PROBE_CONTROL_KEYS
             },
+            timeout_seconds=launch.config.harness_probes.timeout_seconds,
         )
         if result is None:
             raise HarnessStartupError(

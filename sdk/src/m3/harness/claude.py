@@ -395,7 +395,12 @@ class ClaudeCodeHarnessAdapter:
                 ),
                 reason="executable unavailable",
             )
-        help_text = await asyncio.to_thread(probe_help, self.executable, ("--help",))
+        help_text = await asyncio.to_thread(
+            probe_help,
+            self.executable,
+            ("--help",),
+            timeout_seconds=launch.config.harness_probes.timeout_seconds,
+        )
         if help_text is None or "stream-json" not in help_text:
             capability = Capability(
                 name="harness:claude-code",

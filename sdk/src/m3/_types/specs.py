@@ -96,13 +96,16 @@ class HarnessTimeouts(_Timeouts):
     """Limits m3 applies while it starts a native harness session.
 
     Unset fields fall back to ``[tool.m3.harnesses.<name>.timeouts]``.  Codex
-    has ``initialize_seconds`` and ``startup_seconds``; OpenCode has
-    ``startup_seconds`` and ``session_creation_seconds``.
+    has ``initialize_seconds``, ``account_seconds`` and ``startup_seconds``;
+    OpenCode has ``startup_seconds`` and ``session_creation_seconds``; Pi has
+    ``initialize_seconds`` and ``extension_connect_seconds``.
     """
 
     initialize_seconds: float | None = _optional_seconds()
+    account_seconds: float | None = _optional_seconds()
     startup_seconds: float | None = _optional_seconds()
     session_creation_seconds: float | None = _optional_seconds()
+    extension_connect_seconds: float | None = _optional_seconds()
 
 
 def _supported_timeouts(
@@ -350,7 +353,9 @@ class Codex(HarnessValue):
     @classmethod
     def _supported_phases(cls, value: HarnessTimeouts | None) -> HarnessTimeouts | None:
         _supported_timeouts(
-            "Codex", value, frozenset({"initialize_seconds", "startup_seconds"})
+            "Codex",
+            value,
+            frozenset({"initialize_seconds", "account_seconds", "startup_seconds"}),
         )
         return value
 
@@ -362,6 +367,7 @@ class Pi(HarnessValue):
     name: str = "pi"
     provider: str | None = None
     credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
+    timeouts: HarnessTimeouts | None = None
 
     @_field_validator("credential_references")
     @classmethod
@@ -382,6 +388,14 @@ class Pi(HarnessValue):
                 reference.name if reference.source == "environment" else "",
             )
         return values
+
+    @_field_validator("timeouts")
+    @classmethod
+    def _supported_phases(cls, value: HarnessTimeouts | None) -> HarnessTimeouts | None:
+        _supported_timeouts(
+            "Pi", value, frozenset({"initialize_seconds", "extension_connect_seconds"})
+        )
+        return value
 
 
 class ACPAgent(HarnessValue):

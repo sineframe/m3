@@ -312,6 +312,7 @@ def run_probe(
     args: tuple[str, ...],
     *,
     environment: Mapping[str, str] | None = None,
+    timeout_seconds: float = PROBE_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str] | None:
     """Run a credential-free capability probe in an empty home directory.
 
@@ -341,7 +342,7 @@ def run_probe(
                     check=False,
                     capture_output=True,
                     text=True,
-                    timeout=PROBE_TIMEOUT_SECONDS,
+                    timeout=timeout_seconds,
                     shell=False,
                     cwd=root,
                     env=probe_environment,
@@ -354,10 +355,15 @@ def run_probe(
 
 
 @_timing.timed("harness.probe_help")
-def probe_help(executable: str, args: tuple[str, ...]) -> str | None:
+def probe_help(
+    executable: str,
+    args: tuple[str, ...],
+    *,
+    timeout_seconds: float = PROBE_TIMEOUT_SECONDS,
+) -> str | None:
     """Read bounded capability help without credentials or model execution."""
 
-    result = run_probe(executable, args)
+    result = run_probe(executable, args, timeout_seconds=timeout_seconds)
     if result is None:
         return None
     return (result.stdout + "\n" + result.stderr).replace("\x00", " ")[:32_768]

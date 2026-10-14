@@ -37,6 +37,8 @@ from .contracts import (
     HarnessSession,
     HarnessStartupError,
     HarnessTurnRequest,
+    harness_timeout,
+    startup_timeout,
 )
 from .native import probe_help
 from .observations import (
@@ -52,12 +54,16 @@ from .pi_control import (
     MAX_CONTROL_ROUND_LIMIT,
     PiControlChannel,
     PiControlClosed,
+    PiControlTimeout,
 )
 from .pi_extension.bridge import (
     ActionContextChannel,
     BridgeActionStatus,
     qualified_tool_name,
 )
+
+_INITIALIZE_SETTING = "harnesses.pi.timeouts.initialize_seconds"
+_EXTENSION_SETTING = "harnesses.pi.timeouts.extension_connect_seconds"
 
 
 class PiHarnessAdapter(NativeRPCAdapter):
@@ -140,10 +146,15 @@ class PiHarnessAdapter(NativeRPCAdapter):
         ready = await super().preflight(launch)
         if not ready.ready:
             return ready
-        help_text = await asyncio.to_thread(probe_help, self.executable, ("--help",))
+        probe_seconds = launch.config.harness_probes.timeout_seconds
+        help_text = await asyncio.to_thread(
+            probe_help, self.executable, ("--help",), timeout_seconds=probe_seconds
+        )
         if help_text is None or "rpc" not in help_text.lower():
             return Readiness(ready=False, reason="Pi RPC capability is unavailable")
-        version = await asyncio.to_thread(probe_help, self.executable, ("--version",))
+        version = await asyncio.to_thread(
+            probe_help, self.executable, ("--version",), timeout_seconds=probe_seconds
+        )
         interaction = (
             self.interaction_capabilities
             if version is not None and version.strip() == "0.85.1"
@@ -301,8 +312,16 @@ class PiHarnessAdapter(NativeRPCAdapter):
         try:
             session = await super().open(launch)
             process = self._process
+            settings = launch.config.harnesses.pi.timeouts
+            connect_seconds = harness_timeout(
+                launch, settings, "extension_connect_seconds"
+            )
             try:
-                await control.wait_connected()
+                await control.wait_connected(connect_seconds)
+            except PiControlTimeout as error:
+                raise startup_timeout(
+                    "Pi", "extension connection", _EXTENSION_SETTING, connect_seconds
+                ) from error
             except PiControlClosed as error:
                 raise HarnessStartupError(
                     "Pi managed-control extension did not authenticate"
@@ -433,14 +452,19 @@ class PiHarnessAdapter(NativeRPCAdapter):
         # initialize request. Ask for state when supported, but tolerate older
         # versions that only begin after the first prompt.
         await process.write({"type": "get_state"})
-        deadline = asyncio.get_running_loop().time() + 15.0
+        seconds = harness_timeout(
+            launch, launch.config.harnesses.pi.timeouts, "initialize_seconds"
+        )
+        deadline = asyncio.get_running_loop().time() + seconds
         frame: Mapping[str, Any] | None = None
         while asyncio.get_running_loop().time() < deadline:
             remaining = max(0.01, deadline - asyncio.get_running_loop().time())
             try:
                 candidate = await process.next(remaining)
             except asyncio.TimeoutError:
-                raise HarnessStartupError("Pi state response timed out") from None
+                raise startup_timeout(
+                    "Pi", "get_state", _INITIALIZE_SETTING, seconds
+                ) from None
             if not isinstance(candidate, Mapping):
                 raise HarnessStartupError("Pi state response was unavailable")
             if candidate.get("type") != "response":
@@ -454,7 +478,7 @@ class PiHarnessAdapter(NativeRPCAdapter):
             frame = candidate
             break
         if frame is None:
-            raise HarnessStartupError("Pi state response timed out")
+            raise startup_timeout("Pi", "get_state", _INITIALIZE_SETTING, seconds)
         raw_data = frame.get("data")
         data: Mapping[str, Any] = raw_data if isinstance(raw_data, Mapping) else {}
         session = data.get("sessionId")

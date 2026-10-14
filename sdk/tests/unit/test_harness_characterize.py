@@ -12,6 +12,7 @@ import pytest
 import m3.harness.characterize as characterize_module
 import m3.harness.codex as codex_module
 from m3.agent_session import _require_elicitation_capability
+from m3.configuration import Config
 from m3.errors import UnsupportedFeature
 from m3.harness.acp import AcpHarnessAdapter
 from m3.harness.characterize import MAX_PROBE_OUTPUT, _run_probe
@@ -59,7 +60,7 @@ def test_real_adapter_declarations_remain_explicit(
     monkeypatch.setattr(
         codex_module,
         "probe_help",
-        lambda executable, args: (
+        lambda executable, args, **_kwargs: (
             "codex-cli 0.156.1"
             if Path(executable).name == "codex" and args == ("--version",)
             else None
@@ -76,7 +77,7 @@ def test_real_adapter_declarations_remain_explicit(
     for adapter, retry_owner in adapters:
         prepare = getattr(adapter, "prepare_capabilities", None)
         if prepare is not None:
-            asyncio.run(prepare())
+            asyncio.run(prepare(Config()))
         capabilities = adapter.capabilities.interaction
         expected = adapter.__class__ in {PiHarnessAdapter, CodexHarnessAdapter}
         assert capabilities.supports_elicitation is expected
@@ -106,7 +107,7 @@ def test_unverified_harness_rejects_action_bound_elicitation(
     monkeypatch.setattr(
         codex_module,
         "probe_help",
-        lambda executable, args: (
+        lambda executable, args, **_kwargs: (
             "codex-cli 0.156.2"
             if Path(executable).name == "codex" and args == ("--version",)
             else None

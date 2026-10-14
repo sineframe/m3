@@ -40,6 +40,24 @@ if "--help" in sys.argv:
     raise SystemExit(0)
 
 
+def timeline(event: str) -> None:
+    """Append one startup event when M3_OPENCODE_FIXTURE_TIMELINE names a file."""
+
+    path = os.environ.get("M3_OPENCODE_FIXTURE_TIMELINE")
+    if not path:
+        return
+    line = json.dumps({"pid": os.getpid(), "event": event, "t": time.time()}) + "\n"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(descriptor, line.encode("utf-8"))
+    finally:
+        os.close(descriptor)
+
+
+timeline("spawned")
+time.sleep(float(os.environ.get("M3_OPENCODE_FIXTURE_STARTUP_DELAY", "0")))
+
+
 marker_name = os.environ.get("M3_MARKER")
 marker = Path(marker_name) if marker_name else None
 state_lock = threading.Lock()
@@ -258,6 +276,7 @@ class Handler(BaseHTTPRequestHandler):
 
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 record(port=server.server_address[1])
+timeline("ready")
 print(f"http://127.0.0.1:{server.server_address[1]}", flush=True)
 try:
     server.serve_forever()
