@@ -7,6 +7,11 @@ import json
 import os
 import sys
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+    import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+
 if os.environ.get("M3_DOCS_LOCAL_PROVIDER") == "1":
     from docs_live_mcp_client import codex_call, prompt_text
 else:
@@ -31,6 +36,43 @@ account = (
     else {"type": "chatgpt", "email": "fixture@example.com", "planType": "plus"}
 )
 reject_login = os.environ.get("M3_CODEX_FIXTURE_REJECT_LOGIN") == "1"
+
+
+def thread_permissions(params: dict) -> dict:
+    """thread/start's permission fields, as Codex 0.160+ reports them.
+
+    A `sandbox` param selects the legacy sandbox and makes Codex ignore
+    `default_permissions`; without one, the config's default profile is active.
+    """
+
+    try:
+        with open(
+            os.path.join(os.environ.get("CODEX_HOME", ""), "config.toml"), "rb"
+        ) as handle:
+            config = tomllib.load(handle)
+    except (OSError, ValueError):
+        config = {}
+    mode = params.get("sandbox")
+    if mode is None and config.get("default_permissions") in config.get(
+        "permissions", {}
+    ):
+        name = config["default_permissions"]
+        profile = config["permissions"][name]
+        network = profile.get("network", {}).get("enabled", False)
+        return {
+            "sandbox": {"type": "workspaceWrite", "networkAccess": network},
+            "activePermissionProfile": {"id": name, "extends": profile.get("extends")},
+        }
+    if mode == "read-only":
+        sandbox = {"type": "readOnly", "networkAccess": False}
+    elif mode == "danger-full-access":
+        sandbox = {"type": "dangerFullAccess"}
+    else:
+        network = config.get("sandbox_workspace_write", {}).get("network_access", False)
+        sandbox = {"type": "workspaceWrite", "networkAccess": network}
+    return {"sandbox": sandbox, "activePermissionProfile": None}
+
+
 for line in sys.stdin:
     try:
         frame = json.loads(line)
@@ -71,7 +113,14 @@ for line in sys.stdin:
     elif method == "thread/start":
         print(
             json.dumps(
-                {"jsonrpc": "2.0", "id": ident, "result": {"thread": {"id": thread}}}
+                {
+                    "jsonrpc": "2.0",
+                    "id": ident,
+                    "result": {
+                        "thread": {"id": thread},
+                        **thread_permissions(frame.get("params", {})),
+                    },
+                }
             ),
             flush=True,
         )
