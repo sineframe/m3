@@ -58,6 +58,11 @@ directory. The assertion checks discovery and the returned quote. Change the
 command, arguments, and working directory to match your own server; see
 [test your own server](start-your-server.md).
 
+M3 starts the server with exactly the configured `command`, `args`, and `cwd`.
+No shell runs, and `${NAME}` or `$NAME` in these values is not substituted,
+including when an agent harness launches the server. Pass values the server
+needs through `environment`.
+
 ## If startup fails
 
 First run the server command manually from the configured working directory.

@@ -32,6 +32,7 @@ from ..trace.capture import CaptureWriter, read_capture
 from ..trace.redaction import is_sensitive_key
 from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
 from .http_proxy import McpHttpProxy
+from .stdio_proxy import STDIO_LAUNCH_VERSION
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_SIZE = 4096
@@ -287,15 +288,34 @@ def _classify_runtime_value(
         secrets.add(value)
 
 
-def write_stdio_handoff(
+def _launch_value(value: Any, *, allow_empty: bool = True) -> str:
+    if not isinstance(value, str) or "\x00" in value or (not allow_empty and not value):
+        raise ValueError("MCP stdio launch value is invalid")
+    return value
+
+
+def write_stdio_launch(
     path: str | os.PathLike[str],
-    environment: Mapping[str, Any],
     *,
+    command: str,
+    args: Iterable[str],
+    cwd: str | None,
+    environment: Mapping[str, Any],
     configured_keys: frozenset[str] = frozenset(),
     observer: Mapping[str, str] | None = None,
 ) -> set[str]:
-    """Resolve selected stdio environment into a one-shot protected handoff."""
+    """Write a stdio server's complete launch into a one-shot protected file.
 
+    The executable, arguments, working directory, and resolved environment
+    reach the relay only through this file, so a harness that rewrites its own
+    MCP launch command (for example by expanding ``${NAME}``) cannot alter them.
+    """
+
+    launch = {
+        "command": _launch_value(command, allow_empty=False),
+        "args": [_launch_value(value) for value in args],
+        "cwd": None if cwd is None else _launch_value(cwd, allow_empty=False),
+    }
     resolved_secrets: set[str] = set()
     # Match the official stdio client baseline (PATH/HOME/etc.) while keeping
     # ambient provider credentials out; explicit MCP values are layered on top.
@@ -317,6 +337,8 @@ def write_stdio_handoff(
         descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created = True
         handoff_payload: dict[str, Any] = {
+            "version": STDIO_LAUNCH_VERSION,
+            "launch": launch,
             "environment": resolved_environment,
             "canaries": sorted(resolved_secrets),
         }
@@ -930,7 +952,7 @@ class McpCaptureManager:
                         "connection_id": key,
                         "token": observation_token,
                     }
-                env_path = self.root / f"{key}.env.json"
+                launch_path = self.root / f"{key}.launch.json"
                 environment = dict(getattr(configuration, "environment", {}))
                 alias = str(getattr(configuration, "key", key))
                 for name, value in defaults.get(alias, {}).items():
@@ -945,10 +967,14 @@ class McpCaptureManager:
                 configured_keys = frozenset(
                     getattr(configuration, "sensitive_keys", ())
                 )
+                cwd = getattr(configuration, "cwd", None)
                 resolved_secrets.update(
-                    write_stdio_handoff(
-                        env_path,
-                        environment,
+                    write_stdio_launch(
+                        launch_path,
+                        command=command,
+                        args=tuple(getattr(configuration, "args", ())),
+                        cwd=cwd if isinstance(cwd, str) and cwd else None,
+                        environment=environment,
                         configured_keys=configured_keys,
                         observer=observer_handoff,
                     )
@@ -956,6 +982,9 @@ class McpCaptureManager:
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
                     self._resolved_secrets.update(resolved_secrets)
+                # The harness sees only the relay invocation.  The server's
+                # command, arguments, and cwd travel in the launch file, so a
+                # harness that expands ``${NAME}`` in MCP args cannot alter them.
                 args: tuple[str, ...] = (
                     "-m",
                     "m3.transport.stdio_proxy",
@@ -963,8 +992,8 @@ class McpCaptureManager:
                     str(target.path),
                     "--baseline",
                     str(self.baseline_ns),
-                    "--env-file",
-                    str(env_path),
+                    "--launch-file",
+                    str(launch_path),
                 )
                 if self._tool_policy is not None:
                     policy_path = self.root / f"{key}.policy.json"
@@ -993,10 +1022,6 @@ class McpCaptureManager:
                             os.close(descriptor)
                     args += ("--policy-file", str(policy_path))
                     self._policy_enforced.add(key)
-                cwd = getattr(configuration, "cwd", None)
-                if isinstance(cwd, str) and cwd:
-                    args = (*args, "--cwd", cwd)
-                args += ("--", command, *tuple(getattr(configuration, "args", ())))
                 self._instrumented[key] = replace(
                     configuration,
                     command=sys.executable,
@@ -1190,7 +1215,7 @@ class McpCaptureManager:
             # Explicit capture roots are caller-owned, but one-shot launch
             # handoffs are still ours to remove because they may contain
             # resolved credentials.
-            for path in self.root.glob("*.env.json"):
+            for path in self.root.glob("*.launch.json"):
                 try:
                     path.unlink(missing_ok=True)
                 except OSError:
@@ -1211,5 +1236,5 @@ __all__ = [
     "McpObservationIncomplete",
     "McpObservationSubscription",
     "McpWireEvent",
-    "write_stdio_handoff",
+    "write_stdio_launch",
 ]

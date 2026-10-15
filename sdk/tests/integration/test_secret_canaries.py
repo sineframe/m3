@@ -65,8 +65,18 @@ def _capture_bytes(manager: McpCaptureManager, connection_id: str) -> bytes:
     return manager.writer_for(connection_id).path.read_bytes()
 
 
+_VALID_LAUNCH = json.dumps(
+    {
+        "version": 2,
+        "launch": {"command": sys.executable, "args": ["-c", "pass"], "cwd": None},
+        "environment": {},
+        "canaries": [],
+    }
+)
+
+
 def _run_proxy_with_handoff(
-    handoff: Path, capture: Path, tmp_path: Path
+    handoff: Path, capture: Path, tmp_path: Path, *extra: str
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     source_root = str(Path(__file__).parents[2] / "src")
@@ -82,14 +92,12 @@ def _run_proxy_with_handoff(
             str(capture),
             "--baseline",
             "0",
-            "--env-file",
+            "--launch-file",
             str(handoff),
-            "--",
-            sys.executable,
-            "-c",
-            "pass",
+            *extra,
         ),
         cwd=tmp_path,
+        stdin=subprocess.DEVNULL,
         env=environment,
         capture_output=True,
         text=True,
@@ -181,7 +189,7 @@ async def test_api_key_literals_are_scanned_on_http_and_stdio(
         assert literal_vendor in http_body
         assert resolved in http_body
 
-        env_index = stdio_config.args.index("--env-file") + 1
+        env_index = stdio_config.args.index("--launch-file") + 1
         env_file = Path(stdio_config.args[env_index])
         assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
         child_environment = os.environ.copy()
@@ -290,16 +298,35 @@ async def test_proxy_writer_receives_resolved_canaries(
 
 def test_stdio_handoff_failure_removes_non_private_file(tmp_path: Path) -> None:
     handoff = tmp_path / "handoff.json"
-    handoff.write_text('{"environment": {}, "canaries": []}', encoding="utf-8")
+    handoff.write_text(_VALID_LAUNCH, encoding="utf-8")
     handoff.chmod(0o644)
     result = _run_proxy_with_handoff(handoff, tmp_path / "capture.jsonl", tmp_path)
     assert result.returncode == 78
     assert not handoff.exists()
 
 
-def test_stdio_handoff_rejects_legacy_shape_and_symlink(tmp_path: Path) -> None:
+def test_stdio_handoff_runs_valid_launch(tmp_path: Path) -> None:
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text(_VALID_LAUNCH, encoding="utf-8")
+    handoff.chmod(0o600)
+    result = _run_proxy_with_handoff(handoff, tmp_path / "capture.jsonl", tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not handoff.exists()
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        '{"TOKEN": "legacy-secret"}',
+        '{"environment": {}, "canaries": []}',
+        _VALID_LAUNCH.replace('"version": 2', '"version": 1'),
+        _VALID_LAUNCH.replace('"cwd": null', '"cwd": null, "shell": true'),
+    ],
+    ids=["bare-environment", "environment-only", "old-version", "unknown-launch-key"],
+)
+def test_stdio_handoff_rejects_other_shapes(tmp_path: Path, contents: str) -> None:
     legacy = tmp_path / "legacy.json"
-    legacy.write_text('{"TOKEN": "legacy-secret"}', encoding="utf-8")
+    legacy.write_text(contents, encoding="utf-8")
     legacy.chmod(0o600)
     result = _run_proxy_with_handoff(
         legacy, tmp_path / "legacy-capture.jsonl", tmp_path
@@ -307,9 +334,29 @@ def test_stdio_handoff_rejects_legacy_shape_and_symlink(tmp_path: Path) -> None:
     assert result.returncode == 78
     assert not legacy.exists()
 
+
+def test_stdio_handoff_rejects_server_argv_outside_the_file(tmp_path: Path) -> None:
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text(_VALID_LAUNCH, encoding="utf-8")
+    handoff.chmod(0o600)
+    marker = tmp_path / "ran"
+    result = _run_proxy_with_handoff(
+        handoff,
+        tmp_path / "capture.jsonl",
+        tmp_path,
+        "--",
+        sys.executable,
+        "-c",
+        f"open({str(marker)!r}, 'w').close()",
+    )
+    assert result.returncode == 78
+    assert not handoff.exists()
+    assert not marker.exists()
+
+
+def test_stdio_handoff_refuses_symlink(tmp_path: Path) -> None:
     target = tmp_path / "target.json"
-    target_contents = '{"environment": {}, "canaries": []}'
-    target.write_text(target_contents, encoding="utf-8")
+    target.write_text(_VALID_LAUNCH, encoding="utf-8")
     target.chmod(0o600)
     link = tmp_path / "link.json"
     try:
@@ -320,7 +367,7 @@ def test_stdio_handoff_rejects_legacy_shape_and_symlink(tmp_path: Path) -> None:
     assert result.returncode == 78
     assert not link.exists()
     assert target.exists()
-    assert target.read_text(encoding="utf-8") == target_contents
+    assert target.read_text(encoding="utf-8") == _VALID_LAUNCH
 
 
 def test_capture_writer_without_explicit_canaries_keeps_ambient_redaction(
