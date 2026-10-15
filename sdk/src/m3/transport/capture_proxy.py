@@ -31,8 +31,8 @@ from .. import _timing
 from ..trace.capture import CaptureWriter, read_capture
 from ..trace.redaction import is_sensitive_key
 from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
+from ._stdio_launch import STDIO_LAUNCH_VERSION
 from .http_proxy import McpHttpProxy
-from .stdio_proxy import STDIO_LAUNCH_VERSION
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_SIZE = 4096

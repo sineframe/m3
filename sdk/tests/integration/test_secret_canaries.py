@@ -83,6 +83,9 @@ def _run_proxy_with_handoff(
     environment["PYTHONPATH"] = (
         source_root + os.pathsep + environment.get("PYTHONPATH", "")
     )
+    # A warning while ``python -m`` loads the relay (for example runpy's
+    # double-import warning) kills it under this setting before main() runs.
+    environment["PYTHONWARNINGS"] = "error"
     return subprocess.run(
         (
             sys.executable,
@@ -311,6 +314,10 @@ def test_stdio_handoff_runs_valid_launch(tmp_path: Path) -> None:
     handoff.chmod(0o600)
     result = _run_proxy_with_handoff(handoff, tmp_path / "capture.jsonl", tmp_path)
     assert result.returncode == 0, result.stderr
+    # Under PYTHONWARNINGS=error a warning while loading the relay is fatal.
+    # (The relay's unclosed child pipe at exit is a separate ResourceWarning,
+    # printed as "Exception ignored", that does not affect the exit status.)
+    assert "RuntimeWarning" not in result.stderr
     assert not handoff.exists()
 
 

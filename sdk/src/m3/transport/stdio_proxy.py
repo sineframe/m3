@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from m3.trace.capture import CaptureWriter, parse_json_payload
+from m3.transport._stdio_launch import STDIO_LAUNCH_VERSION
 from m3.transport.tool_policy import ProxyToolPolicy
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
@@ -26,8 +27,6 @@ _OBSERVATION_CLOSE_TIMEOUT_SECONDS = 2.0
 _CHILD_EXIT_TIMEOUT_SECONDS = 0.25
 _CHILD_TERMINATE_TIMEOUT_SECONDS = 0.25
 _CHILD_KILL_TIMEOUT_SECONDS = 0.25
-# Launch-file schema shared with ``capture_proxy.write_stdio_launch``.
-STDIO_LAUNCH_VERSION = 2
 
 
 def _read_handoff(path: Path) -> Any:
