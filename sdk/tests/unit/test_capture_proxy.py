@@ -234,10 +234,12 @@ async def test_stdio_server_launch_survives_harness_argv_expansion(
         "",
     )
     child_code = (
-        "import json,os,sys; "
-        "json.dump({'argv':sys.argv[1:],'cwd':os.getcwd(),"
-        "'only':os.environ.get('ONLY_IN_SERVER')},"
-        "open(os.environ['M3_OBSERVED'],'w',encoding='utf-8'))"
+        "import json, os, sys\n"
+        "path = os.environ['M3_OBSERVED']\n"
+        "with open(path + '.tmp', 'w', encoding='utf-8') as output:\n"
+        "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(),\n"
+        "               'only': os.environ.get('ONLY_IN_SERVER')}, output)\n"
+        "os.replace(path + '.tmp', path)\n"
     )
     config = replace(
         _stdio_config(
@@ -261,7 +263,26 @@ async def test_stdio_server_launch_survives_harness_argv_expansion(
                 for value in instrumented.args
             ),
         )
-        returncode, _stdout, stderr = await _run_stdio_proxy(launched, environment={})
+        # Keep the relay's stdin open, as a connected harness does, until the
+        # child has reported: the relay ends the child shortly after stdin EOF.
+        process = await asyncio.create_subprocess_exec(
+            launched.command or "",
+            *launched.args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[2] / "src")},
+        )
+        assert process.stdin is not None and process.stderr is not None
+        try:
+            for _ in range(300):
+                if observed.exists() or process.returncode is not None:
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            process.stdin.close()
+            stderr = await asyncio.wait_for(process.stderr.read(), timeout=10)
+            returncode = await asyncio.wait_for(process.wait(), timeout=10)
         assert returncode == 0, stderr
         result = json.loads(observed.read_text(encoding="utf-8"))
         assert result["argv"] == list(server_args)
