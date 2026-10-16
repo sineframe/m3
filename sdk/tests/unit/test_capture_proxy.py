@@ -4,10 +4,12 @@ import asyncio
 import io
 import json
 import os
+import re
 import socket
 import sys
 import threading
 from collections.abc import AsyncIterator, MutableMapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -194,27 +196,142 @@ def test_capture_preserves_mrtr_params_for_requests_and_responses(
     assert request.params == response.params == params
 
 
+_CLAUDE_EXPANSION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def _expand_like_claude(value: str, environment: dict[str, str]) -> str:
+    """Apply Claude Code's MCP config expansion as observed live (2.1.300):
+    ``${NAME}`` and ``${NAME:-default}`` expand; an undefined ``${NAME}``
+    without a default is left unchanged."""
+
+    def expand(match: re.Match[str]) -> str:
+        name, default = match.group(1), match.group(2)
+        if name in environment:
+            return environment[name]
+        return match.group(0) if default is None else default
+
+    return _CLAUDE_EXPANSION.sub(expand, value)
+
+
 @pytest.mark.asyncio
-async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(
+async def test_stdio_server_launch_survives_harness_argv_expansion(
+    tmp_path: Path,
+) -> None:
+    """Server argv and cwd reach the child unchanged even if the harness
+    expands ``${...}`` in the launch command it is given."""
+
+    manager = McpCaptureManager(tmp_path / "capture")
+    server_cwd = tmp_path / "${HOME} dir"
+    server_cwd.mkdir()
+    observed = tmp_path / "observed.json"
+    server_args = (
+        "${ONLY_IN_SERVER:-fallback}",
+        "${HOME}",
+        "$HOME",
+        "a b",
+        '"quoted"',
+        "ü日本",
+        "",
+    )
+    # Behave like a stdio server: report, then run until the client closes
+    # stdin. (A child that exits while the relay's stdin is still open can
+    # abort the relay at interpreter shutdown; that is a separate relay bug.)
+    child_code = (
+        "import json, os, sys\n"
+        "path = os.environ['M3_OBSERVED']\n"
+        "with open(path + '.tmp', 'w', encoding='utf-8') as output:\n"
+        "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(),\n"
+        "               'only': os.environ.get('ONLY_IN_SERVER')}, output)\n"
+        "os.replace(path + '.tmp', path)\n"
+        "sys.stdin.read()\n"
+    )
+    config = replace(
+        _stdio_config(
+            key="expansion",
+            connection_id="connection-expansion",
+            command=sys.executable,
+            args=("-c", child_code, *server_args),
+            environment={"ONLY_IN_SERVER": "set", "M3_OBSERVED": str(observed)},
+        ),
+        cwd=str(server_cwd),
+    )
+    try:
+        instrumented = (await manager.instrument((config,)))[0]
+        harness_environment = {**os.environ}
+        harness_environment.pop("ONLY_IN_SERVER", None)
+        launched = replace(
+            instrumented,
+            command=_expand_like_claude(instrumented.command, harness_environment),
+            args=tuple(
+                _expand_like_claude(value, harness_environment)
+                for value in instrumented.args
+            ),
+        )
+        # Keep the relay's stdin open, as a connected harness does, until the
+        # child has reported: the relay ends the child shortly after stdin EOF,
+        # which could otherwise land before a slow child starts.
+        process = await asyncio.create_subprocess_exec(
+            launched.command or "",
+            *launched.args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[2] / "src")},
+        )
+        assert process.stdin is not None and process.stderr is not None
+        try:
+            for _ in range(300):
+                if observed.exists() or process.returncode is not None:
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            process.stdin.close()
+            stderr = await asyncio.wait_for(process.stderr.read(), timeout=10)
+            returncode = await asyncio.wait_for(process.wait(), timeout=10)
+        assert returncode == 0, stderr
+        result = json.loads(observed.read_text(encoding="utf-8"))
+        assert result["argv"] == list(server_args)
+        assert Path(result["cwd"]).resolve() == server_cwd.resolve()
+        assert result["only"] == "set"
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_launch_keeps_server_values_out_of_harness_argv(
     tmp_path: Path,
 ) -> None:
     manager = McpCaptureManager(tmp_path)
-    config = HarnessServerConfig(
-        key="echo",
-        transport=TransportKind.STDIO,
-        required=True,
-        available=True,
-        connection_id="connection-stdio",
-        command="echo-server",
-        args=("--fixture",),
+    server_cwd = tmp_path / "server-cwd"
+    server_cwd.mkdir()
+    config = replace(
+        _stdio_config(
+            key="hidden",
+            connection_id="connection-hidden",
+            command="server-executable",
+            args=("server-argument",),
+        ),
+        cwd=str(server_cwd),
     )
-    instrumented = (await manager.instrument((config,)))[0]
-    assert instrumented.command == sys.executable
-    assert "m3.transport.stdio_proxy" in instrumented.args
-    assert "--" in instrumented.args
-    marker = instrumented.args.index("--")
-    assert instrumented.args[marker + 1 :] == ("echo-server", "--fixture")
-    await manager.close()
+    try:
+        instrumented = (await manager.instrument((config,)))[0]
+        visible = " ".join((instrumented.command or "", *instrumented.args))
+        assert "server-executable" not in visible
+        assert "server-argument" not in visible
+        assert str(server_cwd) not in visible
+        assert "--" not in instrumented.args
+        launch_file = Path(
+            instrumented.args[instrumented.args.index("--launch-file") + 1]
+        )
+        payload = json.loads(launch_file.read_text(encoding="utf-8"))
+        assert payload["version"] == 2
+        assert payload["launch"] == {
+            "command": "server-executable",
+            "args": ["server-argument"],
+            "cwd": str(server_cwd),
+        }
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio
@@ -437,7 +554,7 @@ async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
         },
     )
     instrumented = (await manager.instrument((config,)))[0]
-    env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+    env_file = Path(instrumented.args[instrumented.args.index("--launch-file") + 1])
     assert env_file.stat().st_mode & 0o777 == 0o600
     handoff = json.loads(env_file.read_text(encoding="utf-8"))
     assert handoff["environment"]["TOKEN"] == "capture-secret-value"
@@ -1214,7 +1331,7 @@ async def test_observer_listener_bind_failure_keeps_stdio_child_available(
     )
     try:
         instrumented = (await manager.instrument((config,)))[0]
-        env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+        env_file = Path(instrumented.args[instrumented.args.index("--launch-file") + 1])
         assert "observer" not in json.loads(env_file.read_text())
         returncode, stdout, stderr = await _run_stdio_proxy(
             instrumented, environment={}
@@ -1294,7 +1411,7 @@ async def test_stdio_live_observation_authenticates_and_reports_eof(
         command="echo-server",
     )
     instrumented = (await manager.instrument((config,)))[0]
-    env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+    env_file = Path(instrumented.args[instrumented.args.index("--launch-file") + 1])
     handoff = json.loads(env_file.read_text(encoding="utf-8"))
     observer_info = handoff["observer"]
     assert observer_info["host"] == "127.0.0.1"
@@ -1408,7 +1525,7 @@ async def test_stdio_capture_write_failure_preserves_forwarding_and_fails_observ
         command="unused-child",
     )
     instrumented = (await manager.instrument((config,)))[0]
-    env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+    env_file = Path(instrumented.args[instrumented.args.index("--launch-file") + 1])
     observer_info = json.loads(env_file.read_text())["observer"]
     subscription = manager.subscribe({"broken-capture"})
     channel = _ObservationChannel(**observer_info)

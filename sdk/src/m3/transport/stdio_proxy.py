@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from m3.trace.capture import CaptureWriter, parse_json_payload
+from m3.transport._stdio_launch import STDIO_LAUNCH_VERSION
 from m3.transport.tool_policy import ProxyToolPolicy
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
@@ -503,66 +504,79 @@ def _wait_for_child(
         return 1
 
 
+def _parse_launch(
+    payload: Any,
+) -> tuple[list[str], str | None, dict[str, str], set[str], dict[str, str] | None]:
+    """Validate a launch file; raise ``ValueError`` for any other shape."""
+
+    if not isinstance(payload, dict) or set(payload) not in (
+        {"version", "launch", "environment", "canaries"},
+        {"version", "launch", "environment", "canaries", "observer"},
+    ):
+        raise ValueError
+    if payload["version"] != STDIO_LAUNCH_VERSION:
+        raise ValueError
+    launch = payload["launch"]
+    if not isinstance(launch, dict) or set(launch) != {"command", "args", "cwd"}:
+        raise ValueError
+    command, arguments, cwd = launch["command"], launch["args"], launch["cwd"]
+    if not isinstance(command, str) or not command or not isinstance(arguments, list):
+        raise ValueError
+    if any(not isinstance(value, str) for value in arguments):
+        raise ValueError
+    if cwd is not None and (not isinstance(cwd, str) or not cwd):
+        raise ValueError
+    values = payload["environment"]
+    raw_canaries = payload["canaries"]
+    if not isinstance(values, dict) or not isinstance(raw_canaries, list):
+        raise ValueError
+    if any(not isinstance(value, str) for value in raw_canaries):
+        raise ValueError
+    if any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in values.items()
+    ):
+        raise ValueError
+    observation: dict[str, str] | None = None
+    raw_observer = payload.get("observer")
+    if (
+        isinstance(raw_observer, dict)
+        and set(raw_observer) == {"host", "port", "connection_id", "token"}
+        and all(isinstance(value, str) for value in raw_observer.values())
+    ):
+        observation = raw_observer
+    return [command, *arguments], cwd, values, set(raw_canaries), observation
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--capture", required=True)
     parser.add_argument("--baseline", required=True, type=int)
-    parser.add_argument("--env-file", required=True)
-    parser.add_argument("--cwd")
+    parser.add_argument("--launch-file", required=True)
     parser.add_argument("--policy-file")
-    parser.add_argument("command", nargs=argparse.REMAINDER)
-    args = parser.parse_args()
-    command = args.command[1:] if args.command[:1] == ["--"] else args.command
-    if not command:
-        parser.error("server command is required after --")
+    args, extra = parser.parse_known_args()
+    launch_path = Path(args.launch_file)
 
-    # The handoff is the complete child environment. In particular, do not
-    # inherit ambient provider credentials into a legacy MCP process.
-    environment: dict[str, str] = {}
-    canaries: set[str] = set()
-    observation: dict[str, str] | None = None
-    if args.env_file:
+    # The launch file carries the complete child command line and environment.
+    # Never take the server argv from our own argv, which the harness may have
+    # rewritten, and do not inherit ambient provider credentials into a legacy
+    # MCP process.
+    try:
+        if extra:
+            raise ValueError
+        command, cwd, environment, canaries, observation = _parse_launch(
+            _read_handoff(launch_path)
+        )
+    except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+        return 78
+    finally:
+        # The file is a one-shot launch handoff.  Remove it before the MCP
+        # child starts so an explicitly supplied capture root cannot keep
+        # resolved credentials at rest after startup.
         try:
-            handoff = Path(args.env_file)
-            payload = _read_handoff(handoff)
-            if not isinstance(payload, dict):
-                raise ValueError
-            if set(payload) not in (
-                {"environment", "canaries"},
-                {"environment", "canaries", "observer"},
-            ):
-                raise ValueError
-            values = payload.get("environment")
-            raw_canaries = payload.get("canaries")
-            if not isinstance(values, dict) or not isinstance(raw_canaries, list):
-                raise ValueError
-            if any(not isinstance(value, str) for value in raw_canaries):
-                raise ValueError
-            canaries.update(raw_canaries)
-            if "observer" in payload:
-                raw_observer = payload.get("observer")
-                if (
-                    isinstance(raw_observer, dict)
-                    and set(raw_observer) == {"host", "port", "connection_id", "token"}
-                    and all(isinstance(value, str) for value in raw_observer.values())
-                ):
-                    observation = raw_observer
-            if any(
-                not isinstance(key, str) or not isinstance(value, str)
-                for key, value in values.items()
-            ):
-                raise ValueError
-            environment.update(values)
-        except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+            launch_path.unlink(missing_ok=True)
+        except OSError:
             return 78
-        finally:
-            # The file is a one-shot launch handoff.  Remove it before the MCP
-            # child starts so an explicitly supplied capture root cannot keep
-            # resolved credentials at rest after startup.
-            try:
-                Path(args.env_file).unlink(missing_ok=True)
-            except OSError:
-                return 78
     writer = CaptureWriter(
         args.capture,
         args.baseline,
@@ -602,7 +616,7 @@ def main() -> int:
         stderr=None,
         shell=False,
         bufsize=0,
-        cwd=args.cwd,
+        cwd=cwd,
         env=environment,
     )
     assert process.stdin is not None and process.stdout is not None
