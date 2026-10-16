@@ -13,7 +13,7 @@ being tested.
 
 M3 supports Python 3.10 and newer. The commands below use
 [uv](https://docs.astral.sh/uv/). The alternative shell installer supports
-macOS and Linux and requires `curl` plus either Python 3 or uv.
+macOS and Linux and requires `curl` plus either Python 3.10 or uv.
 
 ## Install the CLI
 
@@ -40,7 +40,8 @@ curl -LsSf https://m3.sineframe.com/install.sh | sh
 The installer selects the latest stable GitHub release, verifies its release
 installer and checksums, and installs the CLI in isolated tool storage. It uses
 uv when available and otherwise creates a dedicated virtual environment. To
-update an installation made this way, rerun the same command.
+update an installation made this way, rerun the same command, then rerun
+`m3 setup` in each project to upgrade its SDK.
 
 ## Install the project SDK
 
@@ -76,6 +77,10 @@ uv add "sf-m3[pytest,storage,judge]"
 
 This declares the SDK in the project manifest. The standalone CLI remains a
 separate user-level installation.
+
+To upgrade the SDK in a project that manages its dependencies directly, run
+`uv lock --upgrade-package sf-m3` (or the equivalent for your tool), then sync
+the environment. You do not need `m3 setup` for this setup.
 
 ## Try a canary build
 
