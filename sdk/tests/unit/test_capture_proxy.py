@@ -233,6 +233,9 @@ async def test_stdio_server_launch_survives_harness_argv_expansion(
         "ü日本",
         "",
     )
+    # Behave like a stdio server: report, then run until the client closes
+    # stdin. (A child that exits while the relay's stdin is still open can
+    # abort the relay at interpreter shutdown; that is a separate relay bug.)
     child_code = (
         "import json, os, sys\n"
         "path = os.environ['M3_OBSERVED']\n"
@@ -240,6 +243,7 @@ async def test_stdio_server_launch_survives_harness_argv_expansion(
         "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(),\n"
         "               'only': os.environ.get('ONLY_IN_SERVER')}, output)\n"
         "os.replace(path + '.tmp', path)\n"
+        "sys.stdin.read()\n"
     )
     config = replace(
         _stdio_config(
@@ -264,7 +268,8 @@ async def test_stdio_server_launch_survives_harness_argv_expansion(
             ),
         )
         # Keep the relay's stdin open, as a connected harness does, until the
-        # child has reported: the relay ends the child shortly after stdin EOF.
+        # child has reported: the relay ends the child shortly after stdin EOF,
+        # which could otherwise land before a slow child starts.
         process = await asyncio.create_subprocess_exec(
             launched.command or "",
             *launched.args,
