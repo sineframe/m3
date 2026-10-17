@@ -75,9 +75,7 @@ _VALID_LAUNCH = json.dumps(
 )
 
 
-def _run_proxy_with_handoff(
-    handoff: Path, capture: Path, tmp_path: Path, *extra: str
-) -> subprocess.CompletedProcess[str]:
+def _relay_environment() -> dict[str, str]:
     environment = os.environ.copy()
     source_root = str(Path(__file__).parents[2] / "src")
     environment["PYTHONPATH"] = (
@@ -86,6 +84,12 @@ def _run_proxy_with_handoff(
     # A warning while ``python -m`` loads the relay (for example runpy's
     # double-import warning) kills it under this setting before main() runs.
     environment["PYTHONWARNINGS"] = "error"
+    return environment
+
+
+def _run_proxy_with_handoff(
+    handoff: Path, capture: Path, tmp_path: Path, *extra: str
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         (
             sys.executable,
@@ -101,10 +105,57 @@ def _run_proxy_with_handoff(
         ),
         cwd=tmp_path,
         stdin=subprocess.DEVNULL,
-        env=environment,
+        env=_relay_environment(),
         capture_output=True,
         text=True,
     )
+
+
+def test_relay_reports_server_exit_while_client_keeps_stdin_open(
+    tmp_path: Path,
+) -> None:
+    """A server that exits on its own ends the relay with the server's status.
+
+    The harness still holds the relay's stdin open, so the relay's stdin reader
+    is blocked in a read when the relay shuts down.
+    """
+
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text(
+        _VALID_LAUNCH.replace('["-c", "pass"]', '["-c", "raise SystemExit(3)"]'),
+        encoding="utf-8",
+    )
+    handoff.chmod(0o600)
+    process = subprocess.Popen(
+        (
+            sys.executable,
+            "-m",
+            "m3.transport.stdio_proxy",
+            "--capture",
+            str(tmp_path / "capture.jsonl"),
+            "--baseline",
+            "0",
+            "--launch-file",
+            str(handoff),
+        ),
+        cwd=tmp_path,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        env=_relay_environment(),
+    )
+    assert process.stdin is not None and process.stderr is not None
+    try:
+        returncode = process.wait(timeout=30)
+        stderr = process.stderr.read().decode("utf-8", "replace")
+    finally:
+        process.stdin.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stderr.close()
+    assert returncode == 3, stderr
+    assert "Fatal Python error" not in stderr
 
 
 @pytest.mark.asyncio

@@ -655,5 +655,23 @@ def main() -> int:
     return return_code
 
 
+def _exit(code: int) -> None:
+    """End the relay without interpreter shutdown.
+
+    The daemon stdin reader may still be blocked in a read while the client
+    holds the relay's stdin open (the server exited on its own). Normal
+    shutdown then needs that buffered reader's lock and aborts the process
+    (``Fatal Python error: _enter_buffered_busy``), losing the server's exit
+    status. Every relay write is flushed when ``main`` returns, the capture
+    writer closes its file per record, and the observer is closed, so there
+    is nothing left for shutdown to do.
+    """
+
+    with suppress(Exception):
+        sys.stderr.flush()
+    # Windows reports unsigned 32-bit exit codes; os._exit takes a C int.
+    os._exit(code - 2**32 if code > 0x7FFFFFFF else code)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _exit(main())
