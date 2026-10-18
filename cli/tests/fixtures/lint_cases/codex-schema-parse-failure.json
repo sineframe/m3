@@ -312,10 +312,118 @@
     "--harness",
     "codex"
    ],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex drops the constraint keyword; reported as the advisory codex-dropped-constraints"
+   }
   },
   {
-   "name": "kept-additional-properties",
+   "name": "description-in-property",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": 42
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "tool"
+   }
+  },
+  {
+   "name": "additional-description-old",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       },
+       "additionalProperties": {
+        "description": 42
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex@0.131.0"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "tool"
+   }
+  },
+  {
+   "name": "additional-description",
    "spec": {
     "tools": [
      {
@@ -360,9 +468,115 @@
     "--harness",
     "codex"
    ],
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
+   }
+  },
+  {
+   "name": "ref-type",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "$ref": 5
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
    "expect": "present",
    "impacts": {
     "codex": "tool"
+   }
+  },
+  {
+   "name": "ref-type-old",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "$ref": 5
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex@0.131.0"
+   ],
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.140.0 rewrites a non-string $ref instead of skipping the tool"
    }
   },
   {
