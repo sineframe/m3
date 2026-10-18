@@ -222,6 +222,54 @@ def _parser() -> argparse.ArgumentParser:
             metavar="PATH",
         )
         command.add_argument("--project-root", type=Path, default=None, metavar="PATH")
+
+    lint = subparsers.add_parser(
+        "lint",
+        help="check an MCP server's metadata against known Claude Code and Codex quirks",
+    )
+    lint.add_argument(
+        "url",
+        nargs="?",
+        metavar="URL",
+        help="streamable HTTP endpoint; or pass a stdio command after --",
+    )
+    lint.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="NAME:VALUE",
+        help="HTTP header sent with every request (repeatable; values are never printed)",
+    )
+    lint.add_argument(
+        "--harness",
+        action="append",
+        default=[],
+        metavar="KIND[@VERSION]",
+        help=(
+            "claude_code or codex, optionally pinned; "
+            "default: both at the newest version the rules know"
+        ),
+    )
+    lint.add_argument(
+        "--server-name",
+        metavar="NAME",
+        default=None,
+        help=(
+            "name your agent config gives this server; "
+            "used for mcp__<server>__<tool> length checks"
+        ),
+    )
+    lint.add_argument(
+        "--fail-on", choices=("error", "warning", "never"), default="error"
+    )
+    lint.add_argument("--ignore", action="append", default=[], metavar="RULE_ID")
+    lint.add_argument("--timeout", type=float, default=30.0, metavar="SECONDS")
+    lint.add_argument(
+        "--list-rules", action="store_true", help="print the rule catalogue and exit"
+    )
+    lint.add_argument(
+        "--json", action="store_true", help="emit a machine-readable report"
+    )
     return parser
 
 
@@ -410,14 +458,25 @@ def main(argv: list[str] | None = None) -> int:
         effective_argv[0]
         if effective_argv
         and effective_argv[0]
-        in {"doctor", "setup", "test", "ci", "upload", "auth", "ui", "init", "runtime"}
+        in {
+            "doctor",
+            "setup",
+            "test",
+            "ci",
+            "upload",
+            "auth",
+            "ui",
+            "init",
+            "runtime",
+            "lint",
+        }
         else "doctor"
     )
     pytest_args: list[str] = []
     try:
         if (
             effective_argv
-            and effective_argv[0] in {"test", "ci"}
+            and effective_argv[0] in {"test", "ci", "lint"}
             and "--" in effective_argv
         ):
             separator = effective_argv.index("--")
@@ -613,6 +672,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.cache_dir,
                 project_root=args.project_root,
             )
+        if args.command == "lint":
+            from . import lint
+
+            return lint.run(args, stdio_command=pytest_args)
         if args.command == "setup":
             from . import setup
 

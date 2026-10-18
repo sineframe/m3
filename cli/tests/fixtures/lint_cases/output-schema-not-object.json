@@ -1,0 +1,179 @@
+{
+ "rule": "output-schema-not-object",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      },
+      "outputSchema": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server"
+   },
+   "oracle": {
+    "also_ok": {
+     "claude_code": [
+      "none"
+     ]
+    },
+    "reason": "rollout gate: Claude Code sessions on the newer MCP client (with the server/discover probe) keep the tools"
+   }
+  },
+  {
+   "name": "old-claude",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      },
+      "outputSchema": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.200"
+   ],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server"
+   },
+   "oracle": {
+    "also_ok": {
+     "claude_code": [
+      "none"
+     ]
+    },
+    "reason": "rollout gate: Claude Code sessions on the newer MCP client (with the server/discover probe) keep the tools"
+   }
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      },
+      "outputSchema": {
+       "type": "object",
+       "properties": {
+        "r": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.200"
+   ],
+   "expect": "absent"
+  }
+ ]
+}

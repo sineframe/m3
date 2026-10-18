@@ -1,0 +1,72 @@
+{
+ "rule": "list-changed-ignored",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {
+      "listChanged": true
+     }
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "codex": "advisory"
+   }
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {
+      "listChanged": false
+     }
+    }
+   },
+   "args": [],
+   "expect": "absent"
+  }
+ ]
+}
