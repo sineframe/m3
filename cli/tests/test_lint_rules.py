@@ -18,8 +18,8 @@ from typing import Any
 import pytest
 
 from m3_cli import main
+from m3_cli.lint.codex import codex_normalized_size
 from m3_cli.lint.rules import RULES
-from m3_cli.lint.schema import codex_normalized_size
 from m3_cli.lint.versions import parse_version
 
 FIXTURES = Path(__file__).parent / "fixtures"

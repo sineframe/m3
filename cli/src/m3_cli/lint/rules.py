@@ -14,13 +14,12 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .codex import code_mode_type_too_large, codex_normalized_size
 from .collect import ListingResult, Snapshot, capabilities_of, declared
 from .schema import (
     CODEX_CONSTRAINT_KEYWORDS,
     COMBINATORS,
     SAFE_INT,
-    codex_normalized_size,
-    count_codex_properties,
     iter_codex_subschemas,
     iter_property_maps,
     iter_subschemas,
@@ -797,9 +796,11 @@ def _check_compaction(snapshot: Snapshot) -> Iterator[Hit]:
 
 def _check_ts_size(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
-        count = count_codex_properties(_schema(tool))
-        if count > 700:
-            yield Hit(_where(tool), f"{count} properties")
+        schema = _schema(tool)
+        if schema is None or not _shallow(schema):
+            continue
+        if code_mode_type_too_large(schema):
+            yield Hit(_where(tool), "argument type renders past 16,000 bytes")
 
 
 _INDEX = re.compile(r"0|[1-9][0-9]*", re.ASCII)

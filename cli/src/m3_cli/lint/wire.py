@@ -6,11 +6,13 @@ the lint must report, so these clients hand back the raw JSON instead.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import queue
 import re
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -99,11 +101,17 @@ _DECODER = json.JSONDecoder(parse_int=_bounded_int, parse_constant=_reject_const
 
 
 def _decode(data: bytes) -> tuple[str, bool]:
-    """Text of a message and whether invalid UTF-8 had to be replaced."""
+    """Text of a message and whether invalid UTF-8 had to be replaced.
 
-    # As json.loads does for bytes: detect UTF-8/16/32 and drop a BOM.
+    MCP messages are UTF-8 JSON. Unlike json.loads, UTF-16 or UTF-32 is not
+    detected: Codex parses the raw bytes and rejects such messages, so here
+    they fail as JSON too. A UTF-8 byte order mark is dropped.
+    """
+
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
     try:
-        return data.decode(json.detect_encoding(data), "surrogatepass"), False
+        return data.decode("utf-8", "surrogatepass"), False
     except UnicodeDecodeError:
         return data.decode("utf-8", "replace"), True
 
@@ -411,6 +419,49 @@ class _NoRedirect(request.HTTPRedirectHandler):
         raise WireError("http_status")
 
 
+class _Connections:
+    """The connection urllib opened last, so a watchdog can cut it."""
+
+    def __init__(self) -> None:
+        self.current: http.client.HTTPConnection | None = None
+
+    def cut(self) -> None:
+        sock = getattr(self.current, "sock", None)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+class _HTTPHandler(request.HTTPHandler):
+    def __init__(self, connections: _Connections) -> None:
+        super().__init__()
+        self._connections = connections
+
+    def http_open(self, req: request.Request) -> HTTPResponse:
+        def connect(host: str, **kwargs: Any) -> http.client.HTTPConnection:
+            connection = http.client.HTTPConnection(host, **kwargs)
+            self._connections.current = connection
+            return connection
+
+        return self.do_open(connect, req)
+
+
+class _HTTPSHandler(request.HTTPSHandler):
+    def __init__(self, connections: _Connections) -> None:
+        super().__init__()
+        self._connections = connections
+
+    def https_open(self, req: request.Request) -> HTTPResponse:
+        def connect(host: str, **kwargs: Any) -> http.client.HTTPConnection:
+            connection = http.client.HTTPSConnection(host, **kwargs)
+            self._connections.current = connection
+            return connection
+
+        return self.do_open(connect, req, context=getattr(self, "_context", None))
+
+
 class HttpWire:
     """MCP streamable HTTP: one POST per message, JSON or SSE responses."""
 
@@ -420,7 +471,12 @@ class HttpWire:
         self._session_id: str | None = None
         self._protocol_version: str | None = None
         self._next_id = 1
-        self._opener = request.build_opener(_NoRedirect())
+        self._connections = _Connections()
+        self._opener = request.build_opener(
+            _NoRedirect(),
+            _HTTPHandler(self._connections),
+            _HTTPSHandler(self._connections),
+        )
 
     def _request_headers(self, rpc_method: str | None) -> dict[str, str]:
         headers = {
@@ -453,20 +509,41 @@ class HttpWire:
             method=method,
             headers=self._request_headers(rpc_method),
         )
+        # urlopen's timeout bounds each socket read, so a server that trickles
+        # its status line and headers could hold it far longer: a watchdog
+        # cuts the connection when the whole deadline has passed.
+        expired = threading.Event()
+
+        def expire() -> None:
+            expired.set()
+            self._connections.cut()
+
+        watchdog = threading.Timer(timeout, expire)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             response = self._opener.open(req, timeout=timeout)
+        except WireError:
+            raise
         except HTTPError as exc:
             exc.close()
+            if expired.is_set():
+                raise WireError("timeout") from None
             raise WireError("http_status") from None
         except URLError as exc:
-            if isinstance(exc.reason, TimeoutError):
+            if expired.is_set() or isinstance(exc.reason, TimeoutError):
                 raise WireError("timeout") from None
             raise WireError("connect") from None
         except TimeoutError:
             raise WireError("timeout") from None
         except (HTTPException, OSError, ValueError):
-            raise WireError("connect") from None
+            raise WireError("timeout" if expired.is_set() else "connect") from None
+        finally:
+            watchdog.cancel()
         assert isinstance(response, HTTPResponse)
+        if expired.is_set():
+            response.close()
+            raise WireError("timeout")
         session_id = response.headers.get("Mcp-Session-Id")
         if session_id:
             self._session_id = session_id

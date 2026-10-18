@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Iterator
 from typing import Any
 
@@ -258,22 +257,6 @@ def utf16_len(text: str) -> int:
     character limits apply to this, so an emoji counts twice."""
 
     return len(text.encode("utf-16-le", "surrogatepass")) // 2
-
-
-def codex_normalized_size(schema: Any) -> int:
-    normalized = codex_normalize(schema)
-    return utf8_size(json.dumps(normalized, separators=(",", ":"), ensure_ascii=False))
-
-
-def count_codex_properties(schema: Any) -> int:
-    """Properties Codex keeps (none from if/not/patternProperties and other
-    branches its sanitizer discards)."""
-
-    return sum(
-        len(sub["properties"])
-        for _, sub, _ in iter_codex_subschemas(schema)
-        if isinstance(sub, dict) and isinstance(sub.get("properties"), dict)
-    )
 
 
 def metaschema_errors(schema: dict[str, Any]) -> list[str]:

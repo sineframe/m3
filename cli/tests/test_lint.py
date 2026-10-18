@@ -559,6 +559,20 @@ class _Mcp(BaseHTTPRequestHandler):
                     self.wfile.flush()
                 except OSError:
                     return
+        elif self.mode == "slow-headers":
+            # The status line and headers arrive one byte at a time, each
+            # well inside the socket timeout.
+            head = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" * 3
+            for byte in head:
+                time.sleep(0.25)
+                try:
+                    self.wfile.write(bytes([byte]))
+                    self.wfile.flush()
+                except OSError:
+                    return
+        elif self.mode == "utf16":
+            payload = json.dumps(response).encode("utf-16")
+            self._send(200, payload, "application/json")
         else:
             self._json(response)
 
@@ -668,3 +682,22 @@ def test_http_trickling_stream_respects_the_deadline(http_server, capsys) -> Non
     report = json.loads(capsys.readouterr().out)
     failed = [f for f in report["findings"] if f["rule"] == "tools-list-failed"]
     assert [f["detail"] for f in failed] == ["timeout"]
+
+
+def test_http_trickling_headers_respect_the_deadline(http_server, capsys) -> None:
+    url, _ = http_server("slow-headers")
+    started = time.monotonic()
+    assert main(["lint", "--json", "--timeout", "1", url]) == 1
+    assert time.monotonic() - started < 5
+    report = json.loads(capsys.readouterr().out)
+    assert report["collection"]["listings"]["tools/list"]["error"] == "timeout"
+
+
+def test_http_utf16_reply_is_not_json(http_server, capsys) -> None:
+    # Codex parses the raw bytes as UTF-8 JSON and rejects UTF-16.
+    url, _ = http_server("utf16")
+    assert main(["lint", "--json", url]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["collection"]["complete"] is False
+    assert report["collection"]["listings"]["tools/list"]["error"] == "invalid"
+    assert "tools-list-failed" in _rules(report)
