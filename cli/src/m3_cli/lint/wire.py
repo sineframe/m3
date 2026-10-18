@@ -373,6 +373,11 @@ class _DeadlineReader:
         self._socket: Any = getattr(raw, "_sock", None)
 
     def _fill(self) -> bool:
+        # Python 3.13 closes the connection as soon as read1 returns the last
+        # byte of a Content-Length body, so the socket is gone here.
+        if self._response.isclosed():
+            self._eof = True
+            return False
         remaining = self._deadline - time.monotonic()
         if remaining <= 0:
             raise WireError("timeout")
