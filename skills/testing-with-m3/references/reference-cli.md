@@ -216,6 +216,12 @@ version range and impact. The impact sets the severity: `session` (every model
 request fails), `server` (all of the server's tools are lost) and `tool` (that
 tool is lost) are errors; `degraded` is a warning; `advisory` is a note.
 
+If a listing fails or stops early (1000 pages, or a repeated cursor), the
+report says so: the human output prints an `incomplete:` line, and the JSON
+`collection.listings` entry for that method carries its `error` or
+`truncated: true`, with `collection.complete: false`. Findings then cover
+only what was read.
+
 Exit status 0 means no finding at or above `--fail-on`, 1 means at least one,
 and 2 means a usage error or a server that could not be read.
 
