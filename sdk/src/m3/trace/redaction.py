@@ -17,18 +17,34 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from enum import Enum
 from pathlib import PurePath
 from types import MappingProxyType
-from typing import Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeGuard
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import BaseModel
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 REDACTED: Final[str] = "[REDACTED]"
+
+
+def _is_pydantic_model(value: object) -> TypeGuard[BaseModel]:
+    """Match pydantic models without importing pydantic.
+
+    A model instance cannot exist before ``pydantic.main`` is imported, so a
+    missing module means ``value`` is not a model.
+    """
+
+    module = sys.modules.get("pydantic.main")
+    if module is None:
+        return False
+    return isinstance(value, module.BaseModel)
+
 
 _DEFAULT_SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -495,7 +511,7 @@ def _walk_value(
                 details, config, f"{path}.details", paths, None, active, depth + 1
             )
         return result
-    if isinstance(item, BaseModel):
+    if _is_pydantic_model(item):
         try:
             dumped = item.model_dump(mode="python")
         except BaseException:
@@ -589,9 +605,8 @@ def _redact_value(
     active_ids = active if active is not None else set()
     try:
         track = isinstance(
-            item,
-            (InProcessAssertionView, BaseModel, Mapping, list, tuple, set, frozenset),
-        )
+            item, (InProcessAssertionView, Mapping, list, tuple, set, frozenset)
+        ) or _is_pydantic_model(item)
         identity = id(item)
         if track:
             if identity in active_ids:
@@ -826,7 +841,7 @@ def redact_model_json(
     performed only after redaction by :func:`serialize_redacted`.
     """
 
-    if isinstance(value, BaseModel):
+    if _is_pydantic_model(value):
         try:
             value = value.model_dump(mode="python")
         except BaseException:
