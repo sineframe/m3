@@ -39,6 +39,9 @@ class ListingResult:
     total_bytes: int = 0
     # A page held bytes that are not UTF-8 (read as U+FFFD).
     invalid_utf8: bool = False
+    # Collection stopped while the server still offered more pages: the page
+    # cap was reached or a cursor repeated. `error` covers failed requests.
+    truncated: bool = False
 
 
 @dataclass
@@ -149,9 +152,11 @@ def _list(wire: Wire, method: str, key: str, timeout: float) -> ListingResult:
         listing.max_cursor_bytes = max(listing.max_cursor_bytes, utf8_size(next_cursor))
         if next_cursor in seen:
             listing.repeated_cursor = True
+            listing.truncated = True
             return listing
         seen.add(next_cursor)
         cursor = next_cursor
+    listing.truncated = True  # MAX_PAGES reached with a cursor still pending
     return listing
 
 

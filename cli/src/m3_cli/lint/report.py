@@ -48,6 +48,26 @@ def _count(listing: Any) -> int | None:
     return None if listing is None else len(listing.items)
 
 
+def _listings(snapshot: Snapshot) -> dict[str, dict[str, Any]]:
+    """Status of every listing that was requested."""
+
+    statuses: dict[str, dict[str, Any]] = {}
+    for method, listing in (
+        ("tools/list", snapshot.tools),
+        ("prompts/list", snapshot.prompts),
+        ("resources/list", snapshot.resources),
+        ("resources/templates/list", snapshot.templates),
+    ):
+        if listing is not None:
+            statuses[method] = {
+                "items": len(listing.items),
+                "pages": listing.pages,
+                "error": listing.error,
+                "truncated": listing.truncated,
+            }
+    return statuses
+
+
 def exit_code(counts: dict[str, int], fail_on: str) -> int:
     if fail_on == "error":
         return 1 if counts["error"] else 0
@@ -76,6 +96,7 @@ def build_report(
         counts[finding.severity] += 1
     info = snapshot.initialize.get("serverInfo")
     info = info if isinstance(info, dict) else {}
+    listings = _listings(snapshot)
     return {
         "schema_version": SCHEMA_VERSION,
         "target": target,
@@ -95,6 +116,13 @@ def build_report(
             "prompt_count": _count(snapshot.prompts),
             "resource_count": _count(snapshot.resources),
             "template_count": _count(snapshot.templates),
+            "listings": listings,
+            # False when a listing failed or stopped early: findings then
+            # cover only what was read.
+            "complete": all(
+                status["error"] is None and not status["truncated"]
+                for status in listings.values()
+            ),
         },
         "counts": counts,
         "findings": [
@@ -172,6 +200,17 @@ def print_human(report: dict[str, Any], style: Style | None) -> None:
     if any(t["beyond_known"] for t in report["evaluated"]):
         line += " (newer than rule data; assuming latest known behaviour)"
     out(line)
+    for method, status in report["collection"]["listings"].items():
+        if status["error"] is not None:
+            reason = f"failed ({status['error']})"
+        elif status["truncated"]:
+            reason = "stopped early (page cap or repeated cursor)"
+        else:
+            continue
+        out(
+            f"incomplete: {method} {reason} after {status['pages']} pages, "
+            f"{status['items']} items read; findings cover only those"
+        )
     out()
     for finding in report["findings"]:
         severity = finding["severity"]

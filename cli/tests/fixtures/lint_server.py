@@ -69,6 +69,7 @@ class Server:
         self.noise = bool(spec.get("noise", False))
         self.sent_roots_request = False
         self.bound = False
+        self.requests: dict[str, int] = {}
 
     def log(self, line: str) -> None:
         if self.log_path:
@@ -182,7 +183,24 @@ class Server:
             if method == "tools/list" and self.noise and not self.sent_roots_request:
                 self.sent_roots_request = True
                 self.send({"jsonrpc": "2.0", "id": "s1", "method": "roots/list"})
-            self.reply(id, self.page(_LISTS[method], params))
+            key = _LISTS[method]
+            self.requests[key] = self.requests.get(key, 0) + 1
+            fail = self.spec.get("fail")
+            if (
+                isinstance(fail, dict)
+                and fail.get("listing", "tools") == key
+                and self.requests[key] >= fail.get("page", 1)
+            ):
+                # Fail this listing from the given page on: "error" (JSON-RPC
+                # error), "exit" (the server process ends) or "hang".
+                mode = fail.get("mode", "error")
+                if mode == "exit":
+                    sys.exit(0)
+                if mode == "hang":
+                    return
+                self.reply(id, error={"code": -32603, "message": "Internal error"})
+                return
+            self.reply(id, self.page(key, params))
         elif method == "ping":
             self.reply(id, {})
         elif method == "tools/call":

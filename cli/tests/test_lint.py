@@ -310,6 +310,87 @@ def test_noise_on_stdout_is_tolerated(
     assert "reply s1 -32601" in log.read_text(encoding="utf-8").splitlines()
 
 
+PROBE = {
+    "name": "probe",
+    "description": "Probe tool",
+    "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}},
+    "annotations": {"readOnlyHint": True},
+}
+
+
+def _collection(capsys) -> dict[str, Any]:
+    return json.loads(capsys.readouterr().out)["collection"]
+
+
+def test_complete_collection_is_reported(capsys, lint_spec) -> None:
+    lint_spec({"tools": [CTL, PROBE], "page_size": 1})
+    main(["lint", "--json", "--", *SERVER])
+    collection = _collection(capsys)
+    assert collection["complete"] is True
+    assert collection["listings"] == {
+        "tools/list": {"items": 2, "pages": 2, "error": None, "truncated": False}
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "error"), [("error", "error"), ("exit", "error"), ("hang", "timeout")]
+)
+def test_failure_on_a_later_page_is_reported(
+    mode: str, error: str, capsys, lint_spec
+) -> None:
+    lint_spec(
+        {"tools": [CTL, PROBE], "page_size": 1, "fail": {"page": 2, "mode": mode}}
+    )
+    assert main(["lint", "--json", "--timeout", "2", "--", *SERVER]) == 1
+    report = json.loads(capsys.readouterr().out)
+    collection = report["collection"]
+    assert collection["complete"] is False
+    assert collection["listings"]["tools/list"] == {
+        "items": 1,
+        "pages": 1,
+        "error": error,
+        "truncated": False,
+    }
+    assert "tools-list-failed" in _rules(report)
+
+
+def test_failed_prompt_listing_is_reported_without_a_tools_finding(
+    capsys, lint_spec
+) -> None:
+    lint_spec(
+        {
+            "capabilities": {"tools": {}, "prompts": {}},
+            "tools": [CTL],
+            "prompts": [{"name": "p"}],
+            "fail": {"listing": "prompts", "mode": "error"},
+        }
+    )
+    assert main(["lint", "--", *SERVER]) == 0
+    out = capsys.readouterr().out
+    assert "incomplete: prompts/list failed (error) after 0 pages, 0 items read" in out
+    assert "tools-list-failed" not in out
+
+
+def test_page_cap_marks_the_listing_truncated(capsys, lint_spec) -> None:
+    tools = {
+        "$gen": "tools",
+        "n": 1000,
+        "template": {**PROBE, "name": "probe{i}"},
+    }
+    lint_spec({"tools": [CTL, tools], "page_size": 1})
+    main(["lint", "--json", "--", *SERVER])
+    status = _collection(capsys)["listings"]["tools/list"]
+    assert status == {"items": 1000, "pages": 1000, "error": None, "truncated": True}
+
+
+def test_repeated_cursor_marks_the_listing_truncated(capsys, lint_spec) -> None:
+    lint_spec({"tools": [CTL, PROBE], "page_size": 1, "cursor_mode": "repeat"})
+    main(["lint", "--json", "--", *SERVER])
+    collection = _collection(capsys)
+    assert collection["complete"] is False
+    assert collection["listings"]["tools/list"]["truncated"] is True
+
+
 def test_list_rules(capsys) -> None:
     assert main(["lint", "--list-rules"]) == 0
     text = capsys.readouterr().out

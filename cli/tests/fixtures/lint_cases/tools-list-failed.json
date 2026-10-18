@@ -14,6 +14,202 @@
    }
   },
   {
+   "name": "page-2-error",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "page_size": 1,
+    "fail": {
+     "page": 2,
+     "mode": "error"
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "page-2-exit",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "page_size": 1,
+    "fail": {
+     "page": 2,
+     "mode": "exit"
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "page-2-hang",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "page_size": 1,
+    "fail": {
+     "page": 2,
+     "mode": "hang"
+    }
+   },
+   "args": [
+    "--timeout",
+    "3"
+   ],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "prompts-fail",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {},
+     "prompts": {}
+    },
+    "prompts": [
+     {
+      "name": "p"
+     }
+    ],
+    "fail": {
+     "listing": "prompts",
+     "mode": "error"
+    }
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
    "name": "nan",
    "spec": {
     "tools": [
