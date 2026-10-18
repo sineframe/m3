@@ -163,9 +163,12 @@ def build_report(
         "exit_code": exit_code(counts, fail_on),
     }
     if directories:
+        checked = {e.directory for rule in RULES for e in rule.directory_effects}
         report["directories"] = {
             "chosen": list(directories),
             "policy_date": POLICY_DATE,
+            # Chosen directories with no rule that metadata can check.
+            "not_checked": [d for d in directories if d not in checked],
         }
     return report
 
@@ -288,8 +291,13 @@ def print_human(report: dict[str, Any], style: Style | None) -> None:
 def _readiness(report: dict[str, Any], *, partial: bool = False) -> list[str]:
     """Per chosen directory: findings counted at their worst severity there."""
 
+    checked = {e.directory for rule in RULES for e in rule.directory_effects}
     parts = []
     for directory in report["directories"]["chosen"]:
+        if directory not in checked:
+            # Never "no findings" for a directory no rule checks.
+            parts.append(f"{directory} not checked (no rule checks metadata yet)")
+            continue
         counts = {"error": 0, "warning": 0}
         for finding in report["findings"]:
             levels = {

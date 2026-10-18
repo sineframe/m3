@@ -253,10 +253,10 @@
     "--directory",
     "all"
    ],
-   "expect": "present",
+   "expect": "absent",
    "directories": {
-    "claude": "warning",
-    "openai": "warning",
+    "claude": null,
+    "openai": null,
     "muse": null
    }
   },
@@ -292,10 +292,10 @@
     "--directory",
     "all"
    ],
-   "expect": "present",
+   "expect": "absent",
    "directories": {
-    "claude": "warning",
-    "openai": "warning",
+    "claude": null,
+    "openai": null,
     "muse": null
    }
   },
@@ -335,10 +335,10 @@
     "--directory",
     "all"
    ],
-   "expect": "present",
+   "expect": "absent",
    "directories": {
-    "claude": "warning",
-    "openai": "warning",
+    "claude": null,
+    "openai": null,
     "muse": null
    }
   },

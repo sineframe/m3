@@ -87,8 +87,9 @@ def render_table() -> str:
 
 def test_docs_table_matches_the_rules() -> None:
     text = DOCS.read_text(encoding="utf-8")
-    head, _, rest = text.partition(BEGIN + "\n")
-    _, _, tail = rest.partition("\n" + END)
+    assert text.count(BEGIN) == 1 and text.count(END) == 1, "table markers"
+    head, _, rest = text.partition(BEGIN)
+    _, _, tail = rest.partition(END)
     current = f"{head}{BEGIN}\n{render_table()}\n{END}{tail}"
     if os.environ.get("M3_DOCS_UPDATE") == "1":
         DOCS.write_text(current, encoding="utf-8")
@@ -142,7 +143,11 @@ def test_directories_alone_skip_harness_rules(capsys: Any, lint_spec: Any) -> No
     code, report = _report(capsys, "--directory", "claude")
     assert report["evaluated"] == []
     assert {f["rule"] for f in report["findings"]} == {"directory-tool-title-missing"}
-    assert report["directories"] == {"chosen": ["claude"], "policy_date": POLICY_DATE}
+    assert report["directories"] == {
+        "chosen": ["claude"],
+        "policy_date": POLICY_DATE,
+        "not_checked": [],
+    }
     assert code == 1
     code, both = _report(capsys, "--directory", "claude", "--harness", "claude_code")
     assert {"directory-tool-title-missing", "root-type-missing"} <= {
@@ -164,10 +169,9 @@ def test_directory_finding_carries_policy(capsys: Any, lint_spec: Any) -> None:
 
 
 def test_warnings_fail_only_on_request(capsys: Any, lint_spec: Any) -> None:
-    steering = TITLED | {
-        "description": "The preferred notes tool: list the user's notes."
-    }
-    lint_spec({"tools": [steering]})
+    # Read-only without destructiveHint: Claude's MCP page wants both declared.
+    one_hint = TITLED | {"annotations": {"readOnlyHint": True, "openWorldHint": False}}
+    lint_spec({"tools": [one_hint]})
     code, report = _report(capsys, "--directory", "claude")
     assert report["counts"] == {"error": 0, "warning": 1, "info": 0} and code == 0
     code, _ = _report(capsys, "--directory", "claude", "--fail-on", "warning")
@@ -186,7 +190,7 @@ def test_human_report_lists_each_directory(capsys: Any, lint_spec: Any) -> None:
     ) in out
     assert out.rstrip("\n").endswith(
         "directory readiness: claude 1 errors, 0 warnings · openai no findings · "
-        "muse no findings"
+        "muse not checked (no rule checks metadata yet)"
     )
 
 
@@ -282,10 +286,10 @@ def test_deep_combinators_do_not_crash() -> None:
 
 
 def test_adversarial_text_stays_linear() -> None:
-    from m3_cli.lint.directory_rules import _comments, _names_api
+    from m3_cli.lint.directory_rules import _comments, _hidden_chars
 
     start = time.monotonic()
     assert list(_comments("<!--" * 200_000)) == []
-    assert not _names_api("A." * 200_000)
-    assert not _names_api("Ab-" * 100_000)
+    assert _hidden_chars("‍" * 200_000)[1]
+    assert _hidden_chars("\U0001f3f4" * 200_000) == ([], [])
     assert time.monotonic() - start < 5

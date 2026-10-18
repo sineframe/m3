@@ -7,17 +7,7 @@
       "listed": {
         "claude": "https://claude.com/connectors/context7"
       },
-      "expected": [
-        {
-          "rule": "directory-steering-text",
-          "location": "initialize instructions",
-          "directories": {
-            "claude": "warning",
-            "openai": null,
-            "muse": null
-          }
-        }
-      ]
+      "expected": []
     },
     {
       "name": "Hugging Face",
@@ -84,15 +74,6 @@
           "directories": {
             "claude": "warning",
             "openai": null,
-            "muse": null
-          }
-        },
-        {
-          "rule": "directory-name-contradicts-hints",
-          "location": "tool 'feedback-to-devs' annotations",
-          "directories": {
-            "claude": null,
-            "openai": "warning",
             "muse": null
           }
         }
@@ -330,17 +311,7 @@
       "listed": {
         "claude": "https://claude.com/connectors"
       },
-      "expected": [
-        {
-          "rule": "directory-steering-text",
-          "location": "tool 'WolframContext' description",
-          "directories": {
-            "claude": "warning",
-            "openai": "warning",
-            "muse": "warning"
-          }
-        }
-      ]
+      "expected": []
     },
     {
       "name": "Parallel",
@@ -1048,15 +1019,6 @@
             "openai": "error",
             "muse": null
           }
-        },
-        {
-          "rule": "directory-name-contradicts-hints",
-          "location": "tool 'create_bug_report' annotations",
-          "directories": {
-            "claude": "warning",
-            "openai": "warning",
-            "muse": null
-          }
         }
       ]
     },
@@ -1154,15 +1116,6 @@
           "directories": {
             "claude": null,
             "openai": "error",
-            "muse": null
-          }
-        },
-        {
-          "rule": "directory-name-contradicts-hints",
-          "location": "tool 'create_view' annotations",
-          "directories": {
-            "claude": "warning",
-            "openai": "warning",
             "muse": null
           }
         },

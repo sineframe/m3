@@ -12,9 +12,11 @@ Stdlib only (Python >= 3.10).
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures
 import fnmatch
 import gzip
+import http.client
 import importlib.util
 import json
 import os
@@ -1012,7 +1014,13 @@ def fetch_page(url: str, timeout: float) -> tuple[str | None, str]:
             return response.read().decode("utf-8", "replace"), ""
     except urllib.error.HTTPError as exc:
         return None, f"HTTP {exc.code}"
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+    ) as exc:
+        # HTTPException covers IncompleteRead from a truncated body.
         return None, type(exc).__name__
 
 
@@ -1163,40 +1171,33 @@ def run_directories(out: Path, timeout: float, jobs: int) -> int:
         if note:
             sections["unavailable"].append(f"{name} {server['url']} (partial: {note})")
         reports[name] = report
-        actual: dict[tuple[str, str], tuple[dict[str, str | None], str]] = {}
+        # Compared as multisets: each finding counts on its own, so a second
+        # finding at the same location can't hide a change in the first.
+        actual: collections.Counter[tuple[str, str, str]] = collections.Counter()
+        details: dict[tuple[str, str, str], list[str]] = {}
         for finding in report["findings"]:
-            key = _finding_key(finding)
-            levels = _severities(finding)
-            if key in actual:
-                # Several findings at one location: keep the worst per directory.
-                old, detail = actual[key]
-                levels = {
-                    d: "error"
-                    if "error" in (old[d], levels[d])
-                    else old[d] or levels[d]
-                    for d in levels
-                }
-                actual[key] = (levels, f"{detail}; {finding['detail']}")
-            else:
-                actual[key] = (levels, finding["detail"])
+            if not finding.get("directories"):
+                continue
+            key = (*_finding_key(finding), json.dumps(_severities(finding)))
+            actual[key] += 1
+            details.setdefault(key, []).append(finding["detail"])
             seen.update(
                 (finding["rule"], e["directory"], e["summary"])
                 for e in finding.get("directories", [])
             )
-        expected = {
-            (e["rule"], e["location"]): e["directories"] for e in server["expected"]
-        }
-        for key, (levels, detail) in sorted(actual.items()):
-            if expected.get(key) != levels:
-                was = f" (expected {expected[key]})" if key in expected else ""
-                sections["unexpected"].append(
-                    f"{name}: {key[0]} {key[1]} {levels}{was} detail={detail!r}"
-                )
+        expected = collections.Counter(
+            (e["rule"], e["location"], json.dumps(e["directories"]))
+            for e in server["expected"]
+        )
+        for key in sorted((actual - expected).elements()):
+            sections["unexpected"].append(
+                f"{name}: {key[0]} {key[1]} {key[2]} detail={details[key][0]!r}"
+            )
         if note:
             # A partial listing can't show that an expected finding is gone.
             continue
-        for key in sorted(expected.keys() - actual.keys()):
-            sections["missing"].append(f"{name}: {key[0]} {key[1]} {expected[key]}")
+        for key in sorted((expected - actual).elements()):
+            sections["missing"].append(f"{name}: {key[0]} {key[1]} {key[2]}")
     for rule in catalogue:
         for effect in rule.get("directories", []):
             if (rule["id"], effect["directory"], effect["summary"]) not in seen:
@@ -1219,7 +1220,8 @@ def run_directories(out: Path, timeout: float, jobs: int) -> int:
             for line in sections[kind]:
                 print(f"  {line}")
             print()
-    checked = len(servers) - sum(1 for r, _ in results if r is None)
+    # Partially read servers are listed as unavailable, not counted here.
+    checked = sum(1 for report, note in results if report is not None and not note)
     print(f"{checked} of {len(servers)} servers checked")
     (out / "directories.json").write_text(
         json.dumps({"sections": sections, "reports": reports}, indent=2)
