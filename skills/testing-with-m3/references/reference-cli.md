@@ -204,6 +204,7 @@ Pass a streamable HTTP URL, or a stdio command after `--`, but not both.
 | --- | --- |
 | `--header NAME:VALUE` | HTTP header sent with every request. Repeatable; URL targets only. Values are never printed. |
 | `--harness KIND[@VERSION]` | `claude_code` or `codex`. Repeatable. Default: both, at the newest version the rule data knows. |
+| `--directory NAME` | `claude`, `openai`, `muse` or `all`: also check the directory's published listing rules. Repeatable. Without `--harness`, only directory checks run. See [Directory readiness](reference-directory-readiness.md). |
 | `--server-name NAME` | The name your agent configuration gives the server, used to check `mcp__<server>__<tool>` lengths. Defaults to `serverInfo.name`. |
 | `--fail-on error\|warning\|never` | `error`. |
 | `--ignore RULE_ID` | Skip a rule. Repeatable. |

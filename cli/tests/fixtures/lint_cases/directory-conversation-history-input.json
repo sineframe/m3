@@ -1,0 +1,454 @@
+{
+ "rule": "directory-conversation-history-input",
+ "cases": [
+  {
+   "name": "conversation-history-turns",
+   "spec": {
+    "tools": [
+     {
+      "name": "answer",
+      "title": "Answer",
+      "description": "Answer a question using the conversation so far.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "question": {
+         "type": "string"
+        },
+        "conversation_history": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "role": {
+            "type": "string"
+           },
+           "content": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "role",
+           "content"
+          ]
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "prior-turns-unnamed",
+   "spec": {
+    "tools": [
+     {
+      "name": "answer",
+      "title": "Answer",
+      "description": "Answer a question.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "question": {
+         "type": "string"
+        },
+        "turns": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "role": {
+            "type": "string"
+           },
+           "content": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "role",
+           "content"
+          ]
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "named-history-strings",
+   "spec": {
+    "tools": [
+     {
+      "name": "answer",
+      "title": "Answer",
+      "description": "Answer a question.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "question": {
+         "type": "string"
+        },
+        "history": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "named-context-object",
+   "spec": {
+    "tools": [
+     {
+      "name": "answer",
+      "title": "Answer",
+      "description": "Answer a question.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "question": {
+         "type": "string"
+        },
+        "context": {
+         "type": "object"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "publish-messages",
+   "spec": {
+    "tools": [
+     {
+      "name": "publish_messages",
+      "title": "Publish messages",
+      "description": "Post these messages to the team channel.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "channel": {
+         "type": "string"
+        },
+        "messages": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "role": {
+            "type": "string"
+           },
+           "content": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "role",
+           "content"
+          ]
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "eval-dataset-dialogue",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_eval_dataset",
+      "title": "Create eval dataset",
+      "description": "Create an evaluation dataset from a sample dialogue.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "dialogue": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "role": {
+            "type": "string"
+           },
+           "content": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "role",
+           "content"
+          ]
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "summarize-transcript",
+   "spec": {
+    "tools": [
+     {
+      "name": "summarize_transcript",
+      "title": "Summarize transcript",
+      "description": "Summarize a meeting transcript.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "transcript": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "role": {
+            "type": "string"
+           },
+           "content": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "role",
+           "content"
+          ]
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "history-id-string",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_history",
+      "title": "Get history",
+      "description": "Get one revision history entry.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "history_id": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "context-string",
+   "spec": {
+    "tools": [
+     {
+      "name": "answer",
+      "title": "Answer",
+      "description": "Answer a question.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "question": {
+         "type": "string"
+        },
+        "context": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "messages-string",
+   "spec": {
+    "tools": [
+     {
+      "name": "send_message",
+      "title": "Send message",
+      "description": "Send one message.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "messages": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  }
+ ]
+}

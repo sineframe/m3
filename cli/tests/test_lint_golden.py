@@ -1,9 +1,10 @@
 """`m3 lint` output without --directory, pinned byte for byte.
 
 ``fixtures/lint_golden`` holds the JSON report, the human report and the exit
-code of every case in ``fixtures/lint_cases``, recorded before directory checks
-existed. Regenerate with ``M3_LINT_GOLDEN_UPDATE=1`` only when a harness rule
-change is meant to alter the output.
+code of every case that existed in ``fixtures/lint_cases`` before directory
+checks did; cases added since are not pinned here. Regenerate with
+``M3_LINT_GOLDEN_UPDATE=1`` only when a harness rule change is meant to alter
+the output.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ from m3_cli import main
 FIXTURES = Path(__file__).parent / "fixtures"
 LINT_SERVER = FIXTURES / "lint_server.py"
 GOLDEN = FIXTURES / "lint_golden"
-CASE_FILES = sorted((FIXTURES / "lint_cases").glob("*.json"))
+CASES = FIXTURES / "lint_cases"
+GOLDEN_FILES = sorted(p for p in GOLDEN.glob("*.json") if p.name != "list-rules.json")
 UPDATE = os.environ.get("M3_LINT_GOLDEN_UPDATE") == "1"
 
 
@@ -62,10 +64,12 @@ def _normalized(text: str) -> Any:
     return report
 
 
-def _record(path: Path) -> dict[str, Any]:
+def _record(path: Path, names: set[str]) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     cases: dict[str, Any] = {}
     for case in data["cases"]:
+        if case["name"] not in names:
+            continue
         code, text = _lint(case["spec"], case["args"], as_json=True)
         human_code, human = _lint(case["spec"], case["args"], as_json=False)
         cases[case["name"]] = {
@@ -77,17 +81,15 @@ def _record(path: Path) -> dict[str, Any]:
     return cases
 
 
-@pytest.mark.parametrize("path", CASE_FILES, ids=[p.stem for p in CASE_FILES])
-def test_output_unchanged(path: Path) -> None:
-    golden = GOLDEN / path.name
-    current = _record(path)
+@pytest.mark.parametrize("golden", GOLDEN_FILES, ids=[p.stem for p in GOLDEN_FILES])
+def test_output_unchanged(golden: Path) -> None:
+    expected = json.loads(golden.read_text(encoding="utf-8"))
+    current = _record(CASES / golden.name, set(expected))
     if UPDATE:
-        golden.parent.mkdir(exist_ok=True)
         golden.write_text(
             json.dumps(current, indent=1, sort_keys=True, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-    expected = json.loads(golden.read_text(encoding="utf-8"))
     assert current == expected
 
 
@@ -102,7 +104,11 @@ def test_rule_catalogue_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
             json.dumps(catalogue, indent=1, sort_keys=True) + "\n", encoding="utf-8"
         )
     expected = json.loads(golden.read_text(encoding="utf-8"))
-    current = {rule["id"]: rule for rule in catalogue["rules"]}
+    # Existing rules may gain directory effects; everything else is pinned.
+    current = {
+        rule["id"]: {k: v for k, v in rule.items() if k != "directories"}
+        for rule in catalogue["rules"]
+    }
     assert [current.get(rule["id"]) for rule in expected["rules"]] == expected["rules"]
     assert catalogue["known_latest"] == expected["known_latest"]
     assert catalogue["schema_version"] == expected["schema_version"]

@@ -251,6 +251,16 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     lint.add_argument(
+        "--directory",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "claude, openai, muse or all: also check the directory's published "
+            "listing rules; without --harness, check only those"
+        ),
+    )
+    lint.add_argument(
         "--server-name",
         metavar="NAME",
         default=None,

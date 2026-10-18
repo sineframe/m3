@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from ..terminal import stream_is_utf8
+from .catalogue import RULE_ORDER, RULES
 from .collect import Snapshot
-from .rules import RULE_ORDER, RULES, SEVERITY_RANK, Effect, Finding
+from .directories import POLICY_DATE, SOURCES, Directory, DirectoryEffect
+from .rules import SEVERITY_RANK, Effect, Finding
 from .versions import KNOWN_LATEST, Target, VersionRange
 
 if TYPE_CHECKING:
@@ -41,6 +43,18 @@ def _effect(effect: Effect) -> dict[str, Any]:
         "impact": effect.impact,
         "evidence": effect.evidence,
         "summary": effect.summary,
+    }
+
+
+def _directory_effect(effect: DirectoryEffect) -> dict[str, Any]:
+    source = SOURCES[effect.source]
+    return {
+        "directory": effect.directory,
+        "severity": effect.severity,
+        "summary": effect.summary,
+        "policy_url": source.url,
+        "quote": source.quote,
+        "policy_date": POLICY_DATE,
     }
 
 
@@ -82,6 +96,7 @@ def build_report(
     targets: list[Target],
     findings: list[Finding],
     fail_on: str,
+    directories: list[Directory] | None = None,
 ) -> dict[str, Any]:
     ordered = sorted(
         findings,
@@ -97,7 +112,22 @@ def build_report(
     info = snapshot.initialize.get("serverInfo")
     info = info if isinstance(info, dict) else {}
     listings = _listings(snapshot)
-    return {
+    rows = []
+    for f in ordered:
+        row = {
+            "rule": f.rule.id,
+            "title": f.rule.title,
+            "category": f.rule.category,
+            "severity": f.severity,
+            "location": f.hit.location,
+            "detail": f.hit.detail,
+            "effects": [_effect(effect) for effect in f.effects],
+            "fix": f.rule.fix_for(f.hit),
+        }
+        if directories:
+            row["directories"] = [_directory_effect(e) for e in f.directory_effects]
+        rows.append(row)
+    report = {
         "schema_version": SCHEMA_VERSION,
         "target": target,
         "server": {
@@ -125,21 +155,15 @@ def build_report(
             ),
         },
         "counts": counts,
-        "findings": [
-            {
-                "rule": f.rule.id,
-                "title": f.rule.title,
-                "category": f.rule.category,
-                "severity": f.severity,
-                "location": f.hit.location,
-                "detail": f.hit.detail,
-                "effects": [_effect(effect) for effect in f.effects],
-                "fix": f.rule.fix,
-            }
-            for f in ordered
-        ],
+        "findings": rows,
         "exit_code": exit_code(counts, fail_on),
     }
+    if directories:
+        report["directories"] = {
+            "chosen": list(directories),
+            "policy_date": POLICY_DATE,
+        }
+    return report
 
 
 class _Out:
@@ -196,9 +220,13 @@ def print_human(report: dict[str, Any], style: Style | None) -> None:
     )
     out(style.bold(header) if style is not None else header)
     evaluated = ", ".join(f"{t['harness']}@{t['version']}" for t in report["evaluated"])
-    line = f"evaluated: {evaluated}"
+    line = f"evaluated: {evaluated}" if evaluated else "evaluated:"
     if any(t["beyond_known"] for t in report["evaluated"]):
         line += " (newer than rule data; assuming latest known behaviour)"
+    directories = report.get("directories")
+    if directories:
+        chosen = ", ".join(directories["chosen"])
+        line += f"{'; ' if evaluated else ' '}directories {chosen} (policies checked {directories['policy_date']})"
     out(line)
     for method, status in report["collection"]["listings"].items():
         if status["error"] is not None:
@@ -226,6 +254,11 @@ def print_human(report: dict[str, Any], style: Style | None) -> None:
             )
         if finding["detail"]:
             out(f"  detail: {_safe(finding['detail'])}")
+        for effect in finding.get("directories", []):
+            out(
+                f"  {effect['directory']} [{effect['severity']}]: {effect['summary']}. "
+                f"{effect['policy_url']} (policy checked {effect['policy_date']})"
+            )
         out(f"  fix: {finding['fix']}")
         out()
     if not report["findings"]:
@@ -234,6 +267,31 @@ def print_human(report: dict[str, Any], style: Style | None) -> None:
     out(
         f"{counts['error']} errors, {counts['warning']} warnings, {counts['info']} notes"
     )
+    if directories:
+        out("directory readiness: " + out.separator.join(_readiness(report)))
+
+
+def _readiness(report: dict[str, Any]) -> list[str]:
+    """Per chosen directory: findings counted at their worst severity there."""
+
+    parts = []
+    for directory in report["directories"]["chosen"]:
+        counts = {"error": 0, "warning": 0}
+        for finding in report["findings"]:
+            levels = {
+                e["severity"]
+                for e in finding.get("directories", [])
+                if e["directory"] == directory
+            }
+            if levels:
+                counts["error" if "error" in levels else "warning"] += 1
+        if counts["error"] or counts["warning"]:
+            parts.append(
+                f"{directory} {counts['error']} errors, {counts['warning']} warnings"
+            )
+        else:
+            parts.append(f"{directory} no findings")
+    return parts
 
 
 def print_rules(*, as_json: bool) -> None:
@@ -241,16 +299,8 @@ def print_rules(*, as_json: bool) -> None:
         payload = {
             "schema_version": SCHEMA_VERSION,
             "known_latest": KNOWN_LATEST,
-            "rules": [
-                {
-                    "id": rule.id,
-                    "title": rule.title,
-                    "category": rule.category,
-                    "fix": rule.fix,
-                    "effects": [_effect(effect) for effect in rule.effects],
-                }
-                for rule in RULES
-            ],
+            "policy_date": POLICY_DATE,
+            "rules": [_rule(rule) for rule in RULES],
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
@@ -262,4 +312,30 @@ def print_rules(*, as_json: bool) -> None:
                 f"  {effect.harness} {out.range(effect.range)} "
                 f"[{effect.impact}]: {effect.summary}"
             )
+        for d in rule.directory_effects:
+            out(
+                f"  {d.directory} directory [{d.severity}]: {d.summary} "
+                f"({SOURCES[d.source].url}, policy checked {POLICY_DATE})"
+            )
         out()
+
+
+def _rule(rule: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "id": rule.id,
+        "title": rule.title,
+        "category": rule.category,
+        "fix": rule.fix,
+        "effects": [_effect(effect) for effect in rule.effects],
+    }
+    if rule.directory_effects:
+        entry["directories"] = [
+            {
+                **_directory_effect(d),
+                "variants": sorted(d.when) if d.when else None,
+                "detection": d.detection,
+                "rationale": d.rationale,
+            }
+            for d in rule.directory_effects
+        ]
+    return entry

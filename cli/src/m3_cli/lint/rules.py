@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from .codex import code_mode_type_too_large, codex_normalized_size
 from .collect import ListingResult, Snapshot, capabilities_of, declared
+from .directories import DirectoryEffect
 from .schema import (
     CODEX_CONSTRAINT_KEYWORDS,
     COMBINATORS,
@@ -28,7 +29,7 @@ from .schema import (
     utf8_size,
     utf16_len,
 )
-from .versions import HarnessKind, Target, VersionRange
+from .versions import HarnessKind, VersionRange
 
 Impact = Literal["session", "server", "tool", "degraded", "advisory"]
 Severity = Literal["error", "warning", "info"]
@@ -50,6 +51,7 @@ Category = Literal[
     "names",
     "text",
     "result-hints",
+    "directory",
 ]
 
 
@@ -78,6 +80,19 @@ class Rule:
     effects: tuple[Effect, ...]
     fix: str
     check: Callable[[Snapshot], Iterable[Hit]]
+    directory_effects: tuple[DirectoryEffect, ...] = ()
+    # Variant-specific fixes, keyed by variant or by the part before ":" in
+    # "kind:scope" variants; a hit whose variants have none uses `fix`.
+    fixes: tuple[tuple[str, str], ...] = ()
+
+    def fix_for(self, hit: Hit) -> str:
+        chosen = dict(self.fixes)
+        found: list[str] = []
+        for variant in sorted(hit.variants):
+            fix = chosen.get(variant, chosen.get(variant.split(":", 1)[0]))
+            if fix is not None and fix not in found:
+                found.append(fix)
+        return " ".join(found) if found else self.fix
 
 
 @dataclass(frozen=True)
@@ -86,6 +101,7 @@ class Finding:
     hit: Hit
     effects: tuple[Effect, ...]
     severity: Severity
+    directory_effects: tuple[DirectoryEffect, ...] = ()
 
 
 # --- effect construction --------------------------------------------------
@@ -1165,7 +1181,7 @@ _PARSE_VARIANTS = (
     "null-root",
 )
 
-RULES: tuple[Rule, ...] = (
+HARNESS_RULES: tuple[Rule, ...] = (
     # protocol
     Rule(
         "initialize-server-info",
@@ -2349,32 +2365,3 @@ RULES: tuple[Rule, ...] = (
         _check_safety_annotations,
     ),
 )
-
-RULE_ORDER = {rule.id: index for index, rule in enumerate(RULES)}
-
-
-def _applies(effect: Effect, hit: Hit, targets: list[Target]) -> bool:
-    if effect.when is not None and not effect.when & hit.variants:
-        return False
-    return any(
-        target.harness == effect.harness and effect.range.contains(target.version)
-        for target in targets
-    )
-
-
-def evaluate(
-    snapshot: Snapshot, targets: list[Target], ignore: set[str]
-) -> list[Finding]:
-    findings: list[Finding] = []
-    for rule in RULES:
-        if rule.id in ignore:
-            continue
-        for hit in rule.check(snapshot):
-            effects = tuple(e for e in rule.effects if _applies(e, hit, targets))
-            if not effects:
-                continue
-            severity = min(
-                (SEVERITY[e.impact] for e in effects), key=SEVERITY_RANK.__getitem__
-            )
-            findings.append(Finding(rule, hit, effects, severity))
-    return findings

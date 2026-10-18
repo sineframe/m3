@@ -87,6 +87,133 @@
    },
    "args": [],
    "expect": "absent"
+  },
+  {
+   "name": "directory-null",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "title": "Control",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     },
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": null,
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "error",
+    "muse": null
+   }
+  },
+  {
+   "name": "directory-number",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": 42,
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "error",
+    "muse": null
+   }
+  },
+  {
+   "name": "directory-string",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
   }
  ]
 }

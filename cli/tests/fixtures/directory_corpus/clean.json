@@ -1,0 +1,51 @@
+{
+ "serverInfo": {"name": "notes", "version": "1.0.0"},
+ "instructions": "Notes server for a personal notebook. list_notes finds notes by tag or text; update_note changes a note's title or body; delete_note removes a note permanently.",
+ "tools": [
+  {
+   "name": "list_notes",
+   "title": "List notes",
+   "description": "Lists notes in the notebook, newest first. Filter by tag or by text in the title or body. Returns each note's id, title, tags and last-edited time.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "tag": {"type": "string", "description": "Only notes with this tag, such as work."},
+     "text": {"type": "string", "description": "Only notes whose title or body contains this text."},
+     "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of notes to return (1-100, default 20)."}
+    },
+    "additionalProperties": false
+   },
+   "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}
+  },
+  {
+   "name": "update_note",
+   "title": "Update note",
+   "description": "Changes the title or body of one note. Fields left out stay as they are; the new body replaces the old one.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {"type": "string", "description": "Id of the note, as returned by list_notes."},
+     "title": {"type": "string", "maxLength": 200, "description": "New title."},
+     "body": {"type": "string", "maxLength": 20000, "description": "New body in Markdown."}
+    },
+    "required": ["id"],
+    "additionalProperties": false
+   },
+   "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false}
+  },
+  {
+   "name": "delete_note",
+   "title": "Delete note",
+   "description": "Deletes one note permanently. The note cannot be restored.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {"type": "string", "description": "Id of the note, as returned by list_notes."}
+    },
+    "required": ["id"],
+    "additionalProperties": false
+   },
+   "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false}
+  }
+ ]
+}

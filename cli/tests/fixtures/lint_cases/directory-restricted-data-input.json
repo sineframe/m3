@@ -1,0 +1,698 @@
+{
+ "rule": "directory-restricted-data-input",
+ "cases": [
+  {
+   "name": "password",
+   "spec": {
+    "tools": [
+     {
+      "name": "connect_database",
+      "title": "Connect database",
+      "description": "Acme connect database.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "host": {
+         "type": "string"
+        },
+        "password": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": "warning"
+   }
+  },
+  {
+   "name": "api-key",
+   "spec": {
+    "tools": [
+     {
+      "name": "configure_integration",
+      "title": "Configure integration",
+      "description": "Acme configure integration.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "apiKey": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": "warning"
+   }
+  },
+  {
+   "name": "format-password",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_account",
+      "title": "Create account",
+      "description": "Acme create account.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "email": {
+         "type": "string"
+        },
+        "secret": {
+         "type": "string",
+         "format": "password"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": "warning"
+   }
+  },
+  {
+   "name": "private-key-wallet",
+   "spec": {
+    "tools": [
+     {
+      "name": "generate_wallet",
+      "title": "Generate wallet",
+      "description": "Acme generate wallet.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "privatekey": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": "warning"
+   }
+  },
+  {
+   "name": "verification-code",
+   "spec": {
+    "tools": [
+     {
+      "name": "verify_email",
+      "title": "Verify email",
+      "description": "Acme verify email.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "email": {
+         "type": "string"
+        },
+        "verificationcode": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": "warning"
+   }
+  },
+  {
+   "name": "card-number",
+   "spec": {
+    "tools": [
+     {
+      "name": "pay_invoice",
+      "title": "Pay invoice",
+      "description": "Acme pay invoice.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "invoice_id": {
+         "type": "string"
+        },
+        "card_number": {
+         "type": "string"
+        },
+        "cvv": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": "warning"
+   }
+  },
+  {
+   "name": "ssn",
+   "spec": {
+    "tools": [
+     {
+      "name": "check_credit",
+      "title": "Check credit",
+      "description": "Acme check credit.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "ssn": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "passport",
+   "spec": {
+    "tools": [
+     {
+      "name": "book_flight",
+      "title": "Book flight",
+      "description": "Acme book flight.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "passport_number": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "coordinates",
+   "spec": {
+    "tools": [
+     {
+      "name": "find_nearby",
+      "title": "Find nearby",
+      "description": "Acme find nearby.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "latitude": {
+         "type": "number"
+        },
+        "longitude": {
+         "type": "number"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "lat-lng-short",
+   "spec": {
+    "tools": [
+     {
+      "name": "find_nearby",
+      "title": "Find nearby",
+      "description": "Acme find nearby.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "lat": {
+         "type": "number"
+        },
+        "lng": {
+         "type": "number"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "home-address",
+   "spec": {
+    "tools": [
+     {
+      "name": "register_user",
+      "title": "Register user",
+      "description": "Acme register user.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "home_address": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "shipping-address",
+   "spec": {
+    "tools": [
+     {
+      "name": "place_order",
+      "title": "Place order",
+      "description": "Acme place order.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "sku": {
+         "type": "string"
+        },
+        "shipping_address": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "page-token",
+   "spec": {
+    "tools": [
+     {
+      "name": "list_files",
+      "title": "List files",
+      "description": "Acme list files.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "page_token": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "next-token",
+   "spec": {
+    "tools": [
+     {
+      "name": "list_files",
+      "title": "List files",
+      "description": "Acme list files.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "next_token": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "secret-name",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_secret_metadata",
+      "title": "Get secret metadata",
+      "description": "Acme get secret metadata.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "secret_name": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "bare-token",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_token_price",
+      "title": "Get token price",
+      "description": "Acme get token price.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "token": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "bare-address",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_wallet_balance",
+      "title": "Get wallet balance",
+      "description": "Acme get wallet balance.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "address": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "gift-card-code",
+   "spec": {
+    "tools": [
+     {
+      "name": "redeem_gift_card",
+      "title": "Redeem gift card",
+      "description": "Acme redeem gift card.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "code": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "latitude-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_timezone",
+      "title": "Get timezone",
+      "description": "Acme get timezone.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "latitude": {
+         "type": "number"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  }
+ ]
+}

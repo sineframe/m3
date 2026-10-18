@@ -1,0 +1,1442 @@
+{
+  "_note": "Remote MCP servers readable without credentials, for oracle.py --directories. 'listed' records directory listing evidence found on 2026-10-18; controls are not listed anywhere. 'expected' holds the reviewed directory findings: every one is a true finding, so a new finding is either a regression or a server change.",
+  "servers": [
+    {
+      "name": "Context7",
+      "url": "https://mcp.context7.com/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors/context7"
+      },
+      "expected": [
+        {
+          "rule": "directory-steering-text",
+          "location": "initialize instructions",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Hugging Face",
+      "url": "https://huggingface.co/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors/hugging-face"
+      },
+      "expected": []
+    },
+    {
+      "name": "Exa",
+      "url": "https://mcp.exa.ai/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors/exa"
+      },
+      "expected": []
+    },
+    {
+      "name": "Microsoft Learn",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors/microsoft-learn"
+      },
+      "expected": [
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'microsoft_code_sample_search' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'microsoft_docs_fetch' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'microsoft_docs_search' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Kiwi.com",
+      "url": "https://mcp.kiwi.com",
+      "listed": {
+        "claude": "https://claude.com/connectors/kiwi-com"
+      },
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'feedback-to-devs' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-name-contradicts-hints",
+          "location": "tool 'feedback-to-devs' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "warning",
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gmail",
+      "url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "listed": {
+        "claude": "https://claude.com/connectors",
+        "openai": "https://github.com/openai/plugins/tree/main/plugins/gmail"
+      },
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create_draft' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create_label' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'label_message' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'label_thread' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'unmark_message_spam' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'unmark_thread_spam' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'untrash_message' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'untrash_thread' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'update_message_labels' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Shopify",
+      "url": "https://setup.shopify.com/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors",
+        "openai": "https://github.com/openai/plugins/tree/main/plugins/shopify"
+      },
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'add-to-collection' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create-collection' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create-digital-product' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create-digital-product-from-link' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create-discount' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create-product' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'import-mock-shop-catalog' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'open-digital-products-install' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'switch-shop' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'update-collection' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'upload-digital-product-file' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'upload-digital-product-media' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'get-digital-products-install-status' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "MDN",
+      "url": "https://mcp.mdn.mozilla.net",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": []
+    },
+    {
+      "name": "Wolfram",
+      "url": "https://agenttools.wolfram.com/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": [
+        {
+          "rule": "directory-steering-text",
+          "location": "tool 'WolframContext' description",
+          "directories": {
+            "claude": "warning",
+            "openai": "warning",
+            "muse": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Parallel",
+      "url": "https://search.parallel.ai/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": []
+    },
+    {
+      "name": "Etherscan",
+      "url": "https://mcp-keyless.etherscan.io/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": []
+    },
+    {
+      "name": "Apollo GraphOS",
+      "url": "https://mcp.apollographql.com",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'RunSchemaCheck' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'RunSubgraphCheck' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Blockscout",
+      "url": "https://mcp.blockscout.com/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": [
+        {
+          "rule": "directory-read-write-tool",
+          "location": "tool 'direct_api_call' /properties/method",
+          "directories": {
+            "claude": "warning",
+            "openai": "warning",
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "AWS MCP",
+      "url": "https://aws-mcp.us-east-1.api.aws/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'aws___get_presigned_url' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___get_presigned_url' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___get_regional_availability' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___get_tasks' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___list_regions' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___read_documentation' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___retrieve_skill' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___run_script' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___search_documentation' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Twilio docs",
+      "url": "https://mcp.twilio.com/docs",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": [
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'twilio__retrieve' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'twilio__search' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'twilio__retrieve' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'twilio__search' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vuetify",
+      "url": "https://mcp.vuetifyjs.com/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create_bug_report' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_component_api_by_version' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_directive_api_by_version' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_exposed_exports' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_feature_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_feature_guides' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_frequently_asked_questions' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_installation_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_migration_receipt_schema' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_release_notes_by_version' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_upgrade_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_upgrade_plan' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_upgrade_rules' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_v2_to_v3_component_map' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_v3_breaking_changes' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_v3_upgrade_baseline_recipe' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_v3_upgrade_playbook' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_v4_breaking_changes' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_component_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_component_list' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_composable_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_composable_list' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_exports_list' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_installation_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_package_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify0_skill' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify_api_by_version' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'get_vuetify_one_installation_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'create_bug_report' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_component_api_by_version' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_directive_api_by_version' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_exposed_exports' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_feature_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_feature_guides' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_frequently_asked_questions' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_installation_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_migration_receipt_schema' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_release_notes_by_version' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_upgrade_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_upgrade_plan' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_upgrade_rules' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_v2_to_v3_component_map' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_v3_breaking_changes' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_v3_upgrade_baseline_recipe' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_v3_upgrade_playbook' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_v4_breaking_changes' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_component_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_component_list' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_composable_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_composable_list' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_exports_list' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_installation_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_package_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify0_skill' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify_api_by_version' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'get_vuetify_one_installation_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-name-contradicts-hints",
+          "location": "tool 'create_bug_report' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": "warning",
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Excalidraw",
+      "url": "https://mcp.excalidraw.com/mcp",
+      "listed": {
+        "claude": "https://claude.com/connectors"
+      },
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'create_view' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'export_to_excalidraw' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'read_checkpoint' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'read_me' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'save_checkpoint' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'create_view' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'export_to_excalidraw' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'read_checkpoint' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'read_me' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'save_checkpoint' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'export_to_excalidraw' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'read_checkpoint' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'read_me' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'save_checkpoint' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "Svelte (control)",
+      "url": "https://mcp.svelte.dev/mcp",
+      "listed": {},
+      "expected": []
+    },
+    {
+      "name": "Cloudflare docs (control)",
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "listed": {},
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'migrate_pages_to_workers_guide' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'search_cloudflare_documentation' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'migrate_pages_to_workers_guide' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'search_cloudflare_documentation' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "AWS Knowledge (control)",
+      "url": "https://knowledge-mcp.global.api.aws",
+      "listed": {},
+      "expected": [
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___get_regional_availability' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___list_regions' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___read_documentation' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___retrieve_skill' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'aws___search_documentation' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "GitMCP (control)",
+      "url": "https://gitmcp.io/docs",
+      "listed": {},
+      "expected": [
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'fetch_generic_documentation' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'fetch_generic_url_content' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'match_common_libs_owner_repo_mapping' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'search_generic_code' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-claude-safety-hints",
+          "location": "tool 'search_generic_documentation' annotations",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'fetch_generic_documentation' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'fetch_generic_url_content' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'match_common_libs_owner_repo_mapping' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'search_generic_code' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-hints-not-explicit",
+          "location": "tool 'search_generic_documentation' annotations",
+          "directories": {
+            "claude": null,
+            "openai": "error",
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'fetch_generic_documentation' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'fetch_generic_url_content' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'match_common_libs_owner_repo_mapping' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'search_generic_code' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        },
+        {
+          "rule": "directory-tool-title-missing",
+          "location": "tool 'search_generic_documentation' title",
+          "directories": {
+            "claude": "error",
+            "openai": null,
+            "muse": null
+          }
+        }
+      ]
+    }
+  ]
+}

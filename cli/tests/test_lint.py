@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from m3_cli import main
-from m3_cli.lint.rules import RULES
+from m3_cli.lint.catalogue import RULES
 
 LINT_SERVER = Path(__file__).parent / "fixtures" / "lint_server.py"
 SERVER = [sys.executable, str(LINT_SERVER)]

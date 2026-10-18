@@ -66,8 +66,9 @@ def run(args: argparse.Namespace, *, stdio_command: list[str]) -> int:
 def _run(args: argparse.Namespace, stdio_command: list[str], *, as_json: bool) -> int:
     from ..server_options import _valid_http_url
     from . import report as report_module
+    from .catalogue import RULES, evaluate
     from .collect import collect
-    from .rules import RULES, evaluate
+    from .directories import parse_directories
     from .versions import parse_targets
     from .wire import HttpWire, StdioWire, Wire
 
@@ -79,7 +80,9 @@ def _run(args: argparse.Namespace, stdio_command: list[str], *, as_json: bool) -
     if url is None and args.header:
         raise LintUsageError("--header applies only to URL targets")
     headers = _parse_headers(args.header)
-    targets = parse_targets(args.harness)
+    directories = parse_directories(args.directory)
+    # Directories alone run only directory checks; --harness adds harness ones.
+    targets = parse_targets(args.harness) if args.harness or not directories else []
     known = {rule.id for rule in RULES}
     if any(rule_id not in known for rule_id in args.ignore):
         raise LintUsageError("unknown rule id in --ignore")
@@ -97,14 +100,17 @@ def _run(args: argparse.Namespace, stdio_command: list[str], *, as_json: bool) -
             raise LintUsageError("could not start the server command") from None
 
     snapshot = collect(open_wire, timeout=args.timeout, server_name=args.server_name)
-    findings = evaluate(snapshot, targets, set(args.ignore))
+    if directories and not targets and snapshot.tools.error is not None:
+        # Directory checks read the tool list; without it nothing was checked.
+        raise LintCollectError("tools/list failed; directory checks need the tool list")
+    findings = evaluate(snapshot, targets, set(args.ignore), directories)
     target = (
         report_module.http_target(url)
         if url is not None
         else {"kind": "stdio", "command": list(stdio_command)}
     )
     report = report_module.build_report(
-        target, snapshot, targets, findings, args.fail_on
+        target, snapshot, targets, findings, args.fail_on, directories
     )
     if as_json:
         print(json.dumps(report, indent=2, sort_keys=True))

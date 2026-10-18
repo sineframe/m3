@@ -1,0 +1,1154 @@
+{
+ "rule": "directory-name-contradicts-hints",
+ "cases": [
+  {
+   "name": "create-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_issue",
+      "title": "Create issue",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "set-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "set_status",
+      "title": "Status",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "camel-update-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "updateRecord",
+      "title": "Record",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "title-lead-write",
+   "spec": {
+    "tools": [
+     {
+      "name": "issue_tool",
+      "title": "Create issue",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "get-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_issue",
+      "title": "Issue",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "list-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "list-files",
+      "title": "Files",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "send-not-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "send_email",
+      "title": "Email",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "cancel-not-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "cancel_order",
+      "title": "Order",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "revoke-not-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "revoke_token",
+      "title": "Token",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "delete-not-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "delete_file",
+      "title": "File",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "upper-delete",
+   "spec": {
+    "tools": [
+     {
+      "name": "DELETE_FILE",
+      "title": "File",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "camel-remove",
+   "spec": {
+    "tools": [
+     {
+      "name": "removeUser",
+      "title": "User",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "overwrite-not-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "overwrite.config",
+      "title": "Config",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "title-lead-purge",
+   "spec": {
+    "tools": [
+     {
+      "name": "issues_tool",
+      "title": "Purge issues",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "delete-claude-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "delete_file",
+      "title": "File",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "claude"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "send-claude-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "send_email",
+      "title": "Email",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "claude"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "post-list-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "post_list",
+      "title": "Post list",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "set-inside-token",
+   "spec": {
+    "tools": [
+     {
+      "name": "asset_list",
+      "title": "Asset list",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "set-non-leading",
+   "spec": {
+    "tools": [
+     {
+      "name": "list_set_members",
+      "title": "Members",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "settings-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "settings_get",
+      "title": "Settings",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "share-links-get",
+   "spec": {
+    "tools": [
+     {
+      "name": "share_links_get",
+      "title": "Share links",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "trailing-delete",
+   "spec": {
+    "tools": [
+     {
+      "name": "files_delete",
+      "title": "Files",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "title-verb-not-leading",
+   "spec": {
+    "tools": [
+     {
+      "name": "issue_tool",
+      "title": "Issue delete helper",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "description-verb-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "issue_tool",
+      "title": "Issues",
+      "description": "Create, update or delete issues.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "get-or-create",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_or_create_user",
+      "title": "User",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "delete-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "delete_file",
+      "title": "File",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "send-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "send_email",
+      "title": "Email",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "delete-hint-missing",
+   "spec": {
+    "tools": [
+     {
+      "name": "delete_file",
+      "title": "File",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "create-hint-missing",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_issue",
+      "title": "Create issue",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "update-write",
+   "spec": {
+    "tools": [
+     {
+      "name": "update_record",
+      "title": "Update record",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "list-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "list_items",
+      "title": "List items",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "remove-from-trash-restores",
+   "spec": {
+    "tools": [
+     {
+      "name": "untrash_message",
+      "title": "Remove message from Trash",
+      "description": "Move a message out of Trash back to the inbox.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  }
+ ]
+}

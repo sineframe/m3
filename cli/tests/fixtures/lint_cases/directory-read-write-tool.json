@@ -1,0 +1,792 @@
+{
+ "rule": "directory-read-write-tool",
+ "cases": [
+  {
+   "name": "get-and-post-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "search_records",
+      "title": "Search records",
+      "description": "Search Acme records, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "GET",
+          "POST"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "http-method-lowercase-put",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "http_method": {
+         "type": "string",
+         "enum": [
+          "get",
+          "put"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "http-method-camel",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "httpMethod": {
+         "type": "string",
+         "enum": [
+          "HEAD",
+          "PATCH"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "oneof-const-get-delete",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "request_method": {
+         "type": "string",
+         "oneOf": [
+          {
+           "const": "GET"
+          },
+          {
+           "const": "DELETE"
+          }
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "anyof-enum-options-post",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "method": {
+         "anyOf": [
+          {
+           "enum": [
+            "OPTIONS"
+           ]
+          },
+          {
+           "enum": [
+            "POST"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "free-method-next-to-url",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "free-method-next-to-path",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "description": "HTTP verb"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "mixed-actions",
+   "spec": {
+    "tools": [
+     {
+      "name": "manage_issue",
+      "title": "Manage issue",
+      "description": "Read or change an issue in the tracker.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "action": {
+         "type": "string",
+         "enum": [
+          "get_issue",
+          "create_issue",
+          "delete_issue"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "post-only-search",
+   "spec": {
+    "tools": [
+     {
+      "name": "search_records",
+      "title": "Search records",
+      "description": "Search Acme records, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "POST"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "get-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "GET",
+          "HEAD"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "allof-intersection-get",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "GET",
+          "POST"
+         ],
+         "allOf": [
+          {
+           "enum": [
+            "GET",
+            "HEAD"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "object-allof-narrows-to-get",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "GET",
+          "POST"
+         ]
+        }
+       },
+       "allOf": [
+        {
+         "properties": {
+          "method": {
+           "const": "GET"
+          }
+         }
+        }
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "method-under-if-then",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_request",
+      "title": "API request",
+      "description": "Send a request to the Acme REST API, see https://acme.example/docs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "GET",
+          "POST"
+         ],
+         "if": {
+          "const": "POST"
+         },
+         "then": {
+          "enum": [
+           "GET"
+          ]
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "allowed-methods-list",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_webhook",
+      "title": "Create webhook",
+      "description": "Register a webhook that Acme calls.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "allowed_methods": {
+         "type": "array",
+         "items": {
+          "type": "string",
+          "enum": [
+           "GET",
+           "POST"
+          ]
+         }
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "allowed-methods-enum",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_webhook",
+      "title": "Create webhook",
+      "description": "Register a webhook that Acme calls.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "allowed_methods": {
+         "type": "string",
+         "enum": [
+          "GET",
+          "POST"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "payment-method-card-bank",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_checkout",
+      "title": "Create checkout",
+      "description": "Create a checkout session and return its link.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "card",
+          "bank"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "read-only-actions",
+   "spec": {
+    "tools": [
+     {
+      "name": "issue_info",
+      "title": "Issue info",
+      "description": "Look up an issue.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "action": {
+         "type": "string",
+         "enum": [
+          "get_issue",
+          "list_comments"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "action-enum-with-delete-under-method",
+   "spec": {
+    "tools": [
+     {
+      "name": "comment_write",
+      "title": "Comment write",
+      "description": "Add, update or delete a discussion comment.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "method": {
+         "type": "string",
+         "enum": [
+          "add",
+          "update",
+          "delete",
+          "get"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  }
+ ]
+}

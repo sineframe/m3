@@ -1,0 +1,565 @@
+{
+ "rule": "directory-query-tool-without-api-docs",
+ "cases": [
+  {
+   "name": "sql-no-link",
+   "spec": {
+    "tools": [
+     {
+      "name": "run_query",
+      "title": "Run query",
+      "description": "Run a query against the warehouse.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "sql": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "graphql-no-link",
+   "spec": {
+    "tools": [
+     {
+      "name": "graph",
+      "title": "Graph query",
+      "description": "Run a query.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "graphql": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "path-and-method",
+   "spec": {
+    "tools": [
+     {
+      "name": "call_api",
+      "title": "Call API",
+      "description": "Call any endpoint.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string"
+        },
+        "method": {
+         "type": "string",
+         "enum": [
+          "GET"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "body-and-endpoint",
+   "spec": {
+    "tools": [
+     {
+      "name": "call_api",
+      "title": "Call API",
+      "description": "Call any endpoint.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "endpoint": {
+         "type": "string"
+        },
+        "body": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "query-sql-description",
+   "spec": {
+    "tools": [
+     {
+      "name": "run_query",
+      "title": "Run query",
+      "description": "Run a SQL query and return rows.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "sql-with-url",
+   "spec": {
+    "tools": [
+     {
+      "name": "run_query",
+      "title": "Run query",
+      "description": "Run a query, see https://docs.acme.example/sql.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "sql": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "slack-web-api",
+   "spec": {
+    "tools": [
+     {
+      "name": "call_slack",
+      "title": "Call Slack",
+      "description": "Call a method of the Slack Web API.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "endpoint": {
+         "type": "string"
+        },
+        "body": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "read-file-path",
+   "spec": {
+    "tools": [
+     {
+      "name": "read_file",
+      "title": "Read file",
+      "description": "Read a file from the workspace.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "create-issue-body",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_issue",
+      "title": "Create issue",
+      "description": "Create an issue with this body.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "title": {
+         "type": "string"
+        },
+        "body": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "search-query",
+   "spec": {
+    "tools": [
+     {
+      "name": "search",
+      "title": "Search",
+      "description": "Search the knowledge base for matching articles.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "sql-enum",
+   "spec": {
+    "tools": [
+     {
+      "name": "run_report",
+      "title": "Run report",
+      "description": "Run a saved report.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "sql": {
+         "type": "string",
+         "enum": [
+          "daily",
+          "weekly"
+         ]
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "sql-as-a-language-filter",
+   "spec": {
+    "tools": [
+     {
+      "name": "code_sample_search",
+      "title": "Code sample search",
+      "description": "Search code samples. Languages: python powershell sql java kusto.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string",
+         "description": "Natural-language search terms."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "graphql-as-a-topic",
+   "spec": {
+    "tools": [
+     {
+      "name": "docs_search",
+      "title": "Docs search",
+      "description": "Searches official documentation for GraphQL, GraphOS and Router.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string",
+         "description": "Up to two keywords."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "action-method-with-body",
+   "spec": {
+    "tools": [
+     {
+      "name": "comment_write",
+      "title": "Comment write",
+      "description": "Add, update or delete a discussion comment.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "method": {
+         "type": "string",
+         "enum": [
+          "add",
+          "update",
+          "delete"
+         ]
+        },
+        "body": {
+         "type": "string",
+         "description": "Comment text."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "free-action-method-with-body",
+   "spec": {
+    "tools": [
+     {
+      "name": "review_write",
+      "title": "Review write",
+      "description": "Create or submit a pull request review.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "method": {
+         "type": "string",
+         "description": "One of create, submit or delete."
+        },
+        "body": {
+         "type": "string",
+         "description": "Review text."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  }
+ ]
+}
