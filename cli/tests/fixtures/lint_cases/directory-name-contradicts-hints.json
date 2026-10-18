@@ -1149,6 +1149,216 @@
     "openai": null,
     "muse": null
    }
+  },
+  {
+   "name": "delete-list",
+   "spec": {
+    "tools": [
+     {
+      "name": "delete_list",
+      "title": "Delete list",
+      "description": "Delete a mailing list.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "delete-query",
+   "spec": {
+    "tools": [
+     {
+      "name": "delete_query",
+      "title": "Delete query",
+      "description": "Delete a saved query.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "cancel-check-run",
+   "spec": {
+    "tools": [
+     {
+      "name": "cancel_check_run",
+      "title": "Cancel check run",
+      "description": "Cancel a running check.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": null,
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "update-view",
+   "spec": {
+    "tools": [
+     {
+      "name": "update_view",
+      "title": "Update view",
+      "description": "Update a saved view.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "remove-archive",
+   "spec": {
+    "tools": [
+     {
+      "name": "remove_archive",
+      "title": "Remove archive",
+      "description": "Delete an archive.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "get-or-create-user-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "get_or_create_user",
+      "title": "Get or create user",
+      "description": "Get a user, creating it if missing.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
   }
  ]
 }

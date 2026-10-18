@@ -250,6 +250,28 @@ def test_directories_alone_reject_malformed_tools(
     assert "not tools with a string name" in capsys.readouterr().err
 
 
+def test_lint_sources_spell_invisible_characters_as_escapes() -> None:
+    """The hidden-content check lists invisible characters; written literally
+    they would be invisible to anyone reviewing the code."""
+
+    import unicodedata
+
+    lint = Path(__file__).resolve().parents[1] / "src" / "m3_cli" / "lint"
+    for path in sorted(lint.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        hidden = {c for c in text if unicodedata.category(c) in ("Cf", "Mn", "Co")}
+        assert not hidden, (path.name, sorted(f"U+{ord(c):04X}" for c in hidden))
+
+
+def test_directory_fix_replaces_omit_advice(capsys: Any, lint_spec: Any) -> None:
+    lint_spec({"tools": [TITLED | {"description": 42}]})
+    _, report = _report(capsys, "--directory", "openai")
+    (finding,) = [
+        f for f in report["findings"] if f["rule"] == "tool-description-not-string"
+    ]
+    assert "Omit" not in finding["fix"] and "string" in finding["fix"]
+
+
 def test_deep_combinators_do_not_crash() -> None:
     from m3_cli.lint.directory_rules import _values
 

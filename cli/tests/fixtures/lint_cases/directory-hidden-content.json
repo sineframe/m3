@@ -677,6 +677,356 @@
     "openai": null,
     "muse": null
    }
+  },
+  {
+   "name": "invisible-2061",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u2061 a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-2062",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u2062 a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-2063",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u2063 a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-2064",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u2064 a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-180e",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u180e a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-3164",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u3164 a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-200e",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u200e a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-200f",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u200f a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "invisible-061c",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up\u061c a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": null
+   }
+  },
+  {
+   "name": "rlm-in-hebrew",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up \u05e9\u05dc\u05d5\u05dd\u200f\u05e2\u05d5\u05dc\u05dd records.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
   }
  ]
 }

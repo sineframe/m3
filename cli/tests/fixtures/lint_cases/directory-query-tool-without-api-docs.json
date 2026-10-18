@@ -560,6 +560,188 @@
     "openai": null,
     "muse": null
    }
+  },
+  {
+   "name": "rest-api-is-not-a-name",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_call",
+      "title": "Api call",
+      "description": "Query the REST API.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "endpoint": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "the-api-is-not-a-name",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_call",
+      "title": "Api call",
+      "description": "The API path to call.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "endpoint": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "stripe-apis",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_call",
+      "title": "Api call",
+      "description": "Call the Stripe APIs.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "endpoint": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "stripes-api",
+   "spec": {
+    "tools": [
+     {
+      "name": "api_call",
+      "title": "Api call",
+      "description": "Calls Stripe's API.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "endpoint": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "enum-endpoint-body",
+   "spec": {
+    "tools": [
+     {
+      "name": "send_report",
+      "title": "Send report",
+      "description": "Send a report.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "endpoint": {
+         "type": "string",
+         "enum": [
+          "reports",
+          "alerts"
+         ]
+        },
+        "body": {
+         "type": "object"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
   }
  ]
 }

@@ -1158,6 +1158,15 @@
           }
         },
         {
+          "rule": "directory-name-contradicts-hints",
+          "location": "tool 'create_view' annotations",
+          "directories": {
+            "claude": "warning",
+            "openai": "warning",
+            "muse": null
+          }
+        },
+        {
           "rule": "directory-tool-title-missing",
           "location": "tool 'export_to_excalidraw' title",
           "directories": {

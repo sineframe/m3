@@ -1009,7 +1009,7 @@ def fetch_page(url: str, timeout: float) -> tuple[str | None, str]:
     request = urllib.request.Request(page, headers={"User-Agent": "m3-lint-oracle"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read().decode("utf-8"), ""
+            return response.read().decode("utf-8", "replace"), ""
     except urllib.error.HTTPError as exc:
         return None, f"HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -1163,9 +1163,22 @@ def run_directories(out: Path, timeout: float, jobs: int) -> int:
         if note:
             sections["unavailable"].append(f"{name} {server['url']} (partial: {note})")
         reports[name] = report
-        actual = {}
+        actual: dict[tuple[str, str], tuple[dict[str, str | None], str]] = {}
         for finding in report["findings"]:
-            actual[_finding_key(finding)] = (_severities(finding), finding["detail"])
+            key = _finding_key(finding)
+            levels = _severities(finding)
+            if key in actual:
+                # Several findings at one location: keep the worst per directory.
+                old, detail = actual[key]
+                levels = {
+                    d: "error"
+                    if "error" in (old[d], levels[d])
+                    else old[d] or levels[d]
+                    for d in levels
+                }
+                actual[key] = (levels, f"{detail}; {finding['detail']}")
+            else:
+                actual[key] = (levels, finding["detail"])
             seen.update(
                 (finding["rule"], e["directory"], e["summary"])
                 for e in finding.get("directories", [])
@@ -1179,6 +1192,9 @@ def run_directories(out: Path, timeout: float, jobs: int) -> int:
                 sections["unexpected"].append(
                     f"{name}: {key[0]} {key[1]} {levels}{was} detail={detail!r}"
                 )
+        if note:
+            # A partial listing can't show that an expected finding is gone.
+            continue
         for key in sorted(expected.keys() - actual.keys()):
             sections["missing"].append(f"{name}: {key[0]} {key[1]} {expected[key]}")
     for rule in catalogue:

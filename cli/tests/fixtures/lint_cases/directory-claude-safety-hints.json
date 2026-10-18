@@ -404,6 +404,40 @@
     "openai": null,
     "muse": null
    }
+  },
+  {
+   "name": "destructive-without-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
   }
  ]
 }

@@ -1479,6 +1479,41 @@
     "openai": null,
     "muse": null
    }
+  },
+  {
+   "name": "best-matching-provider",
+   "spec": {
+    "tools": [
+     {
+      "name": "find_provider",
+      "title": "Find provider",
+      "description": "Returns the best matching provider for the user.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
   }
  ]
 }

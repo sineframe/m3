@@ -14,6 +14,7 @@ import binascii
 import re
 import unicodedata
 from collections.abc import Iterator
+from itertools import pairwise
 from typing import Any
 
 from .collect import Snapshot
@@ -42,6 +43,9 @@ IRREVERSIBLE_VERBS = frozenset(
 # Claude's sentence covers tools that "modify or delete data".
 DELETE_VERBS = frozenset("delete remove drop purge erase destroy overwrite".split())
 RESTORE_PLACES = frozenset({"trash", "spam", "bin", "archive"})
+# Leading words that are as often nouns ("post_list", "set_members"): with a
+# verb right after them, the second word is the action.
+NOUN_LIKE = frozenset("post set list query view check count show".split())
 
 HTTP_SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 HTTP_UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -65,10 +69,13 @@ QUERY_PHRASE = re.compile(
     re.IGNORECASE,
 )
 _URL = re.compile(r"https?://\S")
-_API = re.compile(r"\bAPI\b")
+_API = re.compile(r"\bAPIs?\b")
 # Matched against the text just before "API", so the search stays linear.
-_API_NAME = re.compile(
-    r"\b[A-Z][\w.&+-]*(?: [A-Z][\w.&+-]*){0,3} (?:REST |Web |GraphQL |HTTP |Admin )?$"
+_API_NAME = re.compile(r"(?:\b[A-Z][\w.&+-]*(?:['\u2019]s)? ){1,4}$")
+# Capitalised words that describe an API without naming it.
+_GENERIC_API_WORDS = frozenset(
+    "the this that a an our your its their rest web graphql http https json "
+    "admin public private internal open".split()
 )
 
 
@@ -77,10 +84,15 @@ def _names_api(text: str) -> bool:
 
     if _URL.search(text):
         return True
-    return any(
-        _API_NAME.search(text[max(0, m.start() - 80) : m.start()])
-        for m in _API.finditer(text)
-    )
+    for m in _API.finditer(text):
+        name = _API_NAME.search(text[max(0, m.start() - 80) : m.start()])
+        words = name.group(0).split() if name else []
+        if any(
+            re.sub(r"['\u2019]s$", "", w).lower() not in _GENERIC_API_WORDS
+            for w in words
+        ):
+            return True
+    return False
 
 
 HISTORY_NAMES = frozenset(
@@ -153,17 +165,20 @@ STEERING: dict[str, tuple[re.Pattern[str], ...]] = {
         r"\bregardless of what the user (?:says|asks|wants)\b",
     ),
     "promotion": _phrases(
-        r"(?<![\w#])(?:the )?(?:best|#1|number one|most accurate|most reliable|most trusted|leading) (?:\w+ ){0,2}(?:tool|source|service|provider)s?\b",
+        r"(?<![\w#])(?:the )?(?:best|#1|number one|most accurate|most reliable|most trusted|leading) (?!(?:matching|match|fit|fitting|available|possible|suited)\b)(?:\w+ ){0,2}(?:tool|source|service|provider)s?\b",
     ),
 }
 
+# Between the verb and what it moves: determiners and amounts only, so "send
+# an email with a cash flow report" is not money movement.
+_AMOUNT = r"(?:(?:the|a|an|some|your|their|our|my|\$?[\d,.]+|usd|eur|gbp) ){0,2}"
 MONEY_MOVEMENT = _phrases(
-    r"\b(?:transfer|send|wire|move|withdraw|deposit) (?:\w+ ){0,3}?(?:money|funds|cash|crypto(?:currency)?|bitcoin|btc|ether|eth|usdc|stablecoins?)\b",
+    rf"\b(?:transfer|send|wire|move|withdraw|deposit) {_AMOUNT}(?:money|funds|cash|crypto(?:currency)?|bitcoin|btc|ether|eth|usdc|stablecoins?)\b",
     r"\b(?:initiate|create|make|execute|submit|send) (?:an? |the )?(?:\w+ )?(?:payout|wire transfer|bank transfer|money transfer|ach transfer)s?\b",
 )
 TRADING = _phrases(
     r"\b(?:place|submit|execute|create) (?:an? |the )?(?:\w+ ){0,2}?(?:trades?|stock orders?|market orders?|limit orders?|buy orders?|sell orders?)\b",
-    r"\b(?:buy|sell) (?:\w+ ){0,2}?(?:shares|stocks?|options contracts?|crypto(?:currency)?|bitcoin|etfs?)\b",
+    rf"\b(?:buy|sell) {_AMOUNT}(?:shares|stocks|options contracts?|crypto(?:currency)?|bitcoin|etfs?)\b",
 )
 AI_MEDIA = _phrases(
     r"\bgenerat(?:e|es|ing) (?:an? |the )?(?:\w+ ){0,2}?(?:images?|videos?|audio|music|songs?|voiceovers?|voices?|speech|photos?|illustrations?)\b",
@@ -172,7 +187,9 @@ AI_MEDIA = _phrases(
 # Claude excludes media made "through AI models"; without a sign of a model the
 # phrase may be a QR code or a thumbnail.
 AI_CONTEXT = re.compile(
-    r"\b(?:AI|model|prompt|diffusion|DALL-E|Midjourney|Imagen|Sora|text[- ]to[- ]\w+)\b",
+    r"\b(?:AI|generative|neural|diffusion|DALL-E|Midjourney|Imagen|Sora"
+    r"|text[- ]to[- ]\w+|(?:image|video|audio|speech|language) models?"
+    r"|from (?:a |the |your )?(?:text )?prompt)\b",
     re.IGNORECASE,
 )
 DESIGN_CONTEXT = re.compile(
@@ -273,7 +290,9 @@ def _check_claude_hints(snapshot: Snapshot) -> Iterator[Hit]:
         )
         if read_only is not True and not isinstance(destructive, bool):
             variant = "no-applicable"
-        elif not isinstance(read_only, bool) or not isinstance(destructive, bool):
+        elif not isinstance(read_only, bool):
+            variant = "read-only-undeclared"
+        elif not isinstance(destructive, bool):
             variant = "one-declared"
         elif read_only is False and destructive is False:
             variant = "write-not-destructive"
@@ -304,41 +323,55 @@ def _check_contradictory_hints(snapshot: Snapshot) -> Iterator[Hit]:
             )
 
 
+def _other_action(words: list[str], verbs: frozenset[str]) -> bool:
+    """True when the name's action may be a later verb: a noun-like first word
+    followed by a verb ("post_list"), or verbs joined ("get_or_create")."""
+
+    if len(words) > 1 and words[0] in NOUN_LIKE and words[1] in verbs:
+        return True
+    return any(a in ("or", "and") and b in verbs for a, b in pairwise(words[1:]))
+
+
 def _check_name_hints(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
         name = tool.get("name")
         if not isinstance(name, str):
             continue
         title = _title(tool)
-        words = _tokens(name) + (_tokens(title) if title else [])
-        leads = [
-            ("name", _tokens(name)[:1]),
-            ("title", _tokens(title)[:1] if title else []),
-        ]
+        leads = [("name", _tokens(name)), ("title", _tokens(title) if title else [])]
         annotations = _annotations(tool)
         read_only = annotations.get("readOnlyHint")
         destructive = annotations.get("destructiveHint")
         variants: set[str] = set()
         details: list[str] = []
-        same_verb = leads[0][1] == leads[1][1]
-        for field, lead in leads:
-            if not lead or (field == "title" and same_verb):
+        same_verb = leads[0][1][:1] == leads[1][1][:1]
+        for field, words in leads:
+            if not words or (field == "title" and same_verb):
                 continue
             field = "name and title" if same_verb else field
-            verb = lead[0]
-            others = set(words) - {verb}
-            # "Remove from Trash" restores the item; it deletes nothing.
-            restores = verb == "remove" and bool(others & RESTORE_PLACES)
-            if verb in WRITE_VERBS and read_only is True and not others & READ_VERBS:
+            verb = words[0]
+            # "Remove message from Trash" restores the item; it deletes nothing.
+            restores = verb == "remove" and any(
+                a == "from" and b in RESTORE_PLACES for a, b in pairwise(words)
+            )
+            if (
+                verb in WRITE_VERBS
+                and read_only is True
+                and not _other_action(words, READ_VERBS)
+            ):
                 variants.add("write-marked-read")
                 details.append(f"{field} starts with {verb!r}; readOnlyHint true")
-            if verb in READ_VERBS and destructive is True and not others & WRITE_VERBS:
+            if (
+                verb in READ_VERBS
+                and destructive is True
+                and not _other_action(words, WRITE_VERBS)
+            ):
                 variants.add("read-marked-destructive")
                 details.append(f"{field} starts with {verb!r}; destructiveHint true")
             if (
                 verb in IRREVERSIBLE_VERBS
                 and destructive is False
-                and not others & READ_VERBS
+                and not _other_action(words, READ_VERBS)
                 and not restores
             ):
                 variants.add("irreversible-not-destructive")
@@ -516,7 +549,12 @@ def _check_query_docs(snapshot: Snapshot) -> Iterator[Hit]:
             key in METHOD_NAMES and _takes_http_methods(name, properties[name])
             for key, name in names.items()
         )
-        anchored = http_method or bool(names.keys() & FREEFORM_NAMES)
+        anchored = http_method or any(
+            key in FREEFORM_NAMES
+            and "enum" not in properties[name]
+            and "const" not in properties[name]
+            for key, name in names.items()
+        )
         query_phrase = bool(QUERY_PHRASE.search(description))
         freeform = []
         for key, name in names.items():
@@ -570,9 +608,14 @@ _SUBDIVISIONS = tuple(
     for code in ("gbeng", "gbsct", "gbwls")
 )
 _CANCEL_TAG = "\U000e007f"
-_BIDI = frozenset("‪‫‬‭‮⁦⁧⁨⁩")
-_ZERO_WIDTH = frozenset("​⁠﻿")
-_JOINERS = frozenset("‌‍")
+_BIDI = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+# Invisible characters with no use in tool text: zero-width space, word
+# joiner, invisible math operators, Mongolian vowel separator, Hangul fillers.
+_ZERO_WIDTH = frozenset(
+    "\u200b\u2060\u2061\u2062\u2063\u2064\u180e\u115f\u1160\u3164\uffa0\ufeff"
+)
+# Joiners and direction marks, legitimate between non-ASCII letters.
+_JOINERS = frozenset("\u200c\u200d\u200e\u200f\u061c")
 _BASE64 = re.compile(r"[A-Za-z0-9+/_-]{80,}={0,2}")
 _WHITESPACE = re.compile(r"(?:\r?\n){50,}|[ \t]{200,}")
 
@@ -601,7 +644,7 @@ def _invisible(text: str) -> list[str]:
     for i, char in enumerate(text):
         before = text[i - 1] if i else ""
         after = text[i + 1] if i + 1 < len(text) else ""
-        if char in _BIDI or (char in _ZERO_WIDTH and not (char == "﻿" and i == 0)):
+        if char in _BIDI or (char in _ZERO_WIDTH and not (char == "\ufeff" and i == 0)):
             found.append(char)
         elif char in _JOINERS and any(
             not c or c.isascii() or c.isspace() for c in (before, after)
@@ -845,6 +888,12 @@ _DESCRIPTION_EFFECTS = (
     ),
 )
 
+# Omitting a description fixes the harness finding but not the directory one.
+SHARED_DIRECTORY_FIXES: dict[str, str] = {
+    "tool-description-not-string": "Make the description a string that says what "
+    "the tool does and when to use it.",
+}
+
 SHARED_DIRECTORY_EFFECTS: dict[str, tuple[DirectoryEffect, ...]] = {
     "description-missing": _DESCRIPTION_EFFECTS,
     "tool-description-not-string": _DESCRIPTION_EFFECTS,
@@ -916,6 +965,16 @@ DIRECTORY_RULES: tuple[Rule, ...] = (
                 "claude",
                 "warning",
                 "claude-tool-annotations",
+                "may be read-only without readOnlyHint: true",
+                "destructiveHint is declared but readOnlyHint is not. If the tool "
+                "only reads, Claude's applicable hint (readOnlyHint: true) is "
+                "missing; if it writes, the declared destructiveHint applies.",
+                when=("read-only-undeclared",),
+            ),
+            _e(
+                "claude",
+                "warning",
+                "claude-tool-annotations",
                 "may need destructiveHint: true, or readOnlyHint: true if it only reads",
                 "readOnlyHint false says the tool modifies data, and Claude asks "
                 "for destructiveHint: true on tools that modify data. Whether an "
@@ -935,6 +994,11 @@ DIRECTORY_RULES: tuple[Rule, ...] = (
             (
                 "one-declared",
                 'Declare both "readOnlyHint" and "destructiveHint" as booleans.',
+            ),
+            (
+                "read-only-undeclared",
+                'Set "readOnlyHint": true if this tool only reads, otherwise '
+                '"readOnlyHint": false.',
             ),
             (
                 "write-not-destructive",

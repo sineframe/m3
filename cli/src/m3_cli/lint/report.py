@@ -122,7 +122,11 @@ def build_report(
             "location": f.hit.location,
             "detail": f.hit.detail,
             "effects": [_effect(effect) for effect in f.effects],
-            "fix": f.rule.fix_for(f.hit),
+            "fix": (
+                f.rule.directory_fix
+                if f.directory_effects and f.rule.directory_fix
+                else f.rule.fix_for(f.hit)
+            ),
         }
         if directories:
             row["directories"] = [_directory_effect(e) for e in f.directory_effects]

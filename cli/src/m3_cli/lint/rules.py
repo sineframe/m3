@@ -84,6 +84,8 @@ class Rule:
     # Variant-specific fixes, keyed by variant or by the part before ":" in
     # "kind:scope" variants; a hit whose variants have none uses `fix`.
     fixes: tuple[tuple[str, str], ...] = ()
+    # Used instead of `fix` when the finding has directory effects.
+    directory_fix: str | None = None
 
     def fix_for(self, hit: Hit) -> str:
         chosen = dict(self.fixes)

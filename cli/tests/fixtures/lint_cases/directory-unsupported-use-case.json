@@ -391,6 +391,146 @@
     "openai": null,
     "muse": null
    }
+  },
+  {
+   "name": "email-with-cash-flow-report",
+   "spec": {
+    "tools": [
+     {
+      "name": "send_report",
+      "title": "Send report",
+      "description": "Send an email with a cash flow report.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "sell-old-stock-items",
+   "spec": {
+    "tools": [
+     {
+      "name": "clear_inventory",
+      "title": "Clear inventory",
+      "description": "Mark items to sell old stock items at a discount.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "thumbnail-in-prompt",
+   "spec": {
+    "tools": [
+     {
+      "name": "make_thumbnail",
+      "title": "Make thumbnail",
+      "description": "Generate a thumbnail image of the page named in the prompt.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "send-the-funds",
+   "spec": {
+    "tools": [
+     {
+      "name": "pay_out",
+      "title": "Pay out",
+      "description": "Send the funds to the payee.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": "warning",
+    "muse": "warning"
+   }
   }
  ]
 }

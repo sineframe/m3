@@ -7,7 +7,11 @@ from dataclasses import replace
 
 from .collect import Snapshot
 from .directories import Directory, DirectoryEffect
-from .directory_rules import DIRECTORY_RULES, SHARED_DIRECTORY_EFFECTS
+from .directory_rules import (
+    DIRECTORY_RULES,
+    SHARED_DIRECTORY_EFFECTS,
+    SHARED_DIRECTORY_FIXES,
+)
 from .rules import (
     HARNESS_RULES,
     SEVERITY,
@@ -21,7 +25,11 @@ from .versions import Target
 
 RULES: tuple[Rule, ...] = (
     *(
-        replace(rule, directory_effects=SHARED_DIRECTORY_EFFECTS[rule.id])
+        replace(
+            rule,
+            directory_effects=SHARED_DIRECTORY_EFFECTS[rule.id],
+            directory_fix=SHARED_DIRECTORY_FIXES.get(rule.id),
+        )
         if rule.id in SHARED_DIRECTORY_EFFECTS
         else rule
         for rule in HARNESS_RULES
