@@ -1,0 +1,1514 @@
+{
+ "rule": "codex-schema-compaction",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "properties": {
+        "a": {
+         "description": {
+          "$gen": "str",
+          "char": "x",
+          "n": 4891
+         },
+         "type": "string"
+        },
+        "b": {
+         "enum": [
+          "p",
+          "q"
+         ],
+         "type": "string"
+        }
+       },
+       "type": "object"
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "codex": "degraded"
+   }
+  },
+  {
+   "name": "boundary-5000",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "properties": {
+        "a": {
+         "description": {
+          "$gen": "str",
+          "char": "x",
+          "n": 4890
+         },
+         "type": "string"
+        },
+        "b": {
+         "enum": [
+          "p",
+          "q"
+         ],
+         "type": "string"
+        }
+       },
+       "type": "object"
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
+   "name": "nothing-to-compact",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "p0": {
+         "type": "string"
+        },
+        "p1": {
+         "type": "string"
+        },
+        "p2": {
+         "type": "string"
+        },
+        "p3": {
+         "type": "string"
+        },
+        "p4": {
+         "type": "string"
+        },
+        "p5": {
+         "type": "string"
+        },
+        "p6": {
+         "type": "string"
+        },
+        "p7": {
+         "type": "string"
+        },
+        "p8": {
+         "type": "string"
+        },
+        "p9": {
+         "type": "string"
+        },
+        "p10": {
+         "type": "string"
+        },
+        "p11": {
+         "type": "string"
+        },
+        "p12": {
+         "type": "string"
+        },
+        "p13": {
+         "type": "string"
+        },
+        "p14": {
+         "type": "string"
+        },
+        "p15": {
+         "type": "string"
+        },
+        "p16": {
+         "type": "string"
+        },
+        "p17": {
+         "type": "string"
+        },
+        "p18": {
+         "type": "string"
+        },
+        "p19": {
+         "type": "string"
+        },
+        "p20": {
+         "type": "string"
+        },
+        "p21": {
+         "type": "string"
+        },
+        "p22": {
+         "type": "string"
+        },
+        "p23": {
+         "type": "string"
+        },
+        "p24": {
+         "type": "string"
+        },
+        "p25": {
+         "type": "string"
+        },
+        "p26": {
+         "type": "string"
+        },
+        "p27": {
+         "type": "string"
+        },
+        "p28": {
+         "type": "string"
+        },
+        "p29": {
+         "type": "string"
+        },
+        "p30": {
+         "type": "string"
+        },
+        "p31": {
+         "type": "string"
+        },
+        "p32": {
+         "type": "string"
+        },
+        "p33": {
+         "type": "string"
+        },
+        "p34": {
+         "type": "string"
+        },
+        "p35": {
+         "type": "string"
+        },
+        "p36": {
+         "type": "string"
+        },
+        "p37": {
+         "type": "string"
+        },
+        "p38": {
+         "type": "string"
+        },
+        "p39": {
+         "type": "string"
+        },
+        "p40": {
+         "type": "string"
+        },
+        "p41": {
+         "type": "string"
+        },
+        "p42": {
+         "type": "string"
+        },
+        "p43": {
+         "type": "string"
+        },
+        "p44": {
+         "type": "string"
+        },
+        "p45": {
+         "type": "string"
+        },
+        "p46": {
+         "type": "string"
+        },
+        "p47": {
+         "type": "string"
+        },
+        "p48": {
+         "type": "string"
+        },
+        "p49": {
+         "type": "string"
+        },
+        "p50": {
+         "type": "string"
+        },
+        "p51": {
+         "type": "string"
+        },
+        "p52": {
+         "type": "string"
+        },
+        "p53": {
+         "type": "string"
+        },
+        "p54": {
+         "type": "string"
+        },
+        "p55": {
+         "type": "string"
+        },
+        "p56": {
+         "type": "string"
+        },
+        "p57": {
+         "type": "string"
+        },
+        "p58": {
+         "type": "string"
+        },
+        "p59": {
+         "type": "string"
+        },
+        "p60": {
+         "type": "string"
+        },
+        "p61": {
+         "type": "string"
+        },
+        "p62": {
+         "type": "string"
+        },
+        "p63": {
+         "type": "string"
+        },
+        "p64": {
+         "type": "string"
+        },
+        "p65": {
+         "type": "string"
+        },
+        "p66": {
+         "type": "string"
+        },
+        "p67": {
+         "type": "string"
+        },
+        "p68": {
+         "type": "string"
+        },
+        "p69": {
+         "type": "string"
+        },
+        "p70": {
+         "type": "string"
+        },
+        "p71": {
+         "type": "string"
+        },
+        "p72": {
+         "type": "string"
+        },
+        "p73": {
+         "type": "string"
+        },
+        "p74": {
+         "type": "string"
+        },
+        "p75": {
+         "type": "string"
+        },
+        "p76": {
+         "type": "string"
+        },
+        "p77": {
+         "type": "string"
+        },
+        "p78": {
+         "type": "string"
+        },
+        "p79": {
+         "type": "string"
+        },
+        "p80": {
+         "type": "string"
+        },
+        "p81": {
+         "type": "string"
+        },
+        "p82": {
+         "type": "string"
+        },
+        "p83": {
+         "type": "string"
+        },
+        "p84": {
+         "type": "string"
+        },
+        "p85": {
+         "type": "string"
+        },
+        "p86": {
+         "type": "string"
+        },
+        "p87": {
+         "type": "string"
+        },
+        "p88": {
+         "type": "string"
+        },
+        "p89": {
+         "type": "string"
+        },
+        "p90": {
+         "type": "string"
+        },
+        "p91": {
+         "type": "string"
+        },
+        "p92": {
+         "type": "string"
+        },
+        "p93": {
+         "type": "string"
+        },
+        "p94": {
+         "type": "string"
+        },
+        "p95": {
+         "type": "string"
+        },
+        "p96": {
+         "type": "string"
+        },
+        "p97": {
+         "type": "string"
+        },
+        "p98": {
+         "type": "string"
+        },
+        "p99": {
+         "type": "string"
+        },
+        "p100": {
+         "type": "string"
+        },
+        "p101": {
+         "type": "string"
+        },
+        "p102": {
+         "type": "string"
+        },
+        "p103": {
+         "type": "string"
+        },
+        "p104": {
+         "type": "string"
+        },
+        "p105": {
+         "type": "string"
+        },
+        "p106": {
+         "type": "string"
+        },
+        "p107": {
+         "type": "string"
+        },
+        "p108": {
+         "type": "string"
+        },
+        "p109": {
+         "type": "string"
+        },
+        "p110": {
+         "type": "string"
+        },
+        "p111": {
+         "type": "string"
+        },
+        "p112": {
+         "type": "string"
+        },
+        "p113": {
+         "type": "string"
+        },
+        "p114": {
+         "type": "string"
+        },
+        "p115": {
+         "type": "string"
+        },
+        "p116": {
+         "type": "string"
+        },
+        "p117": {
+         "type": "string"
+        },
+        "p118": {
+         "type": "string"
+        },
+        "p119": {
+         "type": "string"
+        },
+        "p120": {
+         "type": "string"
+        },
+        "p121": {
+         "type": "string"
+        },
+        "p122": {
+         "type": "string"
+        },
+        "p123": {
+         "type": "string"
+        },
+        "p124": {
+         "type": "string"
+        },
+        "p125": {
+         "type": "string"
+        },
+        "p126": {
+         "type": "string"
+        },
+        "p127": {
+         "type": "string"
+        },
+        "p128": {
+         "type": "string"
+        },
+        "p129": {
+         "type": "string"
+        },
+        "p130": {
+         "type": "string"
+        },
+        "p131": {
+         "type": "string"
+        },
+        "p132": {
+         "type": "string"
+        },
+        "p133": {
+         "type": "string"
+        },
+        "p134": {
+         "type": "string"
+        },
+        "p135": {
+         "type": "string"
+        },
+        "p136": {
+         "type": "string"
+        },
+        "p137": {
+         "type": "string"
+        },
+        "p138": {
+         "type": "string"
+        },
+        "p139": {
+         "type": "string"
+        },
+        "p140": {
+         "type": "string"
+        },
+        "p141": {
+         "type": "string"
+        },
+        "p142": {
+         "type": "string"
+        },
+        "p143": {
+         "type": "string"
+        },
+        "p144": {
+         "type": "string"
+        },
+        "p145": {
+         "type": "string"
+        },
+        "p146": {
+         "type": "string"
+        },
+        "p147": {
+         "type": "string"
+        },
+        "p148": {
+         "type": "string"
+        },
+        "p149": {
+         "type": "string"
+        },
+        "p150": {
+         "type": "string"
+        },
+        "p151": {
+         "type": "string"
+        },
+        "p152": {
+         "type": "string"
+        },
+        "p153": {
+         "type": "string"
+        },
+        "p154": {
+         "type": "string"
+        },
+        "p155": {
+         "type": "string"
+        },
+        "p156": {
+         "type": "string"
+        },
+        "p157": {
+         "type": "string"
+        },
+        "p158": {
+         "type": "string"
+        },
+        "p159": {
+         "type": "string"
+        },
+        "p160": {
+         "type": "string"
+        },
+        "p161": {
+         "type": "string"
+        },
+        "p162": {
+         "type": "string"
+        },
+        "p163": {
+         "type": "string"
+        },
+        "p164": {
+         "type": "string"
+        },
+        "p165": {
+         "type": "string"
+        },
+        "p166": {
+         "type": "string"
+        },
+        "p167": {
+         "type": "string"
+        },
+        "p168": {
+         "type": "string"
+        },
+        "p169": {
+         "type": "string"
+        },
+        "p170": {
+         "type": "string"
+        },
+        "p171": {
+         "type": "string"
+        },
+        "p172": {
+         "type": "string"
+        },
+        "p173": {
+         "type": "string"
+        },
+        "p174": {
+         "type": "string"
+        },
+        "p175": {
+         "type": "string"
+        },
+        "p176": {
+         "type": "string"
+        },
+        "p177": {
+         "type": "string"
+        },
+        "p178": {
+         "type": "string"
+        },
+        "p179": {
+         "type": "string"
+        },
+        "p180": {
+         "type": "string"
+        },
+        "p181": {
+         "type": "string"
+        },
+        "p182": {
+         "type": "string"
+        },
+        "p183": {
+         "type": "string"
+        },
+        "p184": {
+         "type": "string"
+        },
+        "p185": {
+         "type": "string"
+        },
+        "p186": {
+         "type": "string"
+        },
+        "p187": {
+         "type": "string"
+        },
+        "p188": {
+         "type": "string"
+        },
+        "p189": {
+         "type": "string"
+        },
+        "p190": {
+         "type": "string"
+        },
+        "p191": {
+         "type": "string"
+        },
+        "p192": {
+         "type": "string"
+        },
+        "p193": {
+         "type": "string"
+        },
+        "p194": {
+         "type": "string"
+        },
+        "p195": {
+         "type": "string"
+        },
+        "p196": {
+         "type": "string"
+        },
+        "p197": {
+         "type": "string"
+        },
+        "p198": {
+         "type": "string"
+        },
+        "p199": {
+         "type": "string"
+        },
+        "p200": {
+         "type": "string"
+        },
+        "p201": {
+         "type": "string"
+        },
+        "p202": {
+         "type": "string"
+        },
+        "p203": {
+         "type": "string"
+        },
+        "p204": {
+         "type": "string"
+        },
+        "p205": {
+         "type": "string"
+        },
+        "p206": {
+         "type": "string"
+        },
+        "p207": {
+         "type": "string"
+        },
+        "p208": {
+         "type": "string"
+        },
+        "p209": {
+         "type": "string"
+        },
+        "p210": {
+         "type": "string"
+        },
+        "p211": {
+         "type": "string"
+        },
+        "p212": {
+         "type": "string"
+        },
+        "p213": {
+         "type": "string"
+        },
+        "p214": {
+         "type": "string"
+        },
+        "p215": {
+         "type": "string"
+        },
+        "p216": {
+         "type": "string"
+        },
+        "p217": {
+         "type": "string"
+        },
+        "p218": {
+         "type": "string"
+        },
+        "p219": {
+         "type": "string"
+        },
+        "p220": {
+         "type": "string"
+        },
+        "p221": {
+         "type": "string"
+        },
+        "p222": {
+         "type": "string"
+        },
+        "p223": {
+         "type": "string"
+        },
+        "p224": {
+         "type": "string"
+        },
+        "p225": {
+         "type": "string"
+        },
+        "p226": {
+         "type": "string"
+        },
+        "p227": {
+         "type": "string"
+        },
+        "p228": {
+         "type": "string"
+        },
+        "p229": {
+         "type": "string"
+        },
+        "p230": {
+         "type": "string"
+        },
+        "p231": {
+         "type": "string"
+        },
+        "p232": {
+         "type": "string"
+        },
+        "p233": {
+         "type": "string"
+        },
+        "p234": {
+         "type": "string"
+        },
+        "p235": {
+         "type": "string"
+        },
+        "p236": {
+         "type": "string"
+        },
+        "p237": {
+         "type": "string"
+        },
+        "p238": {
+         "type": "string"
+        },
+        "p239": {
+         "type": "string"
+        },
+        "p240": {
+         "type": "string"
+        },
+        "p241": {
+         "type": "string"
+        },
+        "p242": {
+         "type": "string"
+        },
+        "p243": {
+         "type": "string"
+        },
+        "p244": {
+         "type": "string"
+        },
+        "p245": {
+         "type": "string"
+        },
+        "p246": {
+         "type": "string"
+        },
+        "p247": {
+         "type": "string"
+        },
+        "p248": {
+         "type": "string"
+        },
+        "p249": {
+         "type": "string"
+        },
+        "p250": {
+         "type": "string"
+        },
+        "p251": {
+         "type": "string"
+        },
+        "p252": {
+         "type": "string"
+        },
+        "p253": {
+         "type": "string"
+        },
+        "p254": {
+         "type": "string"
+        },
+        "p255": {
+         "type": "string"
+        },
+        "p256": {
+         "type": "string"
+        },
+        "p257": {
+         "type": "string"
+        },
+        "p258": {
+         "type": "string"
+        },
+        "p259": {
+         "type": "string"
+        },
+        "p260": {
+         "type": "string"
+        },
+        "p261": {
+         "type": "string"
+        },
+        "p262": {
+         "type": "string"
+        },
+        "p263": {
+         "type": "string"
+        },
+        "p264": {
+         "type": "string"
+        },
+        "p265": {
+         "type": "string"
+        },
+        "p266": {
+         "type": "string"
+        },
+        "p267": {
+         "type": "string"
+        },
+        "p268": {
+         "type": "string"
+        },
+        "p269": {
+         "type": "string"
+        },
+        "p270": {
+         "type": "string"
+        },
+        "p271": {
+         "type": "string"
+        },
+        "p272": {
+         "type": "string"
+        },
+        "p273": {
+         "type": "string"
+        },
+        "p274": {
+         "type": "string"
+        },
+        "p275": {
+         "type": "string"
+        },
+        "p276": {
+         "type": "string"
+        },
+        "p277": {
+         "type": "string"
+        },
+        "p278": {
+         "type": "string"
+        },
+        "p279": {
+         "type": "string"
+        },
+        "p280": {
+         "type": "string"
+        },
+        "p281": {
+         "type": "string"
+        },
+        "p282": {
+         "type": "string"
+        },
+        "p283": {
+         "type": "string"
+        },
+        "p284": {
+         "type": "string"
+        },
+        "p285": {
+         "type": "string"
+        },
+        "p286": {
+         "type": "string"
+        },
+        "p287": {
+         "type": "string"
+        },
+        "p288": {
+         "type": "string"
+        },
+        "p289": {
+         "type": "string"
+        },
+        "p290": {
+         "type": "string"
+        },
+        "p291": {
+         "type": "string"
+        },
+        "p292": {
+         "type": "string"
+        },
+        "p293": {
+         "type": "string"
+        },
+        "p294": {
+         "type": "string"
+        },
+        "p295": {
+         "type": "string"
+        },
+        "p296": {
+         "type": "string"
+        },
+        "p297": {
+         "type": "string"
+        },
+        "p298": {
+         "type": "string"
+        },
+        "p299": {
+         "type": "string"
+        },
+        "p300": {
+         "type": "string"
+        },
+        "p301": {
+         "type": "string"
+        },
+        "p302": {
+         "type": "string"
+        },
+        "p303": {
+         "type": "string"
+        },
+        "p304": {
+         "type": "string"
+        },
+        "p305": {
+         "type": "string"
+        },
+        "p306": {
+         "type": "string"
+        },
+        "p307": {
+         "type": "string"
+        },
+        "p308": {
+         "type": "string"
+        },
+        "p309": {
+         "type": "string"
+        },
+        "p310": {
+         "type": "string"
+        },
+        "p311": {
+         "type": "string"
+        },
+        "p312": {
+         "type": "string"
+        },
+        "p313": {
+         "type": "string"
+        },
+        "p314": {
+         "type": "string"
+        },
+        "p315": {
+         "type": "string"
+        },
+        "p316": {
+         "type": "string"
+        },
+        "p317": {
+         "type": "string"
+        },
+        "p318": {
+         "type": "string"
+        },
+        "p319": {
+         "type": "string"
+        },
+        "p320": {
+         "type": "string"
+        },
+        "p321": {
+         "type": "string"
+        },
+        "p322": {
+         "type": "string"
+        },
+        "p323": {
+         "type": "string"
+        },
+        "p324": {
+         "type": "string"
+        },
+        "p325": {
+         "type": "string"
+        },
+        "p326": {
+         "type": "string"
+        },
+        "p327": {
+         "type": "string"
+        },
+        "p328": {
+         "type": "string"
+        },
+        "p329": {
+         "type": "string"
+        },
+        "p330": {
+         "type": "string"
+        },
+        "p331": {
+         "type": "string"
+        },
+        "p332": {
+         "type": "string"
+        },
+        "p333": {
+         "type": "string"
+        },
+        "p334": {
+         "type": "string"
+        },
+        "p335": {
+         "type": "string"
+        },
+        "p336": {
+         "type": "string"
+        },
+        "p337": {
+         "type": "string"
+        },
+        "p338": {
+         "type": "string"
+        },
+        "p339": {
+         "type": "string"
+        },
+        "p340": {
+         "type": "string"
+        },
+        "p341": {
+         "type": "string"
+        },
+        "p342": {
+         "type": "string"
+        },
+        "p343": {
+         "type": "string"
+        },
+        "p344": {
+         "type": "string"
+        },
+        "p345": {
+         "type": "string"
+        },
+        "p346": {
+         "type": "string"
+        },
+        "p347": {
+         "type": "string"
+        },
+        "p348": {
+         "type": "string"
+        },
+        "p349": {
+         "type": "string"
+        },
+        "p350": {
+         "type": "string"
+        },
+        "p351": {
+         "type": "string"
+        },
+        "p352": {
+         "type": "string"
+        },
+        "p353": {
+         "type": "string"
+        },
+        "p354": {
+         "type": "string"
+        },
+        "p355": {
+         "type": "string"
+        },
+        "p356": {
+         "type": "string"
+        },
+        "p357": {
+         "type": "string"
+        },
+        "p358": {
+         "type": "string"
+        },
+        "p359": {
+         "type": "string"
+        },
+        "p360": {
+         "type": "string"
+        },
+        "p361": {
+         "type": "string"
+        },
+        "p362": {
+         "type": "string"
+        },
+        "p363": {
+         "type": "string"
+        },
+        "p364": {
+         "type": "string"
+        },
+        "p365": {
+         "type": "string"
+        },
+        "p366": {
+         "type": "string"
+        },
+        "p367": {
+         "type": "string"
+        },
+        "p368": {
+         "type": "string"
+        },
+        "p369": {
+         "type": "string"
+        },
+        "p370": {
+         "type": "string"
+        },
+        "p371": {
+         "type": "string"
+        },
+        "p372": {
+         "type": "string"
+        },
+        "p373": {
+         "type": "string"
+        },
+        "p374": {
+         "type": "string"
+        },
+        "p375": {
+         "type": "string"
+        },
+        "p376": {
+         "type": "string"
+        },
+        "p377": {
+         "type": "string"
+        },
+        "p378": {
+         "type": "string"
+        },
+        "p379": {
+         "type": "string"
+        },
+        "p380": {
+         "type": "string"
+        },
+        "p381": {
+         "type": "string"
+        },
+        "p382": {
+         "type": "string"
+        },
+        "p383": {
+         "type": "string"
+        },
+        "p384": {
+         "type": "string"
+        },
+        "p385": {
+         "type": "string"
+        },
+        "p386": {
+         "type": "string"
+        },
+        "p387": {
+         "type": "string"
+        },
+        "p388": {
+         "type": "string"
+        },
+        "p389": {
+         "type": "string"
+        },
+        "p390": {
+         "type": "string"
+        },
+        "p391": {
+         "type": "string"
+        },
+        "p392": {
+         "type": "string"
+        },
+        "p393": {
+         "type": "string"
+        },
+        "p394": {
+         "type": "string"
+        },
+        "p395": {
+         "type": "string"
+        },
+        "p396": {
+         "type": "string"
+        },
+        "p397": {
+         "type": "string"
+        },
+        "p398": {
+         "type": "string"
+        },
+        "p399": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
+   "name": "old-4001",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "properties": {
+        "a": {
+         "description": {
+          "$gen": "str",
+          "char": "x",
+          "n": 3891
+         },
+         "type": "string"
+        },
+        "b": {
+         "enum": [
+          "p",
+          "q"
+         ],
+         "type": "string"
+        }
+       },
+       "type": "object"
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex@0.134.0"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "degraded"
+   }
+  },
+  {
+   "name": "old-boundary-4000",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "properties": {
+        "a": {
+         "description": {
+          "$gen": "str",
+          "char": "x",
+          "n": 3890
+         },
+         "type": "string"
+        },
+        "b": {
+         "enum": [
+          "p",
+          "q"
+         ],
+         "type": "string"
+        }
+       },
+       "type": "object"
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex@0.134.0"
+   ],
+   "expect": "absent"
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "absent"
+  }
+ ]
+}

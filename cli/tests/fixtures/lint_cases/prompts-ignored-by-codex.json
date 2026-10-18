@@ -1,0 +1,75 @@
+{
+ "rule": "prompts-ignored-by-codex",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {},
+     "prompts": {}
+    },
+    "prompts": [
+     {
+      "name": "p"
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "codex": "advisory"
+   }
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {},
+     "prompts": {}
+    }
+   },
+   "args": [],
+   "expect": "absent"
+  }
+ ]
+}

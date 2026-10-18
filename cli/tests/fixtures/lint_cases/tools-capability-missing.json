@@ -1,0 +1,210 @@
+{
+ "rule": "tools-capability-missing",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {}
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server"
+   }
+  },
+  {
+   "name": "null",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": null
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server"
+   }
+  },
+  {
+   "name": "false",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": false
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "true",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": true
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "list",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": []
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "no-tools",
+   "spec": {
+    "capabilities": {},
+    "tools": []
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {}
+    }
+   },
+   "args": [],
+   "expect": "absent"
+  }
+ ]
+}

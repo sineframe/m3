@@ -189,6 +189,40 @@ See [cache configuration and reuse](../managed-runtimes.md#cache-location-and-pr
 and [inspection and pruning](../managed-runtimes.md#inspect-and-prune-cached-runtimes)
 for details.
 
+## `m3 lint`
+
+Check one MCP server's metadata against shapes that Claude Code or Codex
+mishandle. `m3 lint` reads only `server/discover`, `initialize`, `tools/list`,
+`prompts/list`, `resources/list`, and `resources/templates/list`. It never
+calls a tool and never contacts a model.
+
+```sh
+m3 lint https://example.com/mcp --header "Authorization: Bearer $TOKEN"
+m3 lint -- python server.py
+```
+
+Pass a streamable HTTP URL, or a stdio command after `--`, but not both.
+
+| Option | Default/effect |
+| --- | --- |
+| `--header NAME:VALUE` | HTTP header sent with every request. Repeatable; URL targets only. Values are never printed. |
+| `--harness KIND[@VERSION]` | `claude_code` or `codex`. Repeatable. Default: both, at the newest version the rule data knows. |
+| `--server-name NAME` | The name your agent configuration gives the server, used to check `mcp__<server>__<tool>` lengths. Defaults to `serverInfo.name`. |
+| `--fail-on error\|warning\|never` | `error`. |
+| `--ignore RULE_ID` | Skip a rule. Repeatable. |
+| `--timeout SECONDS` | `30`. Deadline for each request; at most 86400. The `server/discover` probe waits at most 3 seconds. |
+| `--list-rules` | Print the rule catalogue and exit without connecting. |
+| `--json` | Machine-readable report. |
+
+Each finding names the rule, the location, and every affected harness with its
+version range and impact. The impact sets the severity: `session` (every model
+request fails), `server` (all of the server's tools are lost) and `tool` (that
+tool is lost) are errors; `degraded` is a warning; `advisory` is a note.
+
+Exit status 0 means no finding at or above `--fail-on`, 1 means at least one,
+and 2 means a usage error or a server that could not be read.
+
+
 Invalid command/configuration is an operational error. Pytest failures retain
 pytest's failure exit behavior; requested upload failures can turn an otherwise
 passing CI invocation into an operational failure.

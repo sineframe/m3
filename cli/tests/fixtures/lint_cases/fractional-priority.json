@@ -1,0 +1,134 @@
+{
+ "rule": "fractional-priority",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {},
+     "resources": {}
+    },
+    "resources": [
+     {
+      "uri": "file:///a",
+      "name": "a",
+      "annotations": {
+       "priority": 0.5
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex@0.162.1"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "degraded"
+   }
+  },
+  {
+   "name": "fixed",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {},
+     "resources": {}
+    },
+    "resources": [
+     {
+      "uri": "file:///a",
+      "name": "a",
+      "annotations": {
+       "priority": 0.5
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "capabilities": {
+     "tools": {},
+     "resources": {}
+    },
+    "resources": [
+     {
+      "uri": "file:///a",
+      "name": "a",
+      "annotations": {
+       "priority": 1
+      }
+     }
+    ]
+   },
+   "args": [
+    "--harness",
+    "codex@0.162.1"
+   ],
+   "expect": "absent"
+  }
+ ]
+}

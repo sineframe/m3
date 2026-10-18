@@ -1,0 +1,98 @@
+{
+ "rule": "initialize-server-info",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "serverInfo": null
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "no-version",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "serverInfo": {
+     "name": "quirk"
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "absent"
+  }
+ ]
+}

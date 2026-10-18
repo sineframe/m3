@@ -1,0 +1,402 @@
+{
+ "rule": "instructions-too-long",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 4097
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "degraded"
+   }
+  },
+  {
+   "name": "boundary-4096",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 4096
+    }
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
+   "name": "old-2049",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 2049
+    }
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.287"
+   ],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "degraded"
+   }
+  },
+  {
+   "name": "old-boundary-2048",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 2048
+    }
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.287"
+   ],
+   "expect": "absent"
+  },
+  {
+   "name": "large-8193",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 8193
+    }
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "advisory"
+   }
+  },
+  {
+   "name": "boundary-8192",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 8192
+    }
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
+   "expect": "absent"
+  },
+  {
+   "name": "over-512k",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 524289
+    }
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "degraded"
+   }
+  },
+  {
+   "name": "multibyte-8193",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "\u20ac",
+     "n": 2731
+    }
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "advisory"
+   }
+  },
+  {
+   "name": "multibyte-boundary-8192",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "\u00e9",
+     "n": 4096
+    }
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
+   "expect": "absent"
+  },
+  {
+   "name": "lone-surrogate",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "\ud800",
+     "n": 4097
+    }
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "degraded"
+   }
+  },
+  {
+   "name": "boundary-512k",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "i",
+     "n": 524288
+    }
+   },
+   "args": [
+    "--harness",
+    "codex"
+   ],
+   "expect": "present",
+   "impacts": {
+    "codex": "advisory"
+   }
+  }
+ ]
+}

@@ -1,0 +1,156 @@
+{
+ "rule": "modern-protocol-result-fields",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "discover": "result"
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.287"
+   ],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server"
+   },
+   "oracle": {
+    "also_ok": {
+     "claude_code": [
+      "none"
+     ]
+    },
+    "reason": "rollout gate: sessions on the older MCP client never probe server/discover and stay on 2025-11-25"
+   }
+  },
+  {
+   "name": "before",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "discover": "result"
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.286"
+   ],
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "claude_code": [
+      "none"
+     ]
+    },
+    "reason": "rollout gate: sessions on the older MCP client never probe server/discover and stay on 2025-11-25"
+   }
+  },
+  {
+   "name": "fixed",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "discover": "result"
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.302"
+   ],
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "claude_code": [
+      "none"
+     ]
+    },
+    "reason": "rollout gate: sessions on the older MCP client never probe server/discover and stay on 2025-11-25"
+   }
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "discover": "error"
+   },
+   "args": [
+    "--harness",
+    "claude_code@2.1.287"
+   ],
+   "expect": "absent"
+  }
+ ]
+}

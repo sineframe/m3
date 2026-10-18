@@ -1,0 +1,149 @@
+{
+ "rule": "pagination-over-100-pages",
+ "cases": [
+  {
+   "name": "positive",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "$gen": "tools",
+      "n": 100,
+      "template": {
+       "name": "probe{i}",
+       "description": "Probe tool {i}",
+       "inputSchema": {
+        "type": "object",
+        "properties": {
+         "q": {
+          "type": "string"
+         }
+        }
+       },
+       "annotations": {
+        "readOnlyHint": true
+       }
+      }
+     }
+    ],
+    "page_size": 1
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "codex": "server"
+   }
+  },
+  {
+   "name": "boundary-100",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "$gen": "tools",
+      "n": 99,
+      "template": {
+       "name": "probe{i}",
+       "description": "Probe tool {i}",
+       "inputSchema": {
+        "type": "object",
+        "properties": {
+         "q": {
+          "type": "string"
+         }
+        }
+       },
+       "annotations": {
+        "readOnlyHint": true
+       }
+      }
+     }
+    ],
+    "page_size": 1
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
+   "name": "negative",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "$gen": "tools",
+      "n": 100,
+      "template": {
+       "name": "probe{i}",
+       "description": "Probe tool {i}",
+       "inputSchema": {
+        "type": "object",
+        "properties": {
+         "q": {
+          "type": "string"
+         }
+        }
+       },
+       "annotations": {
+        "readOnlyHint": true
+       }
+      }
+     }
+    ],
+    "page_size": 10
+   },
+   "args": [],
+   "expect": "absent"
+  }
+ ]
+}
