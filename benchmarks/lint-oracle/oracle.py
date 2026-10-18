@@ -389,7 +389,12 @@ def load_expand() -> Any:
 
 
 def cc_name(s: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9_-]", "_", s)
+    # JavaScript's regex without the u flag works on UTF-16 units, so a
+    # character outside the BMP becomes "__".
+    return "".join(
+        c if re.fullmatch(r"[a-zA-Z0-9_-]", c) else "_" * (2 if ord(c) > 0xFFFF else 1)
+        for c in s
+    )
 
 
 def cx_name(s: str) -> str:
@@ -693,10 +698,16 @@ def run_one(
         rec["verdict"] = "skipped"
         rec["note"] = "needs --real-api"
         return rec
+    # Every Claude Code run of a rule that can break the session is sent to
+    # the API, so the absent side of a threshold is tested as well.
     forward = (
         real_api
         and harness == "claude_code"
-        and (predicted == "session" or "session" in also_ok)
+        and (
+            predicted == "session"
+            or "session" in also_ok
+            or rule in ctx["session_rules"]
+        )
     )
     state = RunState(out_dir, forward)
     run_id = f"r{idx}"
@@ -803,8 +814,6 @@ def run_one(
         rec["verdict"] = "match"
     elif observed in also_ok:
         rec["verdict"] = "allowed"
-    elif predicted == "none" and observed == "degraded":
-        rec["verdict"] = "note"
     else:
         rec["verdict"] = "mismatch"
     return rec
@@ -831,12 +840,7 @@ def label(rng: dict[str, Any]) -> str:
     return f">={a}" if a else (f"<{b}" if b else "all versions")
 
 
-def coverage(
-    records: list[dict[str, Any]],
-    tested: dict[str, list[str]],
-    rules: set[str],
-    real_api: bool,
-) -> list[str]:
+def load_catalogue() -> list[dict[str, Any]] | None:
     listing = subprocess.run(
         ["uv", "run", "--project", "cli", "m3", "lint", "--list-rules", "--json"],
         cwd=REPO,
@@ -844,9 +848,19 @@ def coverage(
         text=True,
     )
     try:
-        catalogue = json.loads(listing.stdout)["rules"]
+        rules: list[dict[str, Any]] = json.loads(listing.stdout)["rules"]
     except (ValueError, KeyError):
-        return ["coverage: could not read m3 lint --list-rules --json"]
+        return None
+    return rules
+
+
+def coverage(
+    records: list[dict[str, Any]],
+    tested: dict[str, list[str]],
+    rules: set[str],
+    real_api: bool,
+    catalogue: list[dict[str, Any]],
+) -> list[str]:
     good = [
         r
         for r in records
@@ -939,13 +953,25 @@ def main() -> int:
     if not cases:
         print("oracle: no cases selected", file=sys.stderr)
         return 2
-
+    catalogue = load_catalogue()
+    if catalogue is None:
+        print("oracle: could not read m3 lint --list-rules --json", file=sys.stderr)
+        return 2
+    session_rules = {
+        rule["id"]
+        for rule in catalogue
+        if any(
+            e["harness"] == "claude_code" and e["impact"] == "session"
+            for e in rule["effects"]
+        )
+    }
     ctx = {
         "out": out,
         "proxy": Proxy(),
         "real_api": a.real_api,
         "timeout": a.timeout,
         "expand": load_expand(),
+        "session_rules": session_rules,
     }
     jobs = []
     idx = 0
@@ -1016,7 +1042,8 @@ def main() -> int:
     tested: dict[str, list[str]] = {}
     for kind, _b, v in binaries:
         tested.setdefault(kind, []).append(v)
-    for line in coverage(records, tested, {r for r, _ in cases}, a.real_api):
+    rules = {r for r, _ in cases}
+    for line in coverage(records, tested, rules, a.real_api, catalogue):
         print(line)
     print(f"report: {out / 'report.json'}")
     return 1 if counts.get("mismatch") or counts.get("invalid") else 0

@@ -8,6 +8,7 @@ and never raise on unexpected shapes; they skip what they do not understand.
 from __future__ import annotations
 
 import re
+import string
 import unicodedata
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from .schema import (
     json_depth,
     metaschema_errors,
     utf8_size,
+    utf16_len,
 )
 from .versions import HarnessKind, Target, VersionRange
 
@@ -186,6 +188,7 @@ def _strings(value: Any) -> Iterator[str]:
 # Both harnesses reject schemas this deep outright (json-depth-too-deep), so
 # checks that model recursive processing skip them.
 _DEPTH_LIMIT = 125
+_API_SCHEMA_DEPTH = 64
 
 
 def _shallow(schema: dict[str, Any]) -> bool:
@@ -296,11 +299,12 @@ def _check_tool_count(snapshot: Snapshot) -> Iterator[Hit]:
 
 def _check_listing_size(snapshot: Snapshot) -> Iterator[Hit]:
     total = snapshot.tools.total_bytes
-    wide = sum(len(s) for s in _strings(snapshot.tools.items) if not s.isascii())
+    # Claude Code counts JavaScript (UTF-16) characters.
+    wide = sum(utf16_len(s) for s in _strings(snapshot.tools.items) if not s.isascii())
     if total > 16777216 or wide > 1048576:
         yield Hit(
             "tools/list",
-            f"{total} bytes; {wide} characters in non-ASCII strings",
+            f"{total} bytes; {wide} UTF-16 units in non-ASCII strings",
         )
 
 
@@ -482,11 +486,13 @@ def _check_invalid_2020_12(snapshot: Snapshot) -> Iterator[Hit]:
         schema = _schema(tool)
         if schema is None or not _shallow(schema):
             continue
-        if "$schema" in schema and schema["$schema"] not in _DRAFT_2020_12:
-            continue
+        # The API validates against 2020-12 whatever $schema says; Claude
+        # Code's own check (which drops the tool) skips other drafts.
+        other_draft = "$schema" in schema and schema["$schema"] not in _DRAFT_2020_12
         errors = metaschema_errors(schema)
         if errors:
-            yield Hit(_where(tool), "; ".join(errors))
+            variant = "other-draft" if other_draft else "2020-12"
+            yield Hit(_where(tool), "; ".join(errors), frozenset({variant}))
 
 
 _PROPERTY_KEY = re.compile(r"[a-zA-Z0-9_.-]{1,64}", re.ASCII)
@@ -561,9 +567,9 @@ def _check_depth(snapshot: Snapshot) -> Iterator[Hit]:
         depth = json_depth(tool.get("inputSchema"))
         tool_depth = json_depth(tool)
         variants = set()
-        # The Anthropic API rejects request bodies nested more than 127
-        # levels; the schema sits three levels below the body root.
-        if depth >= _DEPTH_LIMIT:
+        # The Anthropic API accepts tool schemas nested at most 64 levels of
+        # objects and arrays.
+        if depth > _API_SCHEMA_DEPTH:
             variants.add("cc")
         # Codex (rmcp/serde_json) fails once the tool object is 125 levels deep.
         if tool_depth >= _DEPTH_LIMIT:
@@ -848,8 +854,16 @@ def _check_refs(snapshot: Snapshot) -> Iterator[Hit]:
 # --- names ---------------------------------------------------------------------
 
 
+_CC_NAME_CHARS = frozenset(string.ascii_letters + string.digits + "_-")
+
+
 def cc_name(name: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+    # Claude Code's /[^a-zA-Z0-9_-]/g has no u flag, so it replaces each
+    # UTF-16 unit: a character outside the BMP becomes "__".
+    return "".join(
+        char if char in _CC_NAME_CHARS else "_" * (2 if ord(char) > 0xFFFF else 1)
+        for char in name
+    )
 
 
 def cx_name(name: str) -> str:
@@ -871,11 +885,14 @@ def _check_name_length(snapshot: Snapshot) -> Iterator[Hit]:
         variants = set()
         if len(full) > 128:
             variants.add("over128")
+        # Codex replaces per code point, so its name can be shorter.
+        if len(codex) > 128:
+            variants.add("cx-over128")
         if len(codex) > 64:
             variants.add("over64")
         if variants:
             detail = (
-                f"full name {len(full)} chars "
+                f"full name {len(full)} chars in Claude Code, {len(codex)} in Codex "
                 f"(server name {_short(server, 60)} assumed; set --server-name)"
             )
             yield Hit(_where(tool), detail, frozenset(variants))
@@ -928,8 +945,9 @@ def _check_name_empty(snapshot: Snapshot) -> Iterator[Hit]:
 
 def _check_name_double_underscore(snapshot: Snapshot) -> Iterator[Hit]:
     for tool, name in _named(snapshot):
-        if "__" in name:
-            yield Hit(_where(tool), "name contains __")
+        if "__" in cc_name(name):
+            where = "name contains __" if "__" in name else "rewritten name contains __"
+            yield Hit(_where(tool), where)
 
 
 # --- text ----------------------------------------------------------------------
@@ -940,13 +958,14 @@ def _check_description_length(snapshot: Snapshot) -> Iterator[Hit]:
         description = tool.get("description")
         if not isinstance(description, str):
             continue
+        length = utf16_len(description)  # Claude Code counts UTF-16 units
         variants = set()
-        if len(description) > 2048:
+        if length > 2048:
             variants.add("over2048")
-        if len(description) > 4096:
+        if length > 4096:
             variants.add("over4096")
         if variants:
-            yield Hit(_where(tool), f"{len(description)} chars", frozenset(variants))
+            yield Hit(_where(tool), f"{length} UTF-16 units", frozenset(variants))
 
 
 def _check_instructions_length(snapshot: Snapshot) -> Iterator[Hit]:
@@ -954,10 +973,11 @@ def _check_instructions_length(snapshot: Snapshot) -> Iterator[Hit]:
     if not isinstance(instructions, str):
         return
     size = utf8_size(instructions)
+    length = utf16_len(instructions)  # Claude Code counts UTF-16 units
     variants = set()
-    if len(instructions) > 2048:
+    if length > 2048:
         variants.add("over2048")
-    if len(instructions) > 4096:
+    if length > 4096:
         variants.add("over4096")
     if size > 8192:
         variants.add("large")
@@ -966,7 +986,7 @@ def _check_instructions_length(snapshot: Snapshot) -> Iterator[Hit]:
     if variants:
         yield Hit(
             "initialize",
-            f"instructions {len(instructions)} chars, {size} bytes",
+            f"instructions {length} UTF-16 units, {size} bytes",
             frozenset(variants),
         )
 
@@ -999,6 +1019,14 @@ def _check_unpaired_surrogates(snapshot: Snapshot) -> Iterator[Hit]:
                 _where(tool) if isinstance(tool, dict) else f"tools/list item {index}"
             )
             yield Hit(where, "unpaired UTF-16 surrogate", frozenset({"tools"}))
+
+
+def _check_invalid_utf8(snapshot: Snapshot) -> Iterator[Hit]:
+    if snapshot.initialize_invalid_utf8:
+        yield Hit("initialize", "bytes that are not UTF-8", frozenset({"initialize"}))
+    for method, listing in _listings(snapshot):
+        if listing.invalid_utf8:
+            yield Hit(method, "bytes that are not UTF-8", frozenset({method}))
 
 
 # --- result hints ----------------------------------------------------------------
@@ -1580,6 +1608,15 @@ RULES: tuple[Rule, ...] = (
                 "T",
                 "L",
                 "Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated).",
+                when=("2020-12",),
+            ),
+            CC(
+                "2.1.216",
+                None,
+                "S",
+                "L",
+                "Claude Code skips its own check when $schema names another draft, and the Anthropic API still validates against 2020-12; every request fails.",
+                when=("other-draft",),
             ),
         ),
         "Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).",
@@ -1639,7 +1676,7 @@ RULES: tuple[Rule, ...] = (
                 None,
                 "S",
                 "L",
-                "The Anthropic API rejects request bodies nested more than 127 levels; every request fails.",
+                "The Anthropic API rejects tool schemas nested more than 64 levels of objects and arrays; every request fails.",
                 when=("cc",),
             ),
             CX(
@@ -1898,7 +1935,7 @@ RULES: tuple[Rule, ...] = (
                 "Claude Code silently drops tools whose full name exceeds 128 characters.",
                 when=("over128",),
             ),
-            CX("0.149.0", None, "D", "L", _CODEX_RENAMED, when=("over128",)),
+            CX("0.149.0", None, "D", "L", _CODEX_RENAMED, when=("cx-over128",)),
             CX(None, "0.149.0", "D", "L", _CODEX_RENAMED, when=("over64",)),
         ),
         "Keep mcp__<server>__<tool> within 128 characters (64 for older Codex).",
@@ -2124,6 +2161,31 @@ RULES: tuple[Rule, ...] = (
         ),
         "Send valid Unicode; never emit a lone \\uD800-\\uDFFF escape.",
         _check_unpaired_surrogates,
+    ),
+    Rule(
+        "invalid-utf8",
+        "message bytes that are not UTF-8",
+        "text",
+        (
+            CX(
+                None,
+                None,
+                "V",
+                "L",
+                "Codex rejects messages that are not valid UTF-8; the server does not start.",
+                when=("initialize", "tools/list"),
+            ),
+            CC(
+                None,
+                None,
+                "D",
+                "L",
+                "Claude Code replaces invalid UTF-8 bytes with U+FFFD.",
+                when=("tools/list",),
+            ),
+        ),
+        "Encode every message as UTF-8.",
+        _check_invalid_utf8,
     ),
     # result hints
     Rule(

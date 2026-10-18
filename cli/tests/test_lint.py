@@ -167,6 +167,27 @@ for line in sys.stdin:
 """
 
 
+def test_unparseable_reply_fails_fast_as_invalid(capsys, lint_spec) -> None:
+    # NaN is not JSON (Claude Code and Codex both lose the server). The reply
+    # carries this request's id, so it fails at once instead of timing out.
+    nan_tool = {
+        "name": "nan",
+        "description": "NaN maximum",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"q": {"type": "number", "maximum": float("nan")}},
+        },
+        "annotations": {"readOnlyHint": True},
+    }
+    lint_spec({"tools": [CTL, nan_tool]})
+    started = time.monotonic()
+    assert main(["lint", "--json", "--timeout", "30", "--", *SERVER]) == 1
+    assert time.monotonic() - started < 10
+    report = json.loads(capsys.readouterr().out)
+    failed = [f for f in report["findings"] if f["rule"] == "tools-list-failed"]
+    assert [f["detail"] for f in failed] == ["invalid"]
+
+
 def test_integer_literals_beyond_python_digit_limit(capsys) -> None:
     command = ["--", sys.executable, "-c", HUGE_INTEGER_SERVER]
     assert main(["lint", "--json", "--timeout", "5", *command]) == 0

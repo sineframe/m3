@@ -97,6 +97,101 @@
    "expect": "absent"
   },
   {
+   "name": "emoji",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": {
+       "$gen": "str",
+       "char": "😀",
+       "n": 2049
+      },
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "degraded"
+   }
+  },
+  {
+   "name": "emoji-boundary",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": {
+       "$gen": "str",
+       "char": "😀",
+       "n": 2048
+      },
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "absent"
+  },
+  {
    "name": "old-2049",
    "spec": {
     "tools": [

@@ -69,6 +69,79 @@
    "expect": "absent"
   },
   {
+   "name": "emoji",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "\ud83d\ude00",
+     "n": 2049
+    }
+   },
+   "args": [
+    "--harness",
+    "claude_code"
+   ],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "degraded"
+   }
+  },
+  {
+   "name": "emoji-boundary",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "instructions": {
+     "$gen": "str",
+     "char": "\ud83d\ude00",
+     "n": 2048
+    }
+   },
+   "args": [
+    "--harness",
+    "claude_code"
+   ],
+   "expect": "absent"
+  },
+  {
    "name": "old-2049",
    "spec": {
     "tools": [

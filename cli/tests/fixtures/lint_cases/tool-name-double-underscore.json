@@ -47,6 +47,51 @@
    }
   },
   {
+   "name": "emoji",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "a😀b",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "advisory"
+   }
+  },
+  {
    "name": "negative",
    "spec": {
     "tools": [

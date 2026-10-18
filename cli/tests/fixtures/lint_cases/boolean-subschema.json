@@ -197,7 +197,15 @@
     ]
    },
    "args": [],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.134.0 rewrites empty subschemas"
+   }
   }
  ]
 }

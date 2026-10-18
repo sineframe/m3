@@ -66,9 +66,12 @@
      "claude_code": [
       "session",
       "tool"
+     ],
+     "codex": [
+      "degraded"
      ]
     },
-    "reason": "rollout gate: with the gate off older behaviour applies (sent as-is, or the tool is dropped)"
+    "reason": "rollout gate: with the gate off older behaviour applies (sent as-is, or the tool is dropped); codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
    }
   },
   {
@@ -138,9 +141,12 @@
      "claude_code": [
       "session",
       "tool"
+     ],
+     "codex": [
+      "degraded"
      ]
     },
-    "reason": "rollout gate: with the gate off older behaviour applies (sent as-is, or the tool is dropped)"
+    "reason": "rollout gate: with the gate off older behaviour applies (sent as-is, or the tool is dropped); codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
    }
   },
   {
@@ -193,7 +199,15 @@
     "--harness",
     "codex"
    ],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
+   }
   },
   {
    "name": "negative",

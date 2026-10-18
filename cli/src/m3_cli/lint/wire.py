@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import signal
 import subprocess
 import threading
@@ -51,6 +52,9 @@ class Reply:
     result: Any | None
     error: dict[str, Any] | None
     size: int
+    # The message held bytes that are not UTF-8; they were decoded as U+FFFD,
+    # as Claude Code (Node) does.
+    invalid_utf8: bool = False
 
 
 class Wire(Protocol):
@@ -85,18 +89,28 @@ def _bounded_int(text: str) -> int:
     return -(10**4000) if text.startswith("-") else 10**4000
 
 
-_DECODER = json.JSONDecoder(parse_int=_bounded_int)
+def _reject_constant(name: str) -> Any:
+    # Python's json accepts NaN and Infinity; JSON, Claude Code and Codex
+    # do not, so a message carrying one is not JSON.
+    raise ValueError(f"{name} is not JSON")
 
 
-def _text(data: bytes) -> str:
+_DECODER = json.JSONDecoder(parse_int=_bounded_int, parse_constant=_reject_constant)
+
+
+def _decode(data: bytes) -> tuple[str, bool]:
+    """Text of a message and whether invalid UTF-8 had to be replaced."""
+
     # As json.loads does for bytes: detect UTF-8/16/32 and drop a BOM.
-    return data.decode(json.detect_encoding(data), "surrogatepass")
+    try:
+        return data.decode(json.detect_encoding(data), "surrogatepass"), False
+    except UnicodeDecodeError:
+        return data.decode("utf-8", "replace"), True
 
 
-def _loads(data: bytes | str) -> Any:
+def _loads(text: str) -> Any:
     """Parse JSON text like json.loads; raises ValueError for non-JSON."""
 
-    text = _text(data) if isinstance(data, bytes) else data
     try:
         value, end = _DECODER.raw_decode(text, _skip_whitespace(text, 0))
     except RecursionError:
@@ -104,6 +118,13 @@ def _loads(data: bytes | str) -> Any:
     if _skip_whitespace(text, end) != len(text):
         raise ValueError("extra data")
     return value
+
+
+def _parse(data: bytes) -> tuple[Any, bool]:
+    """Decode and parse one message; the flag marks replaced invalid UTF-8."""
+
+    text, replaced = _decode(data)
+    return _loads(text), replaced
 
 
 def _reply(message: Any, id: int, size: int) -> Reply | None:
@@ -208,14 +229,15 @@ class StdioWire:
         self._next_id += 1
         self._write(_message(method, params, id))
         deadline = time.monotonic() + timeout
+        malformed = False
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise WireError("timeout")
+                raise WireError("invalid_json" if malformed else "timeout")
             try:
                 item = self._lines.get(timeout=remaining)
             except queue.Empty:
-                raise WireError("timeout") from None
+                raise WireError("invalid_json" if malformed else "timeout") from None
             if item is _EOF:
                 self._lines.put(_EOF)
                 raise WireError("closed")
@@ -225,14 +247,21 @@ class StdioWire:
             assert isinstance(item, bytes)
             line = item.rstrip(b"\r\n")
             try:
-                message = _loads(line)
+                message, replaced = _parse(line)
             except ValueError:
-                continue  # Claude Code skips lines that are not JSON too.
+                # Claude Code skips lines that are not JSON too; but a broken
+                # reply to this request ends it rather than timing out.
+                if line.startswith(b"{"):
+                    if re.search(rb'"id"\s*:\s*%d(?![0-9])' % id, line):
+                        raise WireError("invalid_json") from None
+                    malformed = True
+                continue
             if isinstance(message, dict) and "method" in message and "id" in message:
                 self._decline(message["id"])
                 continue
             reply = _reply(message, id, len(line))
             if reply is not None:
+                reply.invalid_utf8 = replaced
                 return reply
 
     def _decline(self, id: Any) -> None:
@@ -438,18 +467,20 @@ class HttpWire:
     def _read_json(body: _DeadlineReader, id: int) -> Reply:
         data = body.read_all()
         try:
-            message = _loads(data)
+            message, replaced = _parse(data)
         except ValueError:
             raise WireError("invalid_json") from None
+        reply: Reply | None = None
         if isinstance(message, list):
-            for element, size in _batch_elements(_text(data)):
+            for element, size in _batch_elements(_decode(data)[0]):
                 reply = _reply(element, id, size)
                 if reply is not None:
-                    return reply
-            raise WireError("invalid_json")
-        reply = _reply(message, id, len(data))
+                    break
+        else:
+            reply = _reply(message, id, len(data))
         if reply is None:
             raise WireError("invalid_json")
+        reply.invalid_utf8 = replaced
         return reply
 
     @staticmethod
@@ -465,10 +496,13 @@ class HttpWire:
             data.clear()
             pending = 0
             try:
-                message = _loads(text)
+                message, replaced = _parse(text)
             except ValueError:
                 return None
-            return _reply(message, id, len(text))
+            reply = _reply(message, id, len(text))
+            if reply is not None:
+                reply.invalid_utf8 = replaced
+            return reply
 
         while True:
             raw = body.readline()

@@ -76,8 +76,15 @@ class Server:
                 handle.write(line + "\n")
 
     def send(self, message: Any) -> None:
-        sys.stdout.write(json.dumps(message, separators=(",", ":")) + "\n")
+        data = json.dumps(message, separators=(",", ":")).encode() + b"\n"
+        corrupt = self.spec.get("corrupt")
+        if corrupt:
+            # Replace each occurrence of this text with a byte that is never
+            # valid UTF-8, to test how clients decode the stream.
+            data = data.replace(corrupt.encode(), b"\xff")
         sys.stdout.flush()
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
 
     def reply(self, id: Any, result: Any = _UNSET, error: Any = None) -> None:
         if self.noise:

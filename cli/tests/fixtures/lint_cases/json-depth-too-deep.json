@@ -44,7 +44,48 @@
    }
   },
   {
-   "name": "boundary-schema-124",
+   "name": "schema-65",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "$gen": "nest",
+       "depth": 32
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "session"
+   }
+  },
+  {
+   "name": "boundary-schema-64",
    "spec": {
     "tools": [
      {
@@ -75,7 +116,7 @@
          "type": "array",
          "items": {
           "$gen": "nest",
-          "depth": 60
+          "depth": 30
          }
         }
        }
@@ -86,10 +127,7 @@
      }
     ]
    },
-   "args": [
-    "--harness",
-    "claude_code"
-   ],
+   "args": [],
    "expect": "absent"
   },
   {

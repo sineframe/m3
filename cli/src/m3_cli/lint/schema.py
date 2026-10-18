@@ -219,6 +219,13 @@ def utf8_size(text: str) -> int:
     return len(text.encode("utf-8", "surrogatepass"))
 
 
+def utf16_len(text: str) -> int:
+    """Length as JavaScript counts it (UTF-16 code units): Claude Code's
+    character limits apply to this, so an emoji counts twice."""
+
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
 def codex_normalized_size(schema: Any) -> int:
     normalized = codex_normalize(schema)
     return utf8_size(json.dumps(normalized, separators=(",", ":"), ensure_ascii=False))

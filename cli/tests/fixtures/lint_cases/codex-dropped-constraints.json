@@ -45,6 +45,14 @@
    "expect": "present",
    "impacts": {
     "codex": "advisory"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex drops the constraint keyword; reported as the advisory codex-dropped-constraints"
    }
   },
   {

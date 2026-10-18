@@ -98,6 +98,14 @@
    "expect": "present",
    "impacts": {
     "codex": "tool"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.155.0 drops minItems"
    }
   },
   {
@@ -144,7 +152,15 @@
     "--harness",
     "codex"
    ],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
+   }
   },
   {
    "name": "min-items-old",
@@ -193,7 +209,15 @@
     "--harness",
     "codex@0.150.0"
    ],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.155.0 drops minItems"
+   }
   },
   {
    "name": "negative",
@@ -239,7 +263,15 @@
     ]
    },
    "args": [],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.155.0 drops minItems"
+   }
   }
  ]
 }

@@ -88,7 +88,15 @@
     ]
    },
    "args": [],
-   "expect": "present"
+   "expect": "present",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex drops the constraint keyword; reported as the advisory codex-dropped-constraints"
+   }
   },
   {
    "name": "not-an-id",

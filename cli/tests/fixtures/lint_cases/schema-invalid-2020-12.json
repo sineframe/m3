@@ -168,9 +168,12 @@
     "also_ok": {
      "claude_code": [
       "session"
+     ],
+     "codex": [
+      "degraded"
      ]
     },
-    "reason": "rollout gate: with the gate off Claude Code sends the schema and the API rejects it"
+    "reason": "rollout gate: with the gate off Claude Code sends the schema and the API rejects it; codex: Codex drops the constraint keyword; reported as the advisory codex-dropped-constraints"
    }
   },
   {
@@ -218,7 +221,69 @@
     ]
    },
    "args": [],
-   "expect": "absent"
+   "expect": "present",
+   "impacts": {
+    "claude_code": "session"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
+   }
+  },
+  {
+   "name": "other-draft-valid",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       },
+       "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
+   }
   },
   {
    "name": "negative",

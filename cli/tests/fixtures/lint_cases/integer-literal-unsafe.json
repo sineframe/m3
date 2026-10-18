@@ -45,6 +45,14 @@
    "expect": "present",
    "impacts": {
     "claude_code": "degraded"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex drops the constraint keyword; reported as the advisory codex-dropped-constraints"
    }
   },
   {
@@ -88,7 +96,15 @@
     ]
    },
    "args": [],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex drops the constraint keyword; reported as the advisory codex-dropped-constraints"
+   }
   }
  ]
 }

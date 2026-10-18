@@ -45,6 +45,14 @@
    "expect": "present",
    "impacts": {
     "claude_code": "server"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
    }
   },
   {

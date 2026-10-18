@@ -14,6 +14,100 @@
    }
   },
   {
+   "name": "nan",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "number",
+         "maximum": NaN
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
+   "name": "infinity",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "number",
+         "maximum": -Infinity
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ]
+   },
+   "args": [],
+   "expect": "present",
+   "impacts": {
+    "claude_code": "server",
+    "codex": "server"
+   }
+  },
+  {
    "name": "negative",
    "spec": {
     "tools": [

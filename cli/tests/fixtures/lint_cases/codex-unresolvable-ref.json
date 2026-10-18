@@ -49,6 +49,14 @@
    "expect": "present",
    "impacts": {
     "codex": "degraded"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
    }
   },
   {
@@ -104,6 +112,14 @@
    "expect": "present",
    "impacts": {
     "codex": "degraded"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.134.0 rewrites $ref (the any-ref effect; this rule is otherwise judged in code mode, which the oracle cannot see)"
    }
   },
   {
@@ -154,6 +170,14 @@
    "expect": "present",
    "impacts": {
     "codex": "degraded"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
    }
   },
   {
@@ -207,6 +231,14 @@
    "expect": "present",
    "impacts": {
     "codex": "degraded"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.134.0 rewrites $ref (the any-ref effect; this rule is otherwise judged in code mode, which the oracle cannot see)"
    }
   },
   {
@@ -254,7 +286,15 @@
     ]
    },
    "args": [],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.134.0 rewrites $ref (the any-ref effect; this rule is otherwise judged in code mode, which the oracle cannot see)"
+   }
   }
  ]
 }

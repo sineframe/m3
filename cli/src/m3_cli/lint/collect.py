@@ -37,6 +37,8 @@ class ListingResult:
     error: ListingError = None
     max_result_bytes: int = 0
     total_bytes: int = 0
+    # A page held bytes that are not UTF-8 (read as U+FFFD).
+    invalid_utf8: bool = False
 
 
 @dataclass
@@ -49,6 +51,7 @@ class Snapshot:
     resources: ListingResult | None
     templates: ListingResult | None
     server_name: str
+    initialize_invalid_utf8: bool = False
 
 
 def declared(capabilities: dict[str, Any], key: str) -> bool:
@@ -90,7 +93,8 @@ class _InitializeRejected(Exception):
     """initialize got a JSON-RPC error response."""
 
 
-def _initialize(wire: Wire, timeout: float) -> dict[str, Any]:
+def _initialize(wire: Wire, timeout: float) -> tuple[dict[str, Any], bool]:
+    """The initialize result and whether it held invalid UTF-8."""
     params = {
         "protocolVersion": INITIALIZE_PROTOCOL,
         "capabilities": {},
@@ -104,7 +108,7 @@ def _initialize(wire: Wire, timeout: float) -> dict[str, Any]:
         raise _InitializeRejected
     if not isinstance(reply.result, dict):
         raise LintCollectError(_INITIALIZE_ERRORS["invalid_json"])
-    return reply.result
+    return reply.result, reply.invalid_utf8
 
 
 def _list(wire: Wire, method: str, key: str, timeout: float) -> ListingResult:
@@ -138,6 +142,7 @@ def _list(wire: Wire, method: str, key: str, timeout: float) -> ListingResult:
         listing.items.extend(page)
         listing.max_result_bytes = max(listing.max_result_bytes, reply.size)
         listing.total_bytes += reply.size
+        listing.invalid_utf8 = listing.invalid_utf8 or reply.invalid_utf8
         next_cursor = result.get("nextCursor")
         if not isinstance(next_cursor, str) or not next_cursor:
             return listing
@@ -162,7 +167,7 @@ def collect(
             wire.close()
             wire = open_wire()
         try:
-            initialize = _initialize(wire, timeout)
+            initialize, invalid_utf8 = _initialize(wire, timeout)
         except _InitializeRejected:
             if fresh:
                 raise LintCollectError(_INITIALIZE_ERRORS["http_status"]) from None
@@ -171,7 +176,7 @@ def collect(
             wire.close()
             wire = open_wire()
             try:
-                initialize = _initialize(wire, timeout)
+                initialize, invalid_utf8 = _initialize(wire, timeout)
             except _InitializeRejected:
                 raise LintCollectError(_INITIALIZE_ERRORS["http_status"]) from None
         protocol_version = initialize.get("protocolVersion")
@@ -211,4 +216,5 @@ def collect(
         resources=resources,
         templates=templates,
         server_name=server_name,
+        initialize_invalid_utf8=invalid_utf8,
     )
