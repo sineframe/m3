@@ -376,6 +376,16 @@
       "introduced": null
      },
      "summary": "A non-string description makes Claude Code reject the whole tools/list."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex rejects the tools/list when a description is neither a string nor null; none of the server's tools are available."
     }
    ],
    "fix": "Omit description or make it a string.",

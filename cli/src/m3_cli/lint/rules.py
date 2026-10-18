@@ -395,7 +395,9 @@ def _check_description_type(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
         if "description" in tool and not isinstance(tool["description"], str):
             kind = type(tool["description"]).__name__
-            yield Hit(_where(tool), f"description is {kind}")
+            # Codex accepts a null description; any other non-string fails.
+            variant = "null" if tool["description"] is None else "non-null"
+            yield Hit(_where(tool), f"description is {kind}", frozenset({variant}))
 
 
 def _check_execution(snapshot: Snapshot) -> Iterator[Hit]:
@@ -1501,6 +1503,15 @@ HARNESS_RULES: tuple[Rule, ...] = (
                 "V",
                 "L",
                 "A non-string description makes Claude Code reject the whole tools/list.",
+            ),
+            CX(
+                None,
+                None,
+                "V",
+                "L",
+                "Codex rejects the tools/list when a description is neither a string "
+                "nor null; none of the server's tools are available.",
+                when=("non-null",),
             ),
         ),
         "Omit description or make it a string.",
