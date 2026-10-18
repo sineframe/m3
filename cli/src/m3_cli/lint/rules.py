@@ -20,7 +20,7 @@ from .schema import (
     COMBINATORS,
     SAFE_INT,
     codex_normalized_size,
-    count_properties,
+    count_codex_properties,
     iter_codex_subschemas,
     iter_property_maps,
     iter_subschemas,
@@ -624,7 +624,14 @@ _ID_NAME = re.compile(r"^[iI][dD][sS]?$|_[iI][dD]$|[a-z0-9]I[dD]$")
 def _check_integer_ids(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
         names: list[str] = []
-        for _, properties in iter_property_maps(_schema(tool)):
+        schema = _schema(tool)
+        kept = {
+            pointer
+            for pointer, sub, _ in iter_codex_subschemas(schema)
+            if isinstance(sub, dict) and isinstance(sub.get("properties"), dict)
+        }
+        in_codex = False
+        for pointer, properties in iter_property_maps(schema):
             for name, prop in properties.items():
                 if not isinstance(prop, dict) or "integer" not in _types(
                     prop.get("type")
@@ -632,8 +639,10 @@ def _check_integer_ids(snapshot: Snapshot) -> Iterator[Hit]:
                     continue
                 if _ID_NAME.search(name) or prop.get("format") in ("int64", "uint64"):
                     names.append(_short(name, 40))
+                    in_codex = in_codex or pointer.removesuffix("/properties") in kept
         if names:
-            yield Hit(_where(tool), "integer " + ", ".join(names[:3]))
+            variants = frozenset({"codex"} if in_codex else ())
+            yield Hit(_where(tool), "integer " + ", ".join(names[:3]), variants)
 
 
 def _check_proto(snapshot: Snapshot) -> Iterator[Hit]:
@@ -689,7 +698,13 @@ def _check_boolean_subschema(snapshot: Snapshot) -> Iterator[Hit]:
             if isinstance(sub, bool) and position != "additionalProperties"
         ]
         if pointers:
-            yield Hit(_where(tool), ", ".join(pointers[:3]))
+            # Codex only sees booleans in the branches it keeps.
+            in_codex = any(
+                isinstance(sub, bool) and position != "additionalProperties"
+                for _, sub, position in iter_codex_subschemas(schema)
+            )
+            variants = frozenset({"codex"} if in_codex else ())
+            yield Hit(_where(tool), ", ".join(pointers[:3]), variants)
 
 
 def _check_array_items(snapshot: Snapshot) -> Iterator[Hit]:
@@ -782,7 +797,7 @@ def _check_compaction(snapshot: Snapshot) -> Iterator[Hit]:
 
 def _check_ts_size(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
-        count = count_properties(_schema(tool))
+        count = count_codex_properties(_schema(tool))
         if count > 700:
             yield Hit(_where(tool), f"{count} properties")
 
@@ -1729,6 +1744,7 @@ RULES: tuple[Rule, ...] = (
                 "A",
                 "S",
                 "Codex code mode rounds integer arguments above 2^53.",
+                when=("codex",),
             ),
         ),
         "Declare 64-bit ids as type string.",
@@ -1803,6 +1819,7 @@ RULES: tuple[Rule, ...] = (
                 "D",
                 "L",
                 'Codex turns boolean subschemas into {"type":"string"}.',
+                when=("codex",),
             ),
             CC(
                 "2.1.0",

@@ -265,8 +265,15 @@ def codex_normalized_size(schema: Any) -> int:
     return utf8_size(json.dumps(normalized, separators=(",", ":"), ensure_ascii=False))
 
 
-def count_properties(schema: Any) -> int:
-    return sum(len(properties) for _, properties in iter_property_maps(schema))
+def count_codex_properties(schema: Any) -> int:
+    """Properties Codex keeps (none from if/not/patternProperties and other
+    branches its sanitizer discards)."""
+
+    return sum(
+        len(sub["properties"])
+        for _, sub, _ in iter_codex_subschemas(schema)
+        if isinstance(sub, dict) and isinstance(sub.get("properties"), dict)
+    )
 
 
 def metaschema_errors(schema: dict[str, Any]) -> list[str]:
