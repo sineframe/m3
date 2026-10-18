@@ -219,7 +219,15 @@
     "--harness",
     "codex"
    ],
-   "expect": "absent"
+   "expect": "absent",
+   "oracle": {
+    "also_ok": {
+     "claude_code": [
+      "none"
+     ]
+    },
+    "reason": "rollout gate: Claude Code sessions on the newer MCP client (with the server/discover probe) keep the tools"
+   }
   },
   {
    "name": "additional-false",
