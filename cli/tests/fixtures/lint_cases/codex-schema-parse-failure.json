@@ -420,6 +420,14 @@
    "expect": "present",
    "impacts": {
     "codex": "tool"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex's sanitizer rewrites the schema without losing meaning (const to enum, inferred types, dropped $schema, $defs or null required)"
    }
   },
   {
@@ -524,6 +532,14 @@
    "expect": "present",
    "impacts": {
     "codex": "tool"
+   },
+   "oracle": {
+    "also_ok": {
+     "codex": [
+      "degraded"
+     ]
+    },
+    "reason": "codex: Codex before 0.140.0 rewrites a non-string $ref instead of skipping the tool"
    }
   },
   {
