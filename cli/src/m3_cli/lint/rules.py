@@ -270,8 +270,12 @@ def _check_list_changed(snapshot: Snapshot) -> Iterator[Hit]:
 
 
 def _check_multi_page(snapshot: Snapshot) -> Iterator[Hit]:
-    if snapshot.tools.pages > 1:
-        yield Hit("tools/list", f"{snapshot.tools.pages} pages")
+    tools = snapshot.tools
+    if tools.pages > 1:
+        yield Hit("tools/list", f"{tools.pages} pages")
+    elif tools.pages == 1 and tools.error is not None:
+        # The first page offered a cursor; the next page then failed.
+        yield Hit("tools/list", "more than 1 page (a later page failed)")
 
 
 def _check_over_20_pages(snapshot: Snapshot) -> Iterator[Hit]:
