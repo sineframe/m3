@@ -79,6 +79,40 @@ def iter_subschemas(
             stack.extend(reversed(_children(entry[1], entry[0])))
 
 
+# Keywords whose subschemas survive Codex's sanitizer (see CODEX_KEPT); it
+# drops the others (if/then/else, not, patternProperties, ...) unread.
+_CODEX_RETAINED = {
+    "properties",
+    "$defs",
+    "definitions",
+    "additionalProperties",
+    "items",
+    "anyOf",
+    "oneOf",
+    "allOf",
+}
+
+
+def iter_codex_subschemas(schema: Any) -> Iterator[tuple[str, Any, str]]:
+    """Like iter_subschemas, but only through branches Codex keeps, so
+    nothing inside a discarded branch is judged as Codex input."""
+
+    stack = [("", schema, "root")]
+    while stack:
+        entry = stack.pop()
+        yield entry
+        if isinstance(entry[1], dict):
+            children = [
+                child
+                for child in _children(entry[1], entry[0])
+                if child[2] in _CODEX_RETAINED
+                # A list-form items is itself the parse failure; Codex never
+                # reads its elements.
+                and not (child[2] == "items" and isinstance(entry[1]["items"], list))
+            ]
+            stack.extend(reversed(children))
+
+
 def iter_property_maps(schema: Any) -> Iterator[tuple[str, dict[str, Any]]]:
     """Yield every ``properties`` object with its JSON pointer."""
 

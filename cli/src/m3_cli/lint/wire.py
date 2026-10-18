@@ -193,6 +193,14 @@ class StdioWire:
         stdout = self._process.stdout
         assert stdout is not None
         threading.Thread(target=self._read, args=(stdout,), daemon=True).start()
+        stdin = self._process.stdin
+        assert stdin is not None
+        self._outgoing: queue.Queue[
+            tuple[bytes, threading.Event, list[bool]] | None
+        ] = queue.Queue()
+        self._write_stalled = False
+        self._write_failed = False
+        threading.Thread(target=self._write_loop, args=(stdin,), daemon=True).start()
 
     def _read(self, stdout: IO[bytes]) -> None:
         try:
@@ -212,23 +220,49 @@ class StdioWire:
             pass
         self._lines.put(_EOF)
 
-    def _write(self, data: bytes) -> None:
-        stdin = self._process.stdin
-        if stdin is None or self._closed:
-            raise WireError("closed")
+    def _write_loop(self, stdin: IO[bytes]) -> None:
+        while True:
+            item = self._outgoing.get()
+            if item is None:  # close(): EOF lets the server exit on its own
+                break
+            data, done, failed = item
+            try:
+                stdin.write(data + b"\n")
+                stdin.flush()
+            except (OSError, ValueError):
+                failed.append(True)
+            done.set()
+            if failed:
+                break
         try:
-            stdin.write(data + b"\n")
-            stdin.flush()
+            stdin.close()
         except (OSError, ValueError):
-            raise WireError("closed") from None
+            pass
+
+    def _write(self, data: bytes, deadline: float) -> None:
+        # Writes go through one thread so a server that stops reading stdin
+        # (a full pipe) costs at most the request deadline, not a hang.
+        if self._closed or self._write_failed:
+            raise WireError("closed")
+        if self._write_stalled:
+            raise WireError("timeout")
+        done = threading.Event()
+        failed: list[bool] = []
+        self._outgoing.put((data, done, failed))
+        if not done.wait(max(0.0, deadline - time.monotonic())):
+            self._write_stalled = True
+            raise WireError("timeout")
+        if failed:
+            self._write_failed = True
+            raise WireError("closed")
 
     def request(
         self, method: str, params: dict[str, Any] | None, *, timeout: float
     ) -> Reply:
         id = self._next_id
         self._next_id += 1
-        self._write(_message(method, params, id))
         deadline = time.monotonic() + timeout
+        self._write(_message(method, params, id), deadline)
         malformed = False
         while True:
             remaining = deadline - time.monotonic()
@@ -257,28 +291,28 @@ class StdioWire:
                     malformed = True
                 continue
             if isinstance(message, dict) and "method" in message and "id" in message:
-                self._decline(message["id"])
+                self._decline(message["id"], deadline)
                 continue
             reply = _reply(message, id, len(line))
             if reply is not None:
                 reply.invalid_utf8 = replaced
                 return reply
 
-    def _decline(self, id: Any) -> None:
+    def _decline(self, id: Any, deadline: float) -> None:
         response = {
             "jsonrpc": "2.0",
             "id": id,
             "error": {"code": -32601, "message": "Method not found"},
         }
         try:
-            self._write(json.dumps(response, separators=(",", ":")).encode())
+            self._write(json.dumps(response, separators=(",", ":")).encode(), deadline)
         except WireError:
             pass
 
     def notify(
         self, method: str, params: dict[str, Any] | None, *, timeout: float
     ) -> None:
-        self._write(_message(method, params, None))
+        self._write(_message(method, params, None), time.monotonic() + timeout)
 
     def set_protocol_version(self, version: str | None) -> None:
         pass
@@ -299,11 +333,10 @@ class StdioWire:
             return
         self._closed = True
         process = self._process
-        try:
-            if process.stdin is not None:
-                process.stdin.close()
-        except OSError:
-            pass
+        # stdin is closed by the writer thread after any pending write; if a
+        # write is stuck on a full pipe, the signals below end it instead of
+        # this thread waiting on the writer's lock.
+        self._outgoing.put(None)
         # stdout is left to the daemon reader: closing it while the reader is
         # blocked in readline() would wait on the reader's lock.
         for number in (None, signal.SIGTERM, getattr(signal, "SIGKILL", None)):

@@ -188,6 +188,39 @@ def test_unparseable_reply_fails_fast_as_invalid(capsys, lint_spec) -> None:
     assert [f["detail"] for f in failed] == ["invalid"]
 
 
+STALLED_STDIN_SERVER = r"""
+import json, sys, time
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    reply = {"jsonrpc": "2.0", "id": message["id"]}
+    if message["method"] == "initialize":
+        reply["result"] = {"protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "stall", "version": "1"}}
+    elif message["method"] == "tools/list":
+        reply["result"] = {"tools": [], "nextCursor": "c" * 1_000_000}
+        sys.stdout.write(json.dumps(reply) + "\n")
+        sys.stdout.flush()
+        time.sleep(60)  # never reads the 1 MB cursor echoed back
+    else:
+        reply["error"] = {"code": -32601, "message": "Method not found"}
+    sys.stdout.write(json.dumps(reply) + "\n")
+    sys.stdout.flush()
+"""
+
+
+def test_stalled_server_stdin_respects_the_deadline(capsys) -> None:
+    command = ["--", sys.executable, "-c", STALLED_STDIN_SERVER]
+    started = time.monotonic()
+    assert main(["lint", "--json", "--timeout", "1", *command]) == 1
+    assert time.monotonic() - started < 15
+    report = json.loads(capsys.readouterr().out)
+    failed = [f for f in report["findings"] if f["rule"] == "tools-list-failed"]
+    assert [f["detail"] for f in failed] == ["timeout"]
+
+
 def test_integer_literals_beyond_python_digit_limit(capsys) -> None:
     command = ["--", sys.executable, "-c", HUGE_INTEGER_SERVER]
     assert main(["lint", "--json", "--timeout", "5", *command]) == 0

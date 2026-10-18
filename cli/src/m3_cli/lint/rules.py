@@ -21,6 +21,7 @@ from .schema import (
     SAFE_INT,
     codex_normalized_size,
     count_properties,
+    iter_codex_subschemas,
     iter_property_maps,
     iter_subschemas,
     json_depth,
@@ -152,6 +153,13 @@ def _schema(tool: dict[str, Any]) -> dict[str, Any] | None:
 
 def _dict_subschemas(schema: Any) -> Iterator[tuple[str, dict[str, Any], str]]:
     for pointer, subschema, position in iter_subschemas(schema):
+        if isinstance(subschema, dict):
+            yield pointer, subschema, position
+
+
+def _codex_subschemas(schema: Any) -> Iterator[tuple[str, dict[str, Any], str]]:
+    """Dict subschemas in branches Codex keeps; Codex-only rules use these."""
+    for pointer, subschema, position in iter_codex_subschemas(schema):
         if isinstance(subschema, dict):
             yield pointer, subschema, position
 
@@ -521,7 +529,7 @@ def _codex_parse_variants(schema: dict[str, Any]) -> set[str]:
     variants: set[str] = set()
     if schema.get("type") == "null":
         variants.add("null-root")
-    for _, sub, _ in _dict_subschemas(schema):
+    for _, sub, _ in _codex_subschemas(schema):
         if isinstance(sub.get("items"), list):
             variants.add("items-list")
         required = sub.get("required")
@@ -664,7 +672,7 @@ def _check_unicode(snapshot: Snapshot) -> Iterator[Hit]:
 def _check_dropped_constraints(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
         found: set[str] = set()
-        for _, sub, _ in _dict_subschemas(_schema(tool)):
+        for _, sub, _ in _codex_subschemas(_schema(tool)):
             found.update(CODEX_CONSTRAINT_KEYWORDS.intersection(sub))
         if found:
             yield Hit(_where(tool), ", ".join(sorted(found)))
@@ -687,7 +695,7 @@ def _check_boolean_subschema(snapshot: Snapshot) -> Iterator[Hit]:
 def _check_array_items(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
         pointers: list[str] = []
-        for pointer, sub, _ in _dict_subschemas(_schema(tool)):
+        for pointer, sub, _ in _codex_subschemas(_schema(tool)):
             no_items = "items" not in sub
             if (
                 "prefixItems" in sub
@@ -714,7 +722,7 @@ def _json_type(value: Any) -> str:
 def _check_const_enum(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
         pointers: list[str] = []
-        for pointer, sub, _ in _dict_subschemas(_schema(tool)):
+        for pointer, sub, _ in _codex_subschemas(_schema(tool)):
             if "const" in sub and not isinstance(sub["const"], str):
                 pointers.append(f"{pointer or '/'} const")
             enum = sub.get("enum")
@@ -729,7 +737,7 @@ def _check_const_enum(snapshot: Snapshot) -> Iterator[Hit]:
 
 
 def _nested_objects(schema: dict[str, Any]) -> bool:
-    for pointer, sub, _ in _dict_subschemas(schema):
+    for pointer, sub, _ in _codex_subschemas(schema):
         is_object = "object" in _types(sub.get("type")) or "properties" in sub
         if is_object and pointer.count("/properties/") >= 3:
             return True
@@ -739,7 +747,7 @@ def _nested_objects(schema: dict[str, Any]) -> bool:
 def _compactable(schema: dict[str, Any]) -> bool:
     """Whether Codex compaction has anything to remove from the schema."""
 
-    for _, sub, _ in _dict_subschemas(schema):
+    for _, sub, _ in _codex_subschemas(schema):
         if any(key in sub for key in ("description", "$defs", "definitions")):
             return True
         if any(keyword in sub for keyword in COMBINATORS):
@@ -765,7 +773,7 @@ def _check_compaction(snapshot: Snapshot) -> Iterator[Hit]:
             detail += "; nested objects at depth >=3"
         if any(
             keyword in sub
-            for _, sub, _ in _dict_subschemas(schema)
+            for _, sub, _ in _codex_subschemas(schema)
             for keyword in COMBINATORS
         ):
             detail += "; anyOf/oneOf/allOf present"
@@ -803,7 +811,7 @@ def _resolve(schema: dict[str, Any], ref: str) -> tuple[bool, Any]:
 
 
 def _refs(schema: Any) -> Iterator[str]:
-    for _, sub, _ in _dict_subschemas(schema):
+    for _, sub, _ in _codex_subschemas(schema):
         if isinstance(sub.get("$ref"), str):
             yield sub["$ref"]
 
@@ -832,7 +840,7 @@ def _check_refs(snapshot: Snapshot) -> Iterator[Hit]:
             continue
         variants: set[str] = set()
         refs: list[str] = []
-        for _, sub, _ in _dict_subschemas(schema):
+        for _, sub, _ in _codex_subschemas(schema):
             if "$dynamicRef" in sub:
                 variants.add("unresolved")
             ref = sub.get("$ref")
