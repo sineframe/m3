@@ -18,6 +18,28 @@ assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 
 This checks the server response directly.
 
+## Tool metadata and response size
+
+```python
+from m3 import expect
+
+with MCPTestKit(env={}) as kit, kit.direct(server) as client:
+    tools = client.list_all_tools()
+    result = client.call_tool("search_orders", {"query": "late"})
+
+expect(tools).to_have_explicit_tool_annotations()
+expect(tools).to_have_tool_annotations("delete_*", destructive_hint=True)
+expect(result).to_have_response_size_at_most(max_bytes=20_000, max_tokens=5_000)
+```
+
+`to_have_explicit_tool_annotations` fails for every tool that has no title
+(from `title` or `annotations.title`) or leaves a hint undeclared. Hints are
+checked as the server declared them, so MCP spec defaults never count, and
+removing a hint fails the test. `to_have_tool_annotations` also fails when no
+tool name matches the pattern. The size check measures the compact JSON of
+`content` and `structuredContent` in UTF-8 bytes; `max_tokens` compares an
+estimate of characters divided by four.
+
 ## Agent evidence
 
 ```python

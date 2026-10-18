@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib as _difflib
+import fnmatch as _fnmatch
 import functools as _functools
 import inspect as _inspect
 import json as _json
@@ -242,6 +243,29 @@ def _structured(subject: _Any) -> _Any:
     if isinstance(subject, _Mapping):
         return subject
     return None
+
+
+_HINT_FIELDS = (
+    "read_only_hint",
+    "destructive_hint",
+    "idempotent_hint",
+    "open_world_hint",
+)
+
+
+def _tool_list(subject: _Any) -> tuple[_Any, ...] | None:
+    # ToolsPage / ListToolsResult expose .tools; list_all_tools() is a tuple.
+    tools = getattr(subject, "tools", subject)
+    if isinstance(tools, (str, bytes)) or not isinstance(tools, _Sequence):
+        return None
+    if not all(isinstance(getattr(tool, "name", None), str) for tool in tools):
+        return None
+    return tuple(tools)
+
+
+def _tool_title(tool: _Any) -> str | None:
+    annotations = getattr(tool, "annotations", None)
+    return getattr(tool, "title", None) or getattr(annotations, "title", None) or None
 
 
 def _observation_value(value: _Any) -> _Any:
@@ -1352,6 +1376,146 @@ class Expectation(_Generic[_SubjectT]):
         self._require(
             (len(matched) == count if count is not None else bool(matched)),
             f"trace event assertion failed for {_safe(kind, self._redaction_config)}; count={len(matched)}",
+        )
+
+    def to_have_explicit_tool_annotations(
+        self,
+        *,
+        require_title: bool = True,
+        hints: _Sequence[str] = _HINT_FIELDS,
+    ) -> None:
+        """Assert every listed tool declares a title and each hint in ``hints``.
+
+        The subject is a tool list such as ``await client.list_all_tools()``.
+        A title may come from ``Tool.title`` or ``annotations.title``. Hints are
+        checked as declared; MCP spec defaults never count as declared.
+        """
+        for hint in hints:
+            if hint not in _HINT_FIELDS:
+                raise ValueError(
+                    f"unknown hint {hint!r}; expected one of {_HINT_FIELDS}"
+                )
+        tools = _tool_list(self.subject)
+        if tools is None:
+            self._fail("subject is not a tool list")
+            return
+        if not tools:
+            self._fail("no tools listed")
+            return
+        offenders: list[str] = []
+        for tool in tools:
+            missing: list[str] = []
+            if require_title and not _tool_title(tool):
+                missing.append("title")
+            annotations = getattr(tool, "annotations", None)
+            missing.extend(
+                hint for hint in hints if getattr(annotations, hint, None) is None
+            )
+            if missing:
+                offenders.append(
+                    f"{_safe(tool.name, self._redaction_config)} ({', '.join(missing)})"
+                )
+        self._require(
+            not offenders,
+            "tools missing explicit annotations: " + "; ".join(offenders),
+        )
+
+    def to_have_tool_annotations(
+        self,
+        pattern: str,
+        *,
+        read_only_hint: bool | None = None,
+        destructive_hint: bool | None = None,
+        idempotent_hint: bool | None = None,
+        open_world_hint: bool | None = None,
+    ) -> None:
+        """Assert tools whose names match ``pattern`` declare the given hints.
+
+        ``pattern`` is a case-sensitive :mod:`fnmatch` glob such as
+        ``"delete_*"``. At least one tool must match, and an undeclared hint
+        never satisfies an expectation.
+        """
+        expected = {
+            name: value
+            for name, value in (
+                ("read_only_hint", read_only_hint),
+                ("destructive_hint", destructive_hint),
+                ("idempotent_hint", idempotent_hint),
+                ("open_world_hint", open_world_hint),
+            )
+            if value is not None
+        }
+        if not expected:
+            raise ValueError("to_have_tool_annotations requires at least one hint")
+        tools = _tool_list(self.subject)
+        if tools is None:
+            self._fail("subject is not a tool list")
+            return
+        matched = [tool for tool in tools if _fnmatch.fnmatchcase(tool.name, pattern)]
+        if not matched:
+            self._fail(
+                f"no tools match pattern {_safe(pattern, self._redaction_config)}"
+            )
+            return
+        mismatches: list[str] = []
+        for tool in matched:
+            annotations = getattr(tool, "annotations", None)
+            for hint, value in expected.items():
+                declared = getattr(annotations, hint, None)
+                if declared is not value:
+                    shown = "undeclared" if declared is None else declared
+                    mismatches.append(
+                        f"{_safe(tool.name, self._redaction_config)} "
+                        f"({hint}: expected {value}, declared {shown})"
+                    )
+        self._require(
+            not mismatches,
+            "tools not matching expected annotations: " + "; ".join(mismatches),
+        )
+
+    def to_have_response_size_at_most(
+        self, *, max_bytes: int | None = None, max_tokens: int | None = None
+    ) -> None:
+        """Assert a tool call result stays within a size budget.
+
+        Size is the UTF-8 byte length of the compact JSON form of ``content``
+        plus ``structuredContent`` (when present). ``max_tokens`` compares an
+        estimate of ``ceil(characters / 4)``, not a tokenizer count. A size
+        equal to the limit passes.
+        """
+        if max_bytes is None and max_tokens is None:
+            raise ValueError(
+                "to_have_response_size_at_most requires max_bytes or max_tokens"
+            )
+        limits = (("max_bytes", max_bytes), ("max_tokens", max_tokens))
+        for name, limit in limits:
+            if limit is not None and (
+                isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0
+            ):
+                raise ValueError(f"{name} must be a positive integer")
+        subject = self.subject
+        if not (hasattr(subject, "content") and hasattr(subject, "structured_content")):
+            self._fail("subject is not a tool call result")
+            return
+        payload: dict[str, _Any] = {"content": list(subject.content)}
+        if subject.structured_content is not None:
+            payload["structuredContent"] = subject.structured_content
+        text = _json.dumps(
+            _plain(payload),
+            separators=(",", ":"),
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        size_bytes = len(text.encode("utf-8"))
+        est_tokens = _math.ceil(len(text) / 4)
+        too_large = (max_bytes is not None and size_bytes > max_bytes) or (
+            max_tokens is not None and est_tokens > max_tokens
+        )
+        self._require(
+            not too_large,
+            f"tool response is {size_bytes} bytes (~{est_tokens} est. tokens); limit "
+            + ", ".join(f"{k}={v}" for k, v in limits if v is not None),
         )
 
     def to_eventually(

@@ -309,6 +309,39 @@ to_have_event(
 ```
 
 ```python
+to_have_explicit_tool_annotations(
+    self,
+    *,
+    require_title: bool = True,
+    hints: _Sequence[str] = ('read_only_hint', 'destructive_hint', 'idempotent_hint', 'open_world_hint'),
+) -> None
+```
+Assert every listed tool declares a title and each hint in ``hints``.
+
+```python
+to_have_tool_annotations(
+    self,
+    pattern: str,
+    *,
+    read_only_hint: bool | None = None,
+    destructive_hint: bool | None = None,
+    idempotent_hint: bool | None = None,
+    open_world_hint: bool | None = None,
+) -> None
+```
+Assert tools whose names match ``pattern`` declare the given hints.
+
+```python
+to_have_response_size_at_most(
+    self,
+    *,
+    max_bytes: int | None = None,
+    max_tokens: int | None = None,
+) -> None
+```
+Assert a tool call result stays within a size budget.
+
+```python
 to_eventually(
     self,
     matcher: _Callable[[_Any], None],

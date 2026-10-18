@@ -8,6 +8,7 @@ import pytest
 
 from m3.direct_client import ToolCallResult
 from m3.matchers import check, expect
+from m3.types import CallToolResult, ToolAnnotations, ToolInfo
 
 
 def test_text_structured_regex_negative_and_ordered_content_matchers() -> None:
@@ -89,3 +90,80 @@ def test_grouped_live_negative_assertions_are_reported_without_polling() -> None
         with check() as checks:
             checks.expect(LiveHandle()).to_not_have_text("future")
             checks.expect(LiveHandle()).to_not_have_tool_call("future")
+
+
+def _annotated(name: str, **hints: object) -> ToolInfo:
+    values = {
+        "read_only_hint": False,
+        "destructive_hint": False,
+        "idempotent_hint": True,
+        "open_world_hint": False,
+        **hints,
+    }
+    return ToolInfo(name=name, annotations=ToolAnnotations(**values))
+
+
+def test_explicit_tool_annotations_accept_annotation_title_and_list_offenders() -> None:
+    expect((_annotated("search", title="Search"),)).to_have_explicit_tool_annotations()
+
+    tools = (
+        ToolInfo(name="untitled", annotations=ToolAnnotations(read_only_hint=True)),
+        _annotated("delete_user", title="Delete", destructive_hint=None),
+    )
+    with pytest.raises(AssertionError) as caught:
+        expect(tools).to_have_explicit_tool_annotations()
+    message = str(caught.value)
+    assert (
+        '"untitled" (title, destructive_hint, idempotent_hint, open_world_hint)'
+        in message
+    )
+    assert '"delete_user" (destructive_hint)' in message
+
+    with pytest.raises(AssertionError, match="no tools listed"):
+        expect(()).to_have_explicit_tool_annotations()
+    with pytest.raises(ValueError, match="unknown hint"):
+        expect(tools).to_have_explicit_tool_annotations(hints=("bogus",))
+
+
+def test_tool_annotations_by_pattern_require_declared_matches() -> None:
+    tools = (
+        _annotated("delete_user", title="Delete", destructive_hint=True),
+        _annotated("search", title="Search"),
+    )
+    expect(tools).to_have_tool_annotations("delete_*", destructive_hint=True)
+
+    undeclared = (*tools, ToolInfo(name="delete_all"))
+    with pytest.raises(AssertionError) as caught:
+        expect(undeclared).to_have_tool_annotations("delete_*", destructive_hint=True)
+    assert '"delete_all" (destructive_hint: expected True, declared undeclared)' in str(
+        caught.value
+    )
+    assert "delete_user" not in str(caught.value)
+
+    with pytest.raises(AssertionError, match="no tools match pattern"):
+        expect(tools).to_have_tool_annotations("drop_*", destructive_hint=True)
+    with pytest.raises(ValueError, match="at least one hint"):
+        expect(tools).to_have_tool_annotations("delete_*")
+
+
+def test_response_size_limit_is_inclusive_and_never_echoes_content() -> None:
+    result = CallToolResult(content=({"type": "text", "text": "secret-body"},))
+    size = len('{"content":[{"text":"secret-body","type":"text"}]}')
+    expect(result).to_have_response_size_at_most(max_bytes=size)
+    with pytest.raises(AssertionError) as caught:
+        expect(result).to_have_response_size_at_most(max_bytes=size - 1)
+    assert f"{size} bytes" in str(caught.value)
+    assert "secret-body" not in str(caught.value)
+
+    large = CallToolResult(
+        content=({"type": "text", "text": "x" * 4000},),
+        structured_content={"rows": []},
+    )
+    with pytest.raises(AssertionError, match="limit max_tokens=500"):
+        expect(large).to_have_response_size_at_most(max_tokens=500)
+
+    for invalid in (0, True):
+        with pytest.raises(ValueError, match="max_bytes must be a positive integer"):
+            expect(result).to_have_response_size_at_most(max_bytes=invalid)
+    with pytest.raises(AssertionError, match="subject is not a tool call result"):
+        expect("text").to_have_response_size_at_most(max_bytes=10)

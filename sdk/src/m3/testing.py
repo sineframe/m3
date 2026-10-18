@@ -1183,6 +1183,8 @@ class MockMCPServer:
         description: str | None = None,
         input_schema: _Mapping[str, _Any] | None = None,
         output_schema: _Mapping[str, _Any] | None = None,
+        title: str | None = None,
+        annotations: _Mapping[str, _Any] | None = None,
     ) -> _Callable[[_Callable[_P, _R]], _Callable[_P, _R]]: ...
 
     @_overload
@@ -1193,6 +1195,8 @@ class MockMCPServer:
         description: str | None = None,
         input_schema: _Mapping[str, _Any] | None = None,
         output_schema: _Mapping[str, _Any] | None = None,
+        title: str | None = None,
+        annotations: _Mapping[str, _Any] | None = None,
     ) -> _Callable[_P, _R]: ...
 
     def tool(
@@ -1202,16 +1206,22 @@ class MockMCPServer:
         description: str | None = None,
         input_schema: _Mapping[str, _Any] | None = None,
         output_schema: _Mapping[str, _Any] | None = None,
+        title: str | None = None,
+        annotations: _Mapping[str, _Any] | None = None,
     ) -> _Any:
         def register(function: _Callable[_P, _R]) -> _Callable[_P, _R]:
             selected = name if isinstance(name, str) else function.__name__
             self._tools[selected] = (
                 _types.Tool(
                     name=selected,
+                    title=title,
                     description=description,
                     input_schema=dict(input_schema or {"type": "object"}),
                     output_schema=dict(output_schema)
                     if output_schema is not None
+                    else None,
+                    annotations=_types.ToolAnnotations.model_validate(dict(annotations))
+                    if annotations is not None
                     else None,
                 ),
                 function,

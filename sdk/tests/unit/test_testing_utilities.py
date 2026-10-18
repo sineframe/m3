@@ -929,3 +929,38 @@ def test_progress_restores_exact_native_reporter_mode() -> None:
     assert reporter._show_progress_info is False
     progress.restore_native_progress()
     assert reporter._show_progress_info == "count"
+
+
+@pytest.mark.asyncio
+async def test_mock_tool_title_and_annotations_reach_listed_tools() -> None:
+    mock = MockMCPServer()
+
+    @mock.tool(
+        "delete_user",
+        title="Delete user",
+        annotations={
+            "destructiveHint": True,
+            "readOnlyHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    def delete_user(_arguments: dict[str, object]) -> str:
+        return "deleted"
+
+    @mock.tool("search")
+    def search(_arguments: dict[str, object]) -> str:
+        return "found"
+
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
+        async with kit.direct(mock.in_process()) as client:
+            tools = {tool.name: tool for tool in await client.list_all_tools()}
+
+    deleting = tools["delete_user"]
+    assert deleting.title == "Delete user"
+    assert deleting.annotations is not None
+    assert deleting.annotations.destructive_hint is True
+    assert deleting.annotations.read_only_hint is False
+    assert deleting.annotations.idempotent_hint is True
+    assert deleting.annotations.open_world_hint is False
+    assert tools["search"].annotations is None

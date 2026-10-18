@@ -324,6 +324,8 @@ tool(
     description: str | None = None,
     input_schema: _Mapping[str, _Any] | None = None,
     output_schema: _Mapping[str, _Any] | None = None,
+    title: str | None = None,
+    annotations: _Mapping[str, _Any] | None = None,
 ) -> _Any
 ```
 
