@@ -857,6 +857,24 @@ def _normalize_init_item(item: Any, adapter: Any) -> Any:
     for source, target in aliases.items():
         if source in values and target not in values:
             values[target] = values.pop(source)
+    annotations = values.get("annotations")
+    if isinstance(annotations, Mapping):
+        hint_aliases = {
+            "readOnlyHint": "read_only_hint",
+            "destructiveHint": "destructive_hint",
+            "idempotentHint": "idempotent_hint",
+            "openWorldHint": "open_world_hint",
+        }
+        known = {"title", *hint_aliases.values()}
+        normalized = {key: hint for key, hint in annotations.items() if key in known}
+        for source, target in hint_aliases.items():
+            if source in annotations and target not in normalized:
+                normalized[target] = annotations[source]
+        values["annotations"] = normalized
+    # Servers send keys m3 does not model (icons, _meta, execution); one such
+    # item must not make the whole initialization list malformed.
+    fields = adapter.model_fields
+    values = {k: v for k, v in values.items() if k in fields and k != "raw"}
     return TypeAdapter(adapter).validate_python(values)
 
 

@@ -634,6 +634,7 @@ else:
         "ConnectionId": ".types",
         "ContentBlock": ".types",
         "ToolInfo": ".types",
+        "ToolAnnotations": ".types",
         "ResourceInfo": ".types",
         "TemplateInfo": ".types",
         "PromptInfo": ".types",

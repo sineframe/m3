@@ -81,6 +81,9 @@ from .types import (
     TemplateInfo as _PublicTemplateInfo,
 )
 from .types import (
+    ToolAnnotations as _PublicToolAnnotations,
+)
+from .types import (
     ToolInfo as _PublicToolInfo,
 )
 
@@ -528,6 +531,18 @@ def _prepare_mrtr(
     return plan.matcher() if plan is not None else None
 
 
+def _tool_annotations(value: Any) -> _PublicToolAnnotations | None:
+    if value is None:
+        return None
+    return _PublicToolAnnotations(
+        title=_attribute(value, "title"),
+        read_only_hint=_attribute(value, "read_only_hint"),
+        destructive_hint=_attribute(value, "destructive_hint"),
+        idempotent_hint=_attribute(value, "idempotent_hint"),
+        open_world_hint=_attribute(value, "open_world_hint"),
+    )
+
+
 def _tool(value: Any) -> Tool:
     return Tool(
         raw=value,
@@ -540,6 +555,7 @@ def _tool(value: Any) -> Tool:
         output_schema=cast(
             Mapping[str, Any] | bool | None, _attribute(value, "output_schema")
         ),
+        annotations=_tool_annotations(_attribute(value, "annotations")),
     )
 
 

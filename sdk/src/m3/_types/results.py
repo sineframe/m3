@@ -78,6 +78,20 @@ class TurnResult(FrozenModel):
         return self
 
 
+class ToolAnnotations(FrozenModel):
+    """MCP tool annotations as declared by the server.
+
+    ``None`` means the server did not declare that hint; MCP spec defaults are
+    not applied.
+    """
+
+    title: str | None = None
+    read_only_hint: bool | None = None
+    destructive_hint: bool | None = None
+    idempotent_hint: bool | None = None
+    open_world_hint: bool | None = None
+
+
 class ToolInfo(FrozenModel):
     # Process-local official MCP evidence; excluded from public serialization.
     raw: _Any = _Field(default=None, exclude=True, repr=False)
@@ -86,6 +100,7 @@ class ToolInfo(FrozenModel):
     description: str | None = None
     input_schema: _Mapping[str, _Any] | bool = _Field(default_factory=dict)
     output_schema: _Mapping[str, _Any] | bool | None = None
+    annotations: ToolAnnotations | None = None
 
 
 class ResourceInfo(FrozenModel):
@@ -292,6 +307,7 @@ __all__ = [
     "Readiness",
     "ResourceInfo",
     "TemplateInfo",
+    "ToolAnnotations",
     "ToolInfo",
     "TurnResponse",
     "TurnResult",

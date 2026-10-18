@@ -755,6 +755,7 @@ m3.async_api.ToolInfo(
     description: str | None = None,
     input_schema: collections.abc.Mapping[str, Any] | bool = ...,
     output_schema: collections.abc.Mapping[str, Any] | bool | None = None,
+    annotations: m3.types.ToolAnnotations | None = None,
 ) -> None
 ```
 
@@ -768,6 +769,7 @@ Model fields:
 | `description` | `str \| None` | No | `None` | — | — |
 | `input_schema` | `collections.abc.Mapping[str, Any] \| bool` | No | `factory builtins.dict()` | — | — |
 | `output_schema` | `collections.abc.Mapping[str, Any] \| bool \| None` | No | `None` | — | — |
+| `annotations` | `m3.types.ToolAnnotations \| None` | No | `None` | — | — |
 
 ## `EmptyResult`
 
@@ -1341,6 +1343,7 @@ m3.async_api.Tool(
     description: str | None = None,
     input_schema: collections.abc.Mapping[str, Any] | bool = ...,
     output_schema: collections.abc.Mapping[str, Any] | bool | None = None,
+    annotations: m3.types.ToolAnnotations | None = None,
 ) -> None
 ```
 
@@ -1354,6 +1357,7 @@ Model fields:
 | `description` | `str \| None` | No | `None` | — | — |
 | `input_schema` | `collections.abc.Mapping[str, Any] \| bool` | No | `factory builtins.dict()` | — | — |
 | `output_schema` | `collections.abc.Mapping[str, Any] \| bool \| None` | No | `None` | — | — |
+| `annotations` | `m3.types.ToolAnnotations \| None` | No | `None` | — | — |
 
 ## `ToolCallResult`
 

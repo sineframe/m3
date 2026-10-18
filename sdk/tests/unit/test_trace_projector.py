@@ -1811,3 +1811,40 @@ def test_protocol_entry_marks_a_malformed_http_exchange_unavailable(
     observation = _with_initialize_http(http).view().protocol[0].http
     assert observation.state is ObservationState.UNAVAILABLE
     assert observation.reason is ObservationReason.MALFORMED_SOURCE
+
+
+def test_initialization_tools_keep_annotations_and_ignore_unmodeled_keys() -> None:
+    trace = _trace()
+    response = trace.events[3].model_copy(
+        update={
+            "payload": {
+                "result": {
+                    "protocolVersion": "2025-11-25",
+                    "serverInfo": {"name": "fixture", "version": "1"},
+                    "tools": [
+                        {
+                            "name": "del",
+                            "inputSchema": {},
+                            "annotations": {
+                                "readOnlyHint": False,
+                                "destructiveHint": True,
+                                "title": "Delete",
+                            },
+                            "icons": [],
+                            "_meta": {"k": 1},
+                        }
+                    ],
+                }
+            }
+        }
+    )
+    view = trace.model_copy(
+        update={"events": (*trace.events[:3], response, *trace.events[4:])}
+    ).view()
+    tools = view.runtime.initialization.value.tools
+    assert tools.state is ObservationState.OBSERVED
+    annotations = tools.value[0].annotations
+    assert annotations.destructive_hint is True
+    assert annotations.read_only_hint is False
+    assert annotations.idempotent_hint is None
+    assert annotations.title == "Delete"
