@@ -1,0 +1,940 @@
+{
+ "additional-description": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "additional-description-old": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.131.0\n\nERROR   codex-schema-parse-failure  tool 'probe'\n  codex <0.140.0 [tool]: Codex cannot convert this schema and skips the tool.\n  detail: additional-description-type\n  fix: Fix the malformed keyword.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.131.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "schema-validity",
+     "detail": "additional-description-type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": "0.140.0",
+        "introduced": null
+       },
+       "summary": "Codex cannot convert this schema and skips the tool."
+      }
+     ],
+     "fix": "Fix the malformed keyword.",
+     "location": "tool 'probe'",
+     "rule": "codex-schema-parse-failure",
+     "severity": "error",
+     "title": "schema Codex cannot convert"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "description-in-property": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nERROR   codex-schema-parse-failure  tool 'probe'\n  codex all versions [tool]: Codex cannot convert this schema and skips the tool.\n  detail: description-type\n  fix: Fix the malformed keyword.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "schema-validity",
+     "detail": "description-type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex cannot convert this schema and skips the tool."
+      }
+     ],
+     "fix": "Fix the malformed keyword.",
+     "location": "tool 'probe'",
+     "rule": "codex-schema-parse-failure",
+     "severity": "error",
+     "title": "schema Codex cannot convert"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "discarded-branch": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nWARNING root-conditionals  tool 'probe'\n  codex all versions [degraded]: Codex drops this constraint; the model never sees it.\n  detail: root if\n  fix: Describe the constraint in the tool or property description.\n\nINFO    codex-dropped-constraints  tool 'probe'\n  codex all versions [advisory]: Codex drops these keywords; the model never sees the constraint.\n  detail: if\n  fix: Repeat important constraints in the property description.\n\n0 errors, 1 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "root-schema",
+     "detail": "root if",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex drops this constraint; the model never sees it."
+      }
+     ],
+     "fix": "Describe the constraint in the tool or property description.",
+     "location": "tool 'probe'",
+     "rule": "root-conditionals",
+     "severity": "warning",
+     "title": "conditional keywords at the schema root"
+    },
+    {
+     "category": "codex-projection",
+     "detail": "if",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex drops these keywords; the model never sees the constraint."
+      }
+     ],
+     "fix": "Repeat important constraints in the property description.",
+     "location": "tool 'probe'",
+     "rule": "codex-dropped-constraints",
+     "severity": "info",
+     "title": "constraints Codex drops"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "discarded-not": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nWARNING root-conditionals  tool 'probe'\n  codex all versions [degraded]: Codex drops this constraint; the model never sees it.\n  detail: root not\n  fix: Describe the constraint in the tool or property description.\n\nINFO    codex-dropped-constraints  tool 'probe'\n  codex all versions [advisory]: Codex drops these keywords; the model never sees the constraint.\n  detail: not\n  fix: Repeat important constraints in the property description.\n\n0 errors, 1 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "root-schema",
+     "detail": "root not",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex drops this constraint; the model never sees it."
+      }
+     ],
+     "fix": "Describe the constraint in the tool or property description.",
+     "location": "tool 'probe'",
+     "rule": "root-conditionals",
+     "severity": "warning",
+     "title": "conditional keywords at the schema root"
+    },
+    {
+     "category": "codex-projection",
+     "detail": "not",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex drops these keywords; the model never sees the constraint."
+      }
+     ],
+     "fix": "Repeat important constraints in the property description.",
+     "location": "tool 'probe'",
+     "rule": "codex-dropped-constraints",
+     "severity": "info",
+     "title": "constraints Codex drops"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "discarded-pattern-properties": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nINFO    codex-dropped-constraints  tool 'probe'\n  codex all versions [advisory]: Codex drops these keywords; the model never sees the constraint.\n  detail: patternProperties\n  fix: Repeat important constraints in the property description.\n\n0 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "codex-projection",
+     "detail": "patternProperties",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex drops these keywords; the model never sees the constraint."
+      }
+     ],
+     "fix": "Repeat important constraints in the property description.",
+     "location": "tool 'probe'",
+     "rule": "codex-dropped-constraints",
+     "severity": "info",
+     "title": "constraints Codex drops"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "min-items": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   schema-invalid-2020-12  tool 'probe'\n  claude_code >=2.1.216 [tool]: Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated).\n  detail: properties/t/minItems: type\n  fix: Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).\n\nERROR   codex-schema-parse-failure  tool 'probe'\n  codex >=0.155.0 [tool]: Codex cannot convert this schema and skips the tool.\n  detail: min-items\n  fix: Fix the malformed keyword.\n\n2 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 2,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "schema-validity",
+     "detail": "properties/t/minItems: type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.216"
+       },
+       "summary": "Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated)."
+      }
+     ],
+     "fix": "Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).",
+     "location": "tool 'probe'",
+     "rule": "schema-invalid-2020-12",
+     "severity": "error",
+     "title": "inputSchema invalid under JSON Schema 2020-12"
+    },
+    {
+     "category": "schema-validity",
+     "detail": "min-items",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "0.155.0"
+       },
+       "summary": "Codex cannot convert this schema and skips the tool."
+      }
+     ],
+     "fix": "Fix the malformed keyword.",
+     "location": "tool 'probe'",
+     "rule": "codex-schema-parse-failure",
+     "severity": "error",
+     "title": "schema Codex cannot convert"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "min-items-old": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.150.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.150.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   schema-invalid-2020-12  tool 'probe'\n  claude_code >=2.1.216 [tool]: Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated).\n  detail: properties/t/items: type; properties/t/items: type; properties/t/items: type; properties/t/items: type; properties/t/items: type\n  fix: Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).\n\nERROR   codex-schema-parse-failure  tool 'probe'\n  codex all versions [tool]: Codex cannot convert this schema and skips the tool.\n  detail: items-list\n  fix: Fix the malformed keyword.\n\n2 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 2,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "schema-validity",
+     "detail": "properties/t/items: type; properties/t/items: type; properties/t/items: type; properties/t/items: type; properties/t/items: type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.216"
+       },
+       "summary": "Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated)."
+      }
+     ],
+     "fix": "Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).",
+     "location": "tool 'probe'",
+     "rule": "schema-invalid-2020-12",
+     "severity": "error",
+     "title": "inputSchema invalid under JSON Schema 2020-12"
+    },
+    {
+     "category": "schema-validity",
+     "detail": "items-list",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex cannot convert this schema and skips the tool."
+      }
+     ],
+     "fix": "Fix the malformed keyword.",
+     "location": "tool 'probe'",
+     "rule": "codex-schema-parse-failure",
+     "severity": "error",
+     "title": "schema Codex cannot convert"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "ref-type": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nERROR   codex-schema-parse-failure  tool 'probe'\n  codex >=0.140.0 [tool]: Codex cannot convert this schema and skips the tool.\n  detail: ref-type\n  fix: Fix the malformed keyword.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "schema-validity",
+     "detail": "ref-type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "0.140.0"
+       },
+       "summary": "Codex cannot convert this schema and skips the tool."
+      }
+     ],
+     "fix": "Fix the malformed keyword.",
+     "location": "tool 'probe'",
+     "rule": "codex-schema-parse-failure",
+     "severity": "error",
+     "title": "schema Codex cannot convert"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "ref-type-old": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.131.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.131.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "required-null": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

@@ -1,0 +1,1527 @@
+{
+ "known_latest": {
+  "claude_code": "2.1.302",
+  "codex": "0.163.0"
+ },
+ "rules": [
+  {
+   "category": "protocol",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects the initialize result; every tool on the server is lost."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex (rmcp) fails to parse initialize; the server does not start."
+    }
+   ],
+   "fix": "Return serverInfo with string name and version.",
+   "id": "initialize-server-info",
+   "title": "serverInfo missing or malformed"
+  },
+  {
+   "category": "protocol",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code never calls tools/list without the tools capability; the server shows 0 tools."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects capabilities.tools that is not an object; the server shows 0 tools."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex (rmcp) fails to parse initialize when capabilities.tools is not an object; the server does not start."
+    }
+   ],
+   "fix": "Declare capabilities.tools as an object in initialize.",
+   "id": "tools-capability-missing",
+   "title": "tools capability missing or not an object"
+  },
+  {
+   "category": "protocol",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.221"
+     },
+     "summary": "Claude Code probes server/discover first; with no reply it kills and respawns a stdio server (startup runs twice) or reconnects over HTTP."
+    }
+   ],
+   "fix": "Answer unknown methods immediately with JSON-RPC error -32601.",
+   "id": "discover-probe-unanswered",
+   "title": "server/discover probe not answered"
+  },
+  {
+   "category": "protocol",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": "2.1.302",
+      "introduced": "2.1.287"
+     },
+     "summary": "This server speaks MCP 2026-07-28; Claude Code sessions that probe server/discover (rollout-gated) before 2.1.302 drop every tool when tools/list omits resultType, ttlMs or cacheScope."
+    }
+   ],
+   "fix": "Under 2026-07-28 include resultType, ttlMs and cacheScope (\"public\" or \"private\") in every list result.",
+   "id": "modern-protocol-result-fields",
+   "title": "server speaks MCP 2026-07-28"
+  },
+  {
+   "category": "protocol",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex never refetches tools after notifications/tools/list_changed and caches catalogs for 30 minutes."
+    }
+   ],
+   "fix": "Expose every tool at startup instead of adding tools later.",
+   "id": "list-changed-ignored",
+   "title": "tools.listChanged declared"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "issue",
+     "harness": "claude_code",
+     "impact": "tool",
+     "range": {
+      "fixed": "2.1.144",
+      "introduced": null
+     },
+     "summary": "Claude Code before 2.1.144 reads only the first tools/list page."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": "0.162.0",
+      "introduced": null
+     },
+     "summary": "Codex before 0.162.0 reads only the first tools/list page."
+    }
+   ],
+   "fix": "Return all tools in one page.",
+   "id": "pagination-multi-page",
+   "title": "tools/list spans several pages"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.144"
+     },
+     "summary": "Claude Code stops after 20 tools/list pages; later tools are ignored."
+    }
+   ],
+   "fix": "Use at most 20 pages (larger pages).",
+   "id": "pagination-over-20-pages",
+   "title": "tools/list spans more than 20 pages"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": "0.162.0"
+     },
+     "summary": "Codex rejects catalogs longer than 100 pages; the server's tools are excluded."
+    }
+   ],
+   "fix": "Use fewer, larger pages.",
+   "id": "pagination-over-100-pages",
+   "title": "listing spans more than 100 pages"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": "0.162.0"
+     },
+     "summary": "Codex rejects a catalog whose nextCursor repeats."
+    },
+    {
+     "evidence": "issue",
+     "harness": "claude_code",
+     "impact": "advisory",
+     "range": {
+      "fixed": "2.1.295",
+      "introduced": null
+     },
+     "summary": "Claude Code before 2.1.295 re-requests a repeated cursor up to 20 times per connect."
+    }
+   ],
+   "fix": "Never return the same nextCursor twice.",
+   "id": "pagination-repeated-cursor",
+   "title": "nextCursor repeats"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": "0.162.0"
+     },
+     "summary": "Codex rejects cursors longer than 64 KiB."
+    }
+   ],
+   "fix": "Keep cursors short.",
+   "id": "pagination-cursor-too-long",
+   "title": "cursor longer than 64 KiB"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": "0.147.0"
+     },
+     "summary": "Codex rejects tools/list catalogs with more than 2048 tools; every tool on the server is lost."
+    }
+   ],
+   "fix": "Split the server or expose a search tool plus an executor.",
+   "id": "tool-count-over-2048",
+   "title": "more than 2048 tools"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "claude_code",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.296"
+     },
+     "summary": "Claude Code uses only about the first 16 MB of a listing; later tools are skipped."
+    }
+   ],
+   "fix": "Shrink tool definitions.",
+   "id": "listing-too-large",
+   "title": "tool listing larger than 16 MB"
+  },
+  {
+   "category": "listing",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "tools/list failed; Claude Code shows no tools for this server."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "tools/list failed; Codex shows no tools for this server."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": "0.162.0"
+     },
+     "summary": "tools/list failed on a later page; Codex shows no tools for this server."
+    }
+   ],
+   "fix": "Make tools/list succeed.",
+   "id": "tools-list-failed",
+   "title": "tools/list failed"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "One tool without a string name makes Claude Code reject the whole tools/list."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex (rmcp) rejects the whole tools/list."
+    }
+   ],
+   "fix": "Give every tool a string name.",
+   "id": "tool-name-invalid-type",
+   "title": "tool name missing or not a string"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects the whole tools/list when one tool has wrongly typed metadata; every tool is lost."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex (rmcp) fails to parse tools/list; the server does not start."
+    }
+   ],
+   "fix": "Fix the types (hints are booleans, title is a string, _meta is an object, icons need src).",
+   "id": "tool-metadata-types",
+   "title": "tool metadata has the wrong type"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "A non-string description makes Claude Code reject the whole tools/list."
+    }
+   ],
+   "fix": "Omit description or make it a string.",
+   "id": "tool-description-not-string",
+   "title": "tool description not a string"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects the whole tools/list."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": "0.147.0",
+      "introduced": null
+     },
+     "summary": "Codex before 0.147.0 rejects the whole tools/list."
+    }
+   ],
+   "fix": "Use a valid execution.taskSupport or omit execution.",
+   "id": "tool-execution-invalid",
+   "title": "tool execution malformed"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "One tool without an object inputSchema hides every tool on the server in Claude Code."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex (rmcp) fails to parse tools/list; the server does not start."
+    }
+   ],
+   "fix": "Always send inputSchema, at minimum {\"type\":\"object\",\"properties\":{}}.",
+   "id": "input-schema-missing",
+   "title": "inputSchema missing or not an object"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code requires type \"object\" at the root; one such tool hides every tool on the server."
+    }
+   ],
+   "fix": "Add \"type\": \"object\" at the schema root.",
+   "id": "root-type-missing",
+   "title": "inputSchema root has no type"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code requires type \"object\" at the root; one such tool hides every tool on the server."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex code mode renders a non-object argument type, and the OpenAI API rejects non-object roots in direct mode."
+    }
+   ],
+   "fix": "Use exactly \"type\": \"object\" at the root.",
+   "id": "root-type-not-object",
+   "title": "inputSchema root type is not object"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects the whole tools/list."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex skips this tool."
+    }
+   ],
+   "fix": "Use \"properties\": {}.",
+   "id": "root-properties-not-object",
+   "title": "root properties not an object"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects the whole tools/list."
+    }
+   ],
+   "fix": "Use \"required\": [] or omit it.",
+   "id": "root-required-null",
+   "title": "root required is null"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects the whole tools/list."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex skips this tool."
+    }
+   ],
+   "fix": "Use an array of property names.",
+   "id": "root-required-not-array",
+   "title": "root required not an array of strings"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": "2.1.200",
+      "introduced": null
+     },
+     "summary": "Older Claude Code sends root anyOf/oneOf/allOf and the Anthropic API rejects every request."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.200"
+     },
+     "summary": "Claude Code flattens root combinators: properties are merged, anyOf/oneOf requirements become optional, and a constraint note is added to the description (rollout-gated; with the gate off the tool is dropped)."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex code mode renders anyOf/oneOf alternatives instead of the properties; property names are lost."
+    }
+   ],
+   "fix": "Make the alternatives optional properties, enforce the choice in the handler, and state it in the description.",
+   "id": "root-combinator",
+   "title": "anyOf/oneOf/allOf at the schema root"
+  },
+  {
+   "category": "root-schema",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex drops this constraint; the model never sees it."
+    }
+   ],
+   "fix": "Describe the constraint in the tool or property description.",
+   "id": "root-conditionals",
+   "title": "conditional keywords at the schema root"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": "2.1.216",
+      "introduced": null
+     },
+     "summary": "The Anthropic API rejects schemas invalid under JSON Schema 2020-12; every request fails while this tool is loaded."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.216"
+     },
+     "summary": "Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated)."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.216"
+     },
+     "summary": "Claude Code skips its own check when $schema names another draft, and the Anthropic API still validates against 2020-12; every request fails."
+    }
+   ],
+   "fix": "Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).",
+   "id": "schema-invalid-2020-12",
+   "title": "inputSchema invalid under JSON Schema 2020-12"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": "2.1.0",
+      "introduced": null
+     },
+     "summary": "The Anthropic API rejects property keys outside ^[a-zA-Z0-9_.-]{1,64}$; every request fails."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": "2.1.216",
+      "introduced": "2.1.0"
+     },
+     "summary": "The Anthropic API rejects property keys outside ^[a-zA-Z0-9_.-]{1,64}$ even after Claude Code NFKC-normalizes them; every request fails."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.216"
+     },
+     "summary": "Claude Code silently drops tools with property keys outside ^[a-zA-Z0-9_.-]{1,64}$ (rollout-gated)."
+    }
+   ],
+   "fix": "Rename the properties (for example ids instead of ids[]).",
+   "id": "property-key-invalid",
+   "title": "property key outside ^[a-zA-Z0-9_.-]{1,64}$"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex cannot convert this schema and skips the tool."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "0.155.0"
+     },
+     "summary": "Codex cannot convert this schema and skips the tool."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "0.140.0"
+     },
+     "summary": "Codex cannot convert this schema and skips the tool."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": "0.140.0",
+      "introduced": null
+     },
+     "summary": "Codex cannot convert this schema and skips the tool."
+    }
+   ],
+   "fix": "Fix the malformed keyword.",
+   "id": "codex-schema-parse-failure",
+   "title": "schema Codex cannot convert"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "The Anthropic API rejects tool schemas nested more than 64 levels of objects and arrays; every request fails."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex cannot parse tools/list nested this deeply; the server does not start."
+    }
+   ],
+   "fix": "Flatten the schema or use $defs with $ref.",
+   "id": "json-depth-too-deep",
+   "title": "schema nested too deeply"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code parses JSON with doubles; this integer is rounded before it reaches the API."
+    }
+   ],
+   "fix": "Keep integer literals within \u00b1(2^53\u22121), or use strings.",
+   "id": "integer-literal-unsafe",
+   "title": "integer literal beyond \u00b1(2^53\u22121)"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rounds integer arguments above 2^53."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex code mode rounds integer arguments above 2^53."
+    }
+   ],
+   "fix": "Declare 64-bit ids as type string.",
+   "id": "integer-id-precision",
+   "title": "64-bit id declared as integer"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code deletes __proto__ keys; the property disappears but stays required."
+    }
+   ],
+   "fix": "Rename the property.",
+   "id": "property-named-proto",
+   "title": "property named __proto__"
+  },
+  {
+   "category": "schema-validity",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.0"
+     },
+     "summary": "Claude Code NFKC-normalizes keys and values; enum values change (\ufb01le\u2192file) and keys can merge and overwrite each other."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.0"
+     },
+     "summary": "Claude Code strips format and bidi characters."
+    }
+   ],
+   "fix": "Use plain ASCII for keys and enum values.",
+   "id": "unicode-normalization",
+   "title": "strings change under NFKC or carry format characters"
+  },
+  {
+   "category": "codex-projection",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex drops these keywords; the model never sees the constraint."
+    }
+   ],
+   "fix": "Repeat important constraints in the property description.",
+   "id": "codex-dropped-constraints",
+   "title": "constraints Codex drops"
+  },
+  {
+   "category": "codex-projection",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex turns boolean subschemas into {\"type\":\"string\"}."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": "2.1.250",
+      "introduced": "2.1.0"
+     },
+     "summary": "This Claude Code version drops every tool on the server when a schema contains a boolean subschema."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.250"
+     },
+     "summary": "Claude Code sessions still on its older MCP client (rollout-gated; they skip the server/discover probe) drop every tool on the server when a schema contains a boolean subschema."
+    }
+   ],
+   "fix": "Use {} for any value; remove never-valid properties.",
+   "id": "boolean-subschema",
+   "title": "boolean subschema"
+  },
+  {
+   "category": "codex-projection",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex shows this array to the model as Array<string>."
+    }
+   ],
+   "fix": "Declare items with the real element type; use objects instead of tuples.",
+   "id": "array-items-degraded",
+   "title": "array element type Codex cannot show"
+  },
+  {
+   "category": "codex-projection",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex coerces this const or enum to type string."
+    }
+   ],
+   "fix": "Give enums an explicit, uniform type.",
+   "id": "const-enum-coerced",
+   "title": "const or enum Codex coerces to string"
+  },
+  {
+   "category": "codex-projection",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "0.144.0"
+     },
+     "summary": "Codex compacts input schemas over 5000 bytes: descriptions, $defs, objects nested 3+ levels and combinators are removed in that order until it fits (raise with mcp_servers.<name>.tool_input_schema_max_bytes from 0.158.0)."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": "0.144.0",
+      "introduced": "0.134.0"
+     },
+     "summary": "Codex compacts input schemas over 4000 bytes."
+    }
+   ],
+   "fix": "Shrink the schema below 5000 bytes; put enums directly on properties instead of anyOf with null.",
+   "id": "codex-schema-compaction",
+   "title": "input schema Codex compacts"
+  },
+  {
+   "category": "codex-projection",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex code mode renders argument types over 16,000 bytes as unknown."
+    }
+   ],
+   "fix": "Split the tool.",
+   "id": "codex-ts-too-large",
+   "title": "argument type too large for Codex code mode"
+  },
+  {
+   "category": "codex-projection",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex shows unresolvable references as unknown."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex expands recursive references two levels, then unknown."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": "0.134.0",
+      "introduced": null
+     },
+     "summary": "Codex before 0.134.0 does not resolve $ref."
+    }
+   ],
+   "fix": "Use local $defs references and avoid recursion.",
+   "id": "codex-unresolvable-ref",
+   "title": "$ref Codex cannot resolve"
+  },
+  {
+   "category": "names",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": "2.1.292",
+      "introduced": null
+     },
+     "summary": "The Anthropic API rejects tool names over 128 characters; every request fails."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.292"
+     },
+     "summary": "Claude Code silently drops tools whose full name exceeds 128 characters."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "0.149.0"
+     },
+     "summary": "Codex truncates the name and appends a hash; the model sees a different name."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": "0.149.0",
+      "introduced": null
+     },
+     "summary": "Codex truncates the name and appends a hash; the model sees a different name."
+    }
+   ],
+   "fix": "Keep mcp__<server>__<tool> within 128 characters (64 for older Codex).",
+   "id": "tool-name-too-long",
+   "title": "full tool name too long"
+  },
+  {
+   "category": "names",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code shows this tool under a rewritten name."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex shows this tool under a rewritten name (- becomes _)."
+    }
+   ],
+   "fix": "Use snake_case ASCII names.",
+   "id": "tool-name-sanitized",
+   "title": "tool name rewritten by the harness"
+  },
+  {
+   "category": "names",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": "2.1.50",
+      "introduced": null
+     },
+     "summary": "The Anthropic API rejects duplicate tool names; every request fails."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.50"
+     },
+     "summary": "Claude Code keeps only the first tool; calls to the others go to it."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": "0.119.0",
+      "introduced": null
+     },
+     "summary": "Codex drops the second tool."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "0.119.0"
+     },
+     "summary": "Codex keeps both under hash-suffixed names."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "tool",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex keeps one copy."
+    }
+   ],
+   "fix": "Make names unique after replacing characters outside [A-Za-z0-9_] with _.",
+   "id": "tool-name-collision",
+   "title": "tool names collide"
+  },
+  {
+   "category": "names",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code exposes this tool as mcp__<server>__."
+    },
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex exposes this tool as _."
+    }
+   ],
+   "fix": "Give the tool a name.",
+   "id": "tool-name-empty",
+   "title": "empty tool name"
+  },
+  {
+   "category": "names",
+   "effects": [
+    {
+     "evidence": "issue",
+     "harness": "claude_code",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "__ separates server and tool in Claude Code; permission rules and hooks can misread it."
+    }
+   ],
+   "fix": "Avoid __ in tool names.",
+   "id": "tool-name-double-underscore",
+   "title": "tool name contains __"
+  },
+  {
+   "category": "text",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": "2.1.296",
+      "introduced": "2.1.84"
+     },
+     "summary": "Claude Code truncates tool descriptions after 2048 characters."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.296"
+     },
+     "summary": "Claude Code truncates tool descriptions after 4096 characters (16384 once loaded through tool search)."
+    }
+   ],
+   "fix": "Put the essentials first and keep descriptions within 2048 characters.",
+   "id": "description-too-long",
+   "title": "tool description truncated"
+  },
+  {
+   "category": "text",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": "2.1.296",
+      "introduced": "2.1.200"
+     },
+     "summary": "Claude Code truncates server instructions after 2048 characters."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.296"
+     },
+     "summary": "Claude Code truncates server instructions after 4096 characters."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex sends server instructions with every turn."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "0.147.0"
+     },
+     "summary": "Codex truncates server instructions at 512 KiB."
+    }
+   ],
+   "fix": "Keep instructions short.",
+   "id": "instructions-too-long",
+   "title": "server instructions too long"
+  },
+  {
+   "category": "text",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "claude_code",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code loads MCP tools on demand by searching names and descriptions; this tool is hard to find."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex finds MCP tools by searching names and descriptions; this tool is hard to find."
+    }
+   ],
+   "fix": "Write a description that says what the tool does.",
+   "id": "description-missing",
+   "title": "tool description missing"
+  },
+  {
+   "category": "text",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex rejects JSON with an unpaired UTF-16 surrogate escape; the server does not start."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "session",
+     "range": {
+      "fixed": "2.1.200",
+      "introduced": null
+     },
+     "summary": "Older Claude Code sends unpaired surrogates and the Anthropic API rejects every request."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.200"
+     },
+     "summary": "Claude Code strips unpaired surrogates from tool definitions."
+    }
+   ],
+   "fix": "Send valid Unicode; never emit a lone \\uD800-\\uDFFF escape.",
+   "id": "unpaired-surrogate",
+   "title": "unpaired UTF-16 surrogate escape"
+  },
+  {
+   "category": "text",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "codex",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex rejects messages that are not valid UTF-8; the server does not start."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code replaces invalid UTF-8 bytes with U+FFFD."
+    }
+   ],
+   "fix": "Encode every message as UTF-8.",
+   "id": "invalid-utf8",
+   "title": "message bytes that are not UTF-8"
+  },
+  {
+   "category": "result-hints",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "claude_code",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "When a result has structuredContent, Claude Code gives the model only that; text content is dropped."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "In direct mode Codex gives the model only structuredContent."
+    }
+   ],
+   "fix": "Put everything the model needs into structuredContent.",
+   "id": "output-schema-structured-only",
+   "title": "outputSchema: only structuredContent reaches the model"
+  },
+  {
+   "category": "result-hints",
+   "effects": [
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": "2.1.250",
+      "introduced": null
+     },
+     "summary": "This Claude Code version drops every tool on the server when an outputSchema root is not type object."
+    },
+    {
+     "evidence": "live",
+     "harness": "claude_code",
+     "impact": "server",
+     "range": {
+      "fixed": null,
+      "introduced": "2.1.250"
+     },
+     "summary": "Claude Code sessions still on its older MCP client (rollout-gated; they skip the server/discover probe) drop every tool on the server when an outputSchema root is not type object."
+    }
+   ],
+   "fix": "Use type \"object\" at the outputSchema root.",
+   "id": "output-schema-not-object",
+   "title": "outputSchema root type is not object"
+  },
+  {
+   "category": "result-hints",
+   "effects": [
+    {
+     "evidence": "issue",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": "0.163.0",
+      "introduced": null
+     },
+     "summary": "Codex before 0.163.0 fails to parse fractional priorities (\"Unexpected response type\")."
+    }
+   ],
+   "fix": "Use 0 or 1 for priority, or omit it.",
+   "id": "fractional-priority",
+   "title": "fractional resource priority"
+  },
+  {
+   "category": "result-hints",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "claude_code",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Claude Code rejects this resource listing."
+    },
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "degraded",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex rejects this resource listing."
+    }
+   ],
+   "fix": "Give every resource uri and name (templates: uriTemplate and name).",
+   "id": "resource-entry-invalid",
+   "title": "resource entry malformed"
+  },
+  {
+   "category": "result-hints",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex never requests prompts; they are invisible there."
+    }
+   ],
+   "fix": "Don't put core functionality only in prompts.",
+   "id": "prompts-ignored-by-codex",
+   "title": "prompts invisible in Codex"
+  },
+  {
+   "category": "result-hints",
+   "effects": [
+    {
+     "evidence": "source",
+     "harness": "codex",
+     "impact": "advisory",
+     "range": {
+      "fixed": null,
+      "introduced": null
+     },
+     "summary": "Codex asks for approval on every call to unannotated tools and won't run them in parallel."
+    }
+   ],
+   "fix": "Set readOnlyHint (and destructiveHint) annotations.",
+   "id": "missing-safety-annotations",
+   "title": "no readOnlyHint or destructiveHint"
+  }
+ ],
+ "schema_version": 1
+}

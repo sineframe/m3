@@ -1,0 +1,188 @@
+{
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   root-properties-not-object  tool 'probe'\n  claude_code all versions [server]: Claude Code rejects the whole tools/list.\n  codex all versions [tool]: Codex skips this tool.\n  detail: properties is list\n  fix: Use \"properties\": {}.\n\nERROR   schema-invalid-2020-12  tool 'probe'\n  claude_code >=2.1.216 [tool]: Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated).\n  detail: properties: type\n  fix: Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).\n\nERROR   codex-schema-parse-failure  tool 'probe'\n  codex all versions [tool]: Codex cannot convert this schema and skips the tool.\n  detail: properties-type\n  fix: Fix the malformed keyword.\n\n3 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 3,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "root-schema",
+     "detail": "properties is list",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "server",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Claude Code rejects the whole tools/list."
+      },
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex skips this tool."
+      }
+     ],
+     "fix": "Use \"properties\": {}.",
+     "location": "tool 'probe'",
+     "rule": "root-properties-not-object",
+     "severity": "error",
+     "title": "root properties not an object"
+    },
+    {
+     "category": "schema-validity",
+     "detail": "properties: type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.216"
+       },
+       "summary": "Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated)."
+      }
+     ],
+     "fix": "Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).",
+     "location": "tool 'probe'",
+     "rule": "schema-invalid-2020-12",
+     "severity": "error",
+     "title": "inputSchema invalid under JSON Schema 2020-12"
+    },
+    {
+     "category": "schema-validity",
+     "detail": "properties-type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex cannot convert this schema and skips the tool."
+      }
+     ],
+     "fix": "Fix the malformed keyword.",
+     "location": "tool 'probe'",
+     "rule": "codex-schema-parse-failure",
+     "severity": "error",
+     "title": "schema Codex cannot convert"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

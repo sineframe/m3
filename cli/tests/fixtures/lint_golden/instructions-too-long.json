@@ -1,0 +1,897 @@
+{
+ "boundary-4096": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "boundary-512k": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nINFO    instructions-too-long  initialize\n  codex all versions [advisory]: Codex sends server instructions with every turn.\n  detail: instructions 524288 UTF-16 units, 524288 bytes\n  fix: Keep instructions short.\n\n0 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "instructions 524288 UTF-16 units, 524288 bytes",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex sends server instructions with every turn."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "info",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "boundary-8192": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "emoji": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: claude_code@2.1.302\n\nWARNING instructions-too-long  initialize\n  claude_code >=2.1.296 [degraded]: Claude Code truncates server instructions after 4096 characters.\n  detail: instructions 4098 UTF-16 units, 8196 bytes\n  fix: Keep instructions short.\n\n0 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "instructions 4098 UTF-16 units, 8196 bytes",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.296"
+       },
+       "summary": "Claude Code truncates server instructions after 4096 characters."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "warning",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "emoji-boundary": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: claude_code@2.1.302\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "large-8193": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nINFO    instructions-too-long  initialize\n  codex all versions [advisory]: Codex sends server instructions with every turn.\n  detail: instructions 8193 UTF-16 units, 8193 bytes\n  fix: Keep instructions short.\n\n0 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "instructions 8193 UTF-16 units, 8193 bytes",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex sends server instructions with every turn."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "info",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "lone-surrogate": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   unpaired-surrogate  initialize\n  codex all versions [server]: Codex rejects JSON with an unpaired UTF-16 surrogate escape; the server does not start.\n  detail: unpaired UTF-16 surrogate in the initialize result\n  fix: Send valid Unicode; never emit a lone \\uD800-\\uDFFF escape.\n\nWARNING instructions-too-long  initialize\n  claude_code >=2.1.296 [degraded]: Claude Code truncates server instructions after 4096 characters.\n  codex all versions [advisory]: Codex sends server instructions with every turn.\n  detail: instructions 4097 UTF-16 units, 12291 bytes\n  fix: Keep instructions short.\n\n1 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "unpaired UTF-16 surrogate in the initialize result",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "server",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex rejects JSON with an unpaired UTF-16 surrogate escape; the server does not start."
+      }
+     ],
+     "fix": "Send valid Unicode; never emit a lone \\uD800-\\uDFFF escape.",
+     "location": "initialize",
+     "rule": "unpaired-surrogate",
+     "severity": "error",
+     "title": "unpaired UTF-16 surrogate escape"
+    },
+    {
+     "category": "text",
+     "detail": "instructions 4097 UTF-16 units, 12291 bytes",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.296"
+       },
+       "summary": "Claude Code truncates server instructions after 4096 characters."
+      },
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex sends server instructions with every turn."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "warning",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "multibyte-8193": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nINFO    instructions-too-long  initialize\n  codex all versions [advisory]: Codex sends server instructions with every turn.\n  detail: instructions 2731 UTF-16 units, 8193 bytes\n  fix: Keep instructions short.\n\n0 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "instructions 2731 UTF-16 units, 8193 bytes",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex sends server instructions with every turn."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "info",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "multibyte-boundary-8192": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "old-2049": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: claude_code@2.1.287\n\nWARNING instructions-too-long  initialize\n  claude_code 2.1.200-<2.1.296 [degraded]: Claude Code truncates server instructions after 2048 characters.\n  detail: instructions 2049 UTF-16 units, 2049 bytes\n  fix: Keep instructions short.\n\n0 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.287"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "instructions 2049 UTF-16 units, 2049 bytes",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "claude_code",
+       "impact": "degraded",
+       "range": {
+        "fixed": "2.1.296",
+        "introduced": "2.1.200"
+       },
+       "summary": "Claude Code truncates server instructions after 2048 characters."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "warning",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "old-boundary-2048": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: claude_code@2.1.287\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.287"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "over-512k": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: codex@0.163.0\n\nWARNING instructions-too-long  initialize\n  codex all versions [advisory]: Codex sends server instructions with every turn.\n  codex >=0.147.0 [degraded]: Codex truncates server instructions at 512 KiB.\n  detail: instructions 524289 UTF-16 units, 524289 bytes\n  fix: Keep instructions short.\n\n0 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "instructions 524289 UTF-16 units, 524289 bytes",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex sends server instructions with every turn."
+      },
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "0.147.0"
+       },
+       "summary": "Codex truncates server instructions at 512 KiB."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "warning",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nWARNING instructions-too-long  initialize\n  claude_code >=2.1.296 [degraded]: Claude Code truncates server instructions after 4096 characters.\n  detail: instructions 4097 UTF-16 units, 4097 bytes\n  fix: Keep instructions short.\n\n0 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "text",
+     "detail": "instructions 4097 UTF-16 units, 4097 bytes",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.296"
+       },
+       "summary": "Claude Code truncates server instructions after 4096 characters."
+      }
+     ],
+     "fix": "Keep instructions short.",
+     "location": "initialize",
+     "rule": "instructions-too-long",
+     "severity": "warning",
+     "title": "server instructions too long"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

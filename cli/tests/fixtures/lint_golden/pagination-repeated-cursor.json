@@ -1,0 +1,440 @@
+{
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 2
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "old-claude": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.287\nincomplete: tools/list stopped early (page cap or repeated cursor) after 2 pages, 2 items read; findings cover only those\n\nINFO    pagination-repeated-cursor  tools/list\n  claude_code <2.1.295 [advisory]: Claude Code before 2.1.295 re-requests a repeated cursor up to 20 times per connect.\n  detail: nextCursor repeated after 2 pages\n  fix: Never return the same nextCursor twice.\n\n0 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": false,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": true
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 2
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.287"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "nextCursor repeated after 2 pages",
+     "effects": [
+      {
+       "evidence": "issue",
+       "harness": "claude_code",
+       "impact": "advisory",
+       "range": {
+        "fixed": "2.1.295",
+        "introduced": null
+       },
+       "summary": "Claude Code before 2.1.295 re-requests a repeated cursor up to 20 times per connect."
+      }
+     ],
+     "fix": "Never return the same nextCursor twice.",
+     "location": "tools/list",
+     "rule": "pagination-repeated-cursor",
+     "severity": "info",
+     "title": "nextCursor repeats"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "old-codex": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: codex@0.161.0\nincomplete: tools/list stopped early (page cap or repeated cursor) after 2 pages, 2 items read; findings cover only those\n\nERROR   pagination-multi-page  tools/list\n  codex <0.162.0 [tool]: Codex before 0.162.0 reads only the first tools/list page.\n  detail: 2 pages\n  fix: Return all tools in one page.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": false,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": true
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 2
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.161.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "2 pages",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": "0.162.0",
+        "introduced": null
+       },
+       "summary": "Codex before 0.162.0 reads only the first tools/list page."
+      }
+     ],
+     "fix": "Return all tools in one page.",
+     "location": "tools/list",
+     "rule": "pagination-multi-page",
+     "severity": "error",
+     "title": "tools/list spans several pages"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\nincomplete: tools/list stopped early (page cap or repeated cursor) after 2 pages, 2 items read; findings cover only those\n\nERROR   pagination-repeated-cursor  tools/list\n  codex >=0.162.0 [server]: Codex rejects a catalog whose nextCursor repeats.\n  detail: nextCursor repeated after 2 pages\n  fix: Never return the same nextCursor twice.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": false,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": true
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 2
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "nextCursor repeated after 2 pages",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "server",
+       "range": {
+        "fixed": null,
+        "introduced": "0.162.0"
+       },
+       "summary": "Codex rejects a catalog whose nextCursor repeats."
+      }
+     ],
+     "fix": "Never return the same nextCursor twice.",
+     "location": "tools/list",
+     "rule": "pagination-repeated-cursor",
+     "severity": "error",
+     "title": "nextCursor repeats"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "prompts-old-claude": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | 2 prompts | - resources\nevaluated: claude_code@2.1.287\nincomplete: prompts/list stopped early (page cap or repeated cursor) after 2 pages, 2 items read; findings cover only those\n\nINFO    pagination-repeated-cursor  prompts/list\n  claude_code <2.1.295 [advisory]: Claude Code before 2.1.295 re-requests a repeated cursor up to 20 times per connect.\n  detail: nextCursor repeated after 2 pages\n  fix: Never return the same nextCursor twice.\n\n0 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": false,
+    "discover": "error",
+    "listings": {
+     "prompts/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": true
+     },
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": 2,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.287"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "nextCursor repeated after 2 pages",
+     "effects": [
+      {
+       "evidence": "issue",
+       "harness": "claude_code",
+       "impact": "advisory",
+       "range": {
+        "fixed": "2.1.295",
+        "introduced": null
+       },
+       "summary": "Claude Code before 2.1.295 re-requests a repeated cursor up to 20 times per connect."
+      }
+     ],
+     "fix": "Never return the same nextCursor twice.",
+     "location": "prompts/list",
+     "rule": "pagination-repeated-cursor",
+     "severity": "info",
+     "title": "nextCursor repeats"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "prompts-only": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 1 tools | 2 prompts | - resources\nevaluated: codex@0.163.0\nincomplete: prompts/list stopped early (page cap or repeated cursor) after 2 pages, 2 items read; findings cover only those\n\nINFO    prompts-ignored-by-codex  prompts/list\n  codex all versions [advisory]: Codex never requests prompts; they are invisible there.\n  detail: 2 prompts\n  fix: Don't put core functionality only in prompts.\n\n0 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": false,
+    "discover": "error",
+    "listings": {
+     "prompts/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": true
+     },
+     "tools/list": {
+      "error": null,
+      "items": 1,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": 2,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 1,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "result-hints",
+     "detail": "2 prompts",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex never requests prompts; they are invisible there."
+      }
+     ],
+     "fix": "Don't put core functionality only in prompts.",
+     "location": "prompts/list",
+     "rule": "prompts-ignored-by-codex",
+     "severity": "info",
+     "title": "prompts invisible in Codex"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

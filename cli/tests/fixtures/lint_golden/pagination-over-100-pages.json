@@ -1,0 +1,235 @@
+{
+ "boundary-100": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 100 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   pagination-over-20-pages  tools/list\n  claude_code >=2.1.144 [tool]: Claude Code stops after 20 tools/list pages; later tools are ignored.\n  detail: 100 pages\n  fix: Use at most 20 pages (larger pages).\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 100,
+      "pages": 100,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 100,
+    "tool_pages": 100
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "100 pages",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.144"
+       },
+       "summary": "Claude Code stops after 20 tools/list pages; later tools are ignored."
+      }
+     ],
+     "fix": "Use at most 20 pages (larger pages).",
+     "location": "tools/list",
+     "rule": "pagination-over-20-pages",
+     "severity": "error",
+     "title": "tools/list spans more than 20 pages"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 101 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 101,
+      "pages": 11,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 101,
+    "tool_pages": 11
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 101 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   pagination-over-20-pages  tools/list\n  claude_code >=2.1.144 [tool]: Claude Code stops after 20 tools/list pages; later tools are ignored.\n  detail: 101 pages\n  fix: Use at most 20 pages (larger pages).\n\nERROR   pagination-over-100-pages  tools/list\n  codex >=0.162.0 [server]: Codex rejects catalogs longer than 100 pages; the server's tools are excluded.\n  detail: 101 pages\n  fix: Use fewer, larger pages.\n\n2 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 101,
+      "pages": 101,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 101,
+    "tool_pages": 101
+   },
+   "counts": {
+    "error": 2,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "101 pages",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.144"
+       },
+       "summary": "Claude Code stops after 20 tools/list pages; later tools are ignored."
+      }
+     ],
+     "fix": "Use at most 20 pages (larger pages).",
+     "location": "tools/list",
+     "rule": "pagination-over-20-pages",
+     "severity": "error",
+     "title": "tools/list spans more than 20 pages"
+    },
+    {
+     "category": "listing",
+     "detail": "101 pages",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "server",
+       "range": {
+        "fixed": null,
+        "introduced": "0.162.0"
+       },
+       "summary": "Codex rejects catalogs longer than 100 pages; the server's tools are excluded."
+      }
+     ],
+     "fix": "Use fewer, larger pages.",
+     "location": "tools/list",
+     "rule": "pagination-over-100-pages",
+     "severity": "error",
+     "title": "listing spans more than 100 pages"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

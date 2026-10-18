@@ -1,0 +1,369 @@
+{
+ "discarded-branch": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nWARNING root-conditionals  tool 'probe'\n  codex all versions [degraded]: Codex drops this constraint; the model never sees it.\n  detail: root if\n  fix: Describe the constraint in the tool or property description.\n\nINFO    codex-dropped-constraints  tool 'probe'\n  codex all versions [advisory]: Codex drops these keywords; the model never sees the constraint.\n  detail: if\n  fix: Repeat important constraints in the property description.\n\n0 errors, 1 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "root-schema",
+     "detail": "root if",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex drops this constraint; the model never sees it."
+      }
+     ],
+     "fix": "Describe the constraint in the tool or property description.",
+     "location": "tool 'probe'",
+     "rule": "root-conditionals",
+     "severity": "warning",
+     "title": "conditional keywords at the schema root"
+    },
+    {
+     "category": "codex-projection",
+     "detail": "if",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex drops these keywords; the model never sees the constraint."
+      }
+     ],
+     "fix": "Repeat important constraints in the property description.",
+     "location": "tool 'probe'",
+     "rule": "codex-dropped-constraints",
+     "severity": "info",
+     "title": "constraints Codex drops"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nWARNING const-enum-coerced  tool 'probe'\n  codex all versions [degraded]: Codex coerces this const or enum to type string.\n  detail: /properties/v const\n  fix: Give enums an explicit, uniform type.\n\n0 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "codex-projection",
+     "detail": "/properties/v const",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex coerces this const or enum to type string."
+      }
+     ],
+     "fix": "Give enums an explicit, uniform type.",
+     "location": "tool 'probe'",
+     "rule": "const-enum-coerced",
+     "severity": "warning",
+     "title": "const or enum Codex coerces to string"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "typed-enum": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "untyped-enum": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nWARNING const-enum-coerced  tool 'probe'\n  codex all versions [degraded]: Codex coerces this const or enum to type string.\n  detail: /properties/v enum\n  fix: Give enums an explicit, uniform type.\n\n0 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "codex-projection",
+     "detail": "/properties/v enum",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex coerces this const or enum to type string."
+      }
+     ],
+     "fix": "Give enums an explicit, uniform type.",
+     "location": "tool 'probe'",
+     "rule": "const-enum-coerced",
+     "severity": "warning",
+     "title": "const or enum Codex coerces to string"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}
