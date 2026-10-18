@@ -6,8 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from m3.async_api import AsyncMCPTestKit
 from m3.direct_client import ToolCallResult
 from m3.matchers import check, expect
+from m3.observability import ToolResult
+from m3.testing import MockMCPServer
 from m3.types import CallToolResult, ToolAnnotations, ToolInfo
 
 
@@ -167,3 +170,30 @@ def test_response_size_limit_is_inclusive_and_never_echoes_content() -> None:
             expect(result).to_have_response_size_at_most(max_bytes=invalid)
     with pytest.raises(AssertionError, match="subject is not a tool call result"):
         expect("text").to_have_response_size_at_most(max_bytes=10)
+
+
+@pytest.mark.asyncio
+async def test_response_size_measures_mcp_wire_spelling_on_direct_and_trace_results() -> (
+    None
+):
+    mock = MockMCPServer()
+
+    @mock.tool("greet")
+    def greet(_arguments: dict[str, object]) -> str:
+        return "hi"
+
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
+        async with kit.direct(mock.in_process()) as client:
+            direct = await client.call_tool("greet", {})
+
+    wire_size = len('{"content":[{"text":"hi","type":"text"}]}')
+    trace = ToolResult.model_validate({"content": [{"kind": "text", "text": "hi"}]})
+    for result in (direct, trace):
+        expect(result).to_have_response_size_at_most(max_bytes=wire_size)
+        with pytest.raises(AssertionError, match=f"is {wire_size} bytes"):
+            expect(result).to_have_response_size_at_most(max_bytes=wire_size - 1)
+
+    with_nulls = CallToolResult(structured_content={"next": None})
+    nulls_size = len('{"content":[],"structuredContent":{"next":null}}')
+    with pytest.raises(AssertionError, match=f"is {nulls_size} bytes"):
+        expect(with_nulls).to_have_response_size_at_most(max_bytes=nulls_size - 1)

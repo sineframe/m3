@@ -39,9 +39,10 @@ expect(result).to_have_response_size_at_most(max_bytes=20_000, max_tokens=5_000)
 (from `title` or `annotations.title`) or leaves a hint undeclared. Hints are
 checked as the server declared them, so MCP spec defaults never count, and
 removing a hint fails the test. `to_have_tool_annotations` also fails when no
-tool name matches the pattern. The size check measures the compact JSON of
-`content` and `structuredContent` in UTF-8 bytes; `max_tokens` compares an
-estimate of characters divided by four.
+tool name matches the pattern. The size check measures `content` and
+`structuredContent` as compact JSON in UTF-8 bytes, spelled as MCP sends them
+(unset content-block fields are left out). It also accepts a trace
+`ToolResult`. `max_tokens` compares an estimate of characters divided by four.
 
 ## Agent evidence
 

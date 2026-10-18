@@ -268,6 +268,39 @@ def _tool_title(tool: _Any) -> str | None:
     return getattr(tool, "title", None) or getattr(annotations, "title", None) or None
 
 
+def _without_none(value: _Any) -> _Any:
+    # MCP omits unset content-block fields on the wire; m3's direct dump keeps
+    # them as nulls (``"annotations": null``, ``"_meta": null``).
+    if isinstance(value, _Mapping):
+        return {
+            str(key): _without_none(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, (list, tuple)):
+        return [_without_none(item) for item in value]
+    return value
+
+
+def _wire_tool_result(subject: _Any) -> dict[str, _Any] | None:
+    """``content`` and ``structuredContent`` of a tool result as MCP spells them."""
+    if isinstance(subject, _ToolResult):
+        wire = subject.to_mcp_json()
+        assert isinstance(wire, dict)
+        return {
+            key: wire[key] for key in ("content", "structuredContent") if key in wire
+        }
+    if not (hasattr(subject, "content") and hasattr(subject, "structured_content")):
+        return None
+    payload: dict[str, _Any] = {
+        "content": [_without_none(_plain(block)) for block in subject.content]
+    }
+    # structuredContent is server data: its nulls are real and stay counted.
+    if subject.structured_content is not None:
+        payload["structuredContent"] = _plain(subject.structured_content)
+    return payload
+
+
 def _observation_value(value: _Any) -> _Any:
     if isinstance(value, _Observation) and value.state is _ObservationState.OBSERVED:
         return value.value
@@ -1478,10 +1511,14 @@ class Expectation(_Generic[_SubjectT]):
     ) -> None:
         """Assert a tool call result stays within a size budget.
 
-        Size is the UTF-8 byte length of the compact JSON form of ``content``
-        plus ``structuredContent`` (when present). ``max_tokens`` compares an
-        estimate of ``ceil(characters / 4)``, not a tokenizer count. A size
-        equal to the limit passes.
+        Accepts a direct ``call_tool`` result or a trace ``ToolResult``. Size is
+        the UTF-8 byte length of the compact JSON of ``content`` plus
+        ``structuredContent`` (when present), spelled as MCP sends them: unset
+        content-block fields are omitted. A trace ``ToolResult`` does not keep
+        block ``annotations`` or ``_meta``, so it can measure smaller than the
+        direct result of the same call. ``max_tokens`` compares an estimate of
+        ``ceil(characters / 4)``, not a tokenizer count. A size equal to the
+        limit passes.
         """
         if max_bytes is None and max_tokens is None:
             raise ValueError(
@@ -1493,15 +1530,12 @@ class Expectation(_Generic[_SubjectT]):
                 isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0
             ):
                 raise ValueError(f"{name} must be a positive integer")
-        subject = self.subject
-        if not (hasattr(subject, "content") and hasattr(subject, "structured_content")):
+        payload = _wire_tool_result(self.subject)
+        if payload is None:
             self._fail("subject is not a tool call result")
             return
-        payload: dict[str, _Any] = {"content": list(subject.content)}
-        if subject.structured_content is not None:
-            payload["structuredContent"] = subject.structured_content
         text = _json.dumps(
-            _plain(payload),
+            payload,
             separators=(",", ":"),
             ensure_ascii=False,
             sort_keys=True,
