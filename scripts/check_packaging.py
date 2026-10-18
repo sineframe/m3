@@ -212,6 +212,9 @@ def installed_import_smoke(
         sqlite3.connect = denied
 
         import m3
+        # Resolve every lazy root name while the I/O guards are active.
+        for _name in dir(m3):
+            getattr(m3, _name)
         import importlib.util
         def module_missing(name):
             try:

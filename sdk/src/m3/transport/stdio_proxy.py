@@ -13,11 +13,13 @@ import sys
 import threading
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from m3.trace.capture import CaptureWriter, parse_json_payload
 from m3.transport._stdio_launch import STDIO_LAUNCH_VERSION
-from m3.transport.tool_policy import ProxyToolPolicy
+
+if TYPE_CHECKING:
+    from m3.transport.tool_policy import ProxyToolPolicy
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_BYTES = 16 * 1024 * 1024
@@ -585,6 +587,8 @@ def main() -> int:
     policy: ProxyToolPolicy | None = None
     if args.policy_file:
         try:
+            from m3.transport.tool_policy import ProxyToolPolicy
+
             payload = _read_policy(Path(args.policy_file))
             if not isinstance(payload, dict):
                 raise ValueError
