@@ -20,6 +20,9 @@ only directory checks run; add `--harness` to run the Claude Code and Codex
 checks as well. Without `--directory`, `m3 lint` behaves exactly as before.
 Like every lint check, directory checks only read what the server lists: they
 never call a tool, never contact a model and never print header values.
+With directories alone, a `tools/list` that fails, or that has entries which
+are not tools with a string name, exits with status 2: nothing could be
+checked. Run without `--directory` to see what is wrong with the listing.
 
 **Passing does not mean a directory will approve the server.** Reviewers also
 test behaviour, authentication, privacy policies, documentation and use
@@ -39,7 +42,9 @@ Each finding names the rule and the field, the observed fact, one line per
 chosen directory with its severity and the policy section it comes from, and
 a fix. The JSON report carries the same per directory under `directories`,
 including the verbatim policy `quote` and `policy_date`. The last line of the
-human report counts findings per directory.
+human report counts findings per directory. If `tools/list` failed or stopped
+early, that line starts with `directory readiness: incomplete` and covers only
+the tools that were read.
 
 - **error**: the policy states a requirement or a rejection reason, and every
   tool matching the condition breaks it, whatever the tool does. Errors fail

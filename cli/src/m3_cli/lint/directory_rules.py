@@ -128,7 +128,9 @@ STEERING: dict[str, tuple[re.Pattern[str], ...]] = {
     ),
     "avoid-builtins": _phrases(
         rf"\b{_NOT} (?:use|call|invoke) (?:any )?{_BUILT_IN} (?:or {_BUILT_IN} )?(?:\w+ ){{0,3}}tools?\b",
-        rf"\b(?:{_NOT}|skip|avoid)(?: [\w-]+){{0,6}} (?:web search|search the web|the browser)\b",
+        rf"\b{_NOT} (?:also )?(?:use|call|run|do|perform|rely on|fall back to) (?:a |the )?(?:web search(?:es)?|browser|browsing)\b",
+        rf"\b{_NOT} (?:also )?(?:\w+ [\w-]+ or )?search the web\b",
+        r"\b(?:skip|avoid) (?:a |the |any )?(?:web search(?:es)?|searching the web|browsing|using the browser)\b",
         r"\binstead of (?:a |the )?(?:web search|built-in|searching the web)\b",
         r"\bprefer this (?:\w+ )?over (?:a |the )?(?:web search|built-in)\b",
     ),
@@ -561,6 +563,12 @@ def _check_steering(snapshot: Snapshot) -> Iterator[Hit]:
 _TAG = range(0xE0020, 0xE0080)
 _TAG_LETTERS = range(0xE0020, 0xE007F)
 _FLAG = "\U0001f3f4"
+# Tag sequences that are recommended emoji: the England, Scotland and Wales
+# flags. Any other tag run, inside a flag or not, hides text.
+_SUBDIVISIONS = tuple(
+    "".join(chr(0xE0000 + ord(c)) for c in code) + "\U000e007f"
+    for code in ("gbeng", "gbsct", "gbwls")
+)
 _CANCEL_TAG = "\U000e007f"
 _BIDI = frozenset("‪‫‬‭‮⁦⁧⁨⁩")
 _ZERO_WIDTH = frozenset("​⁠﻿")
@@ -577,11 +585,9 @@ def _stray_tags(text: str) -> list[str]:
     while i < len(text):
         char = text[i]
         if char == _FLAG:
-            j = i + 1
-            while j < len(text) and ord(text[j]) in _TAG_LETTERS:
-                j += 1
-            if j > i + 1 and j < len(text) and text[j] == _CANCEL_TAG:
-                i = j + 1
+            tail = next((s for s in _SUBDIVISIONS if text.startswith(s, i + 1)), None)
+            if tail is not None:
+                i += 1 + len(tail)
                 continue
         if char == "\U000e0001" or ord(char) in _TAG:
             stray.append(char)

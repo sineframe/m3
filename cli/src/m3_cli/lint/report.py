@@ -268,10 +268,20 @@ def print_human(report: dict[str, Any], style: Style | None) -> None:
         f"{counts['error']} errors, {counts['warning']} warnings, {counts['info']} notes"
     )
     if directories:
-        out("directory readiness: " + out.separator.join(_readiness(report)))
+        status = report["collection"]["listings"].get("tools/list", {})
+        if status.get("error") is not None or status.get("truncated"):
+            # Never a clean verdict on a partial listing.
+            out(
+                f"directory readiness: incomplete, tools/list read "
+                f"{status.get('items', 0)} tools before it "
+                f"{'failed' if status.get('error') is not None else 'stopped'}; "
+                + out.separator.join(_readiness(report, partial=True))
+            )
+        else:
+            out("directory readiness: " + out.separator.join(_readiness(report)))
 
 
-def _readiness(report: dict[str, Any]) -> list[str]:
+def _readiness(report: dict[str, Any], *, partial: bool = False) -> list[str]:
     """Per chosen directory: findings counted at their worst severity there."""
 
     parts = []
@@ -290,7 +300,8 @@ def _readiness(report: dict[str, Any]) -> list[str]:
                 f"{directory} {counts['error']} errors, {counts['warning']} warnings"
             )
         else:
-            parts.append(f"{directory} no findings")
+            empty = "nothing found in what was read" if partial else "no findings"
+            parts.append(f"{directory} {empty}")
     return parts
 
 

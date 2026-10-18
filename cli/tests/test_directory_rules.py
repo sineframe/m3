@@ -212,6 +212,44 @@ def test_directories_alone_need_the_tool_list(capsys: Any, lint_spec: Any) -> No
     assert "directory checks need the tool list" in capsys.readouterr().err
 
 
+def test_readiness_says_when_the_tool_list_is_incomplete(
+    capsys: Any, lint_spec: Any
+) -> None:
+    lint_spec({"tools": [TITLED], "fail": {"listing": "tools", "mode": "error"}})
+    args = ["lint", "--directory", "all", "--harness", "codex", "--fail-on", "never"]
+    assert main([*args, "--", *SERVER]) == 0
+    last = capsys.readouterr().out.rstrip("\n").splitlines()[-1]
+    assert last.startswith("directory readiness: incomplete")
+    assert "no findings" not in last
+    # Page 2 failing leaves the first page's findings, marked as partial.
+    lint_spec(
+        {
+            "tools": [TITLED, UNTITLED],
+            "page_size": 1,
+            "fail": {"listing": "tools", "page": 2, "mode": "error"},
+        }
+    )
+    main([*args, "--", *SERVER])
+    assert "directory readiness: incomplete" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        [5, "x", None],
+        [TITLED | {"name": 5}],
+        [{k: v for k, v in TITLED.items() if k != "name"}],
+    ],
+    ids=["not-objects", "name-not-string", "name-missing"],
+)
+def test_directories_alone_reject_malformed_tools(
+    tools: list[Any], capsys: Any, lint_spec: Any
+) -> None:
+    lint_spec({"tools": tools})
+    assert main(["lint", "--directory", "all", "--", *SERVER]) == 2
+    assert "not tools with a string name" in capsys.readouterr().err
+
+
 def test_deep_combinators_do_not_crash() -> None:
     from m3_cli.lint.directory_rules import _values
 

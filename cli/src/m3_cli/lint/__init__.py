@@ -103,6 +103,19 @@ def _run(args: argparse.Namespace, stdio_command: list[str], *, as_json: bool) -
     if directories and not targets and snapshot.tools.error is not None:
         # Directory checks read the tool list; without it nothing was checked.
         raise LintCollectError("tools/list failed; directory checks need the tool list")
+    if (
+        directories
+        and not targets
+        and any(
+            not isinstance(tool, dict) or not isinstance(tool.get("name"), str)
+            for tool in snapshot.tools.items
+        )
+    ):
+        # Directory rules skip entries they can't read; harness rules report them.
+        raise LintCollectError(
+            "tools/list has entries that are not tools with a string name; "
+            "run without --directory to see them"
+        )
     findings = evaluate(snapshot, targets, set(args.ignore), directories)
     target = (
         report_module.http_target(url)
