@@ -66,8 +66,13 @@ def _is_development_install() -> bool:
         if direct_url is None:
             return False
         payload = json.loads(direct_url)
-        directory = payload.get("dir_info") if isinstance(payload, dict) else None
-        return isinstance(directory, dict) and directory.get("editable") is True
+        if not isinstance(payload, dict):
+            return False
+        # Checkouts carry a placeholder version with no release tag, so editable,
+        # local-directory and VCS installs cannot name a release to install.
+        return isinstance(payload.get("dir_info"), dict) or isinstance(
+            payload.get("vcs_info"), dict
+        )
     except (
         importlib.metadata.PackageNotFoundError,
         OSError,
@@ -130,7 +135,8 @@ def ensure_agent_skill(project_root: Path, cli_version: str, *, enabled: bool) -
         print("Agent skill: skipped (--no-skill)")
         return
     if any(os.environ.get(name) for name in _CI_MARKERS):
-        print("Agent skill: skipped in CI")
+        print("Agent skill: skipped in CI. To install it, run:")
+        print(f"  {cmd}")
         return
     if canary_build() is not None:
         print("Agent skill: skipped for a canary build of M3")
@@ -167,7 +173,16 @@ def ensure_agent_skill(project_root: Path, cli_version: str, *, enabled: bool) -
                 f"Agent skill: using existing {SKILL_NAME} at {existing}; "
                 "it was not installed by m3"
             )
-            print(f"  To use the copy for this M3 release, run: {cmd}")
+            if existing in project_paths:
+                print(f"  To use the copy for this M3 release, run: {cmd}")
+            else:
+                print(
+                    f"  To replace it with the copy for this M3 release, run: {cmd} -g"
+                )
+                print(
+                    "  Without -g the command adds a second copy to this project "
+                    "and leaves the one in your home directory in place."
+                )
             return
         action = "installed"
 
