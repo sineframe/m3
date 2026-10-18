@@ -116,6 +116,56 @@
    }
   },
   {
+   "name": "page-2-old-codex",
+   "spec": {
+    "tools": [
+     {
+      "name": "ctl",
+      "description": "Control tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     },
+     {
+      "name": "probe",
+      "description": "Probe tool",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true
+      }
+     }
+    ],
+    "page_size": 1,
+    "fail": {
+     "page": 2,
+     "mode": "error"
+    }
+   },
+   "args": [
+    "--harness",
+    "codex@0.155.0"
+   ],
+   "expect": "absent"
+  },
+  {
    "name": "page-2-hang",
    "spec": {
     "tools": [

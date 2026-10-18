@@ -270,8 +270,12 @@ def _check_list_changed(snapshot: Snapshot) -> Iterator[Hit]:
 
 
 def _check_multi_page(snapshot: Snapshot) -> Iterator[Hit]:
-    if snapshot.tools.pages > 1:
-        yield Hit("tools/list", f"{snapshot.tools.pages} pages")
+    tools = snapshot.tools
+    if tools.pages > 1:
+        yield Hit("tools/list", f"{tools.pages} pages")
+    elif tools.pages == 1 and tools.error is not None:
+        # The first page offered a cursor; the next page then failed.
+        yield Hit("tools/list", "more than 1 page (a later page failed)")
 
 
 def _check_over_20_pages(snapshot: Snapshot) -> Iterator[Hit]:
@@ -320,7 +324,10 @@ def _check_tools_list_failed(snapshot: Snapshot) -> Iterator[Hit]:
     if error in ("error", "timeout", "invalid") or (
         error == "method_not_found" and declared(_capabilities(snapshot), "tools")
     ):
-        yield Hit("tools/list", str(error))
+        # Codex before 0.162.0 reads only the first page, so a failure on a
+        # later page does not reach it.
+        page = "first-page" if snapshot.tools.pages == 0 else "later-page"
+        yield Hit("tools/list", str(error), frozenset({page}))
 
 
 # --- root schema ---------------------------------------------------------------
@@ -528,7 +535,7 @@ def _codex_parse_variants(schema: dict[str, Any]) -> set[str]:
     variants: set[str] = set()
     if schema.get("type") == "null":
         variants.add("null-root")
-    for _, sub, _ in _codex_subschemas(schema):
+    for pointer, sub, _ in _codex_subschemas(schema):
         if isinstance(sub.get("items"), list):
             variants.add("items-list")
         required = sub.get("required")
@@ -553,7 +560,11 @@ def _codex_parse_variants(schema: dict[str, Any]) -> set[str]:
         ):
             variants.add("min-items")
         if "description" in sub and not isinstance(sub["description"], str):
-            variants.add("description-type")
+            # Codex 0.140.0+ tolerates it under additionalProperties.
+            if "/additionalProperties" in pointer:
+                variants.add("additional-description-type")
+            else:
+                variants.add("description-type")
         if "$ref" in sub and not isinstance(sub["$ref"], str):
             variants.add("ref-type")
     return variants
@@ -1151,7 +1162,6 @@ _PARSE_VARIANTS = (
     "properties-type",
     "combinator-type",
     "description-type",
-    "ref-type",
     "null-root",
 )
 
@@ -1409,6 +1419,15 @@ RULES: tuple[Rule, ...] = (
                 "V",
                 "L",
                 "tools/list failed; Codex shows no tools for this server.",
+                when=("first-page",),
+            ),
+            CX(
+                "0.162.0",
+                None,
+                "V",
+                "L",
+                "tools/list failed on a later page; Codex shows no tools for this server.",
+                when=("later-page",),
             ),
         ),
         "Make tools/list succeed.",
@@ -1686,6 +1705,15 @@ RULES: tuple[Rule, ...] = (
         (
             CX(None, None, "T", "L", _CODEX_PARSE_FAILURE, when=_PARSE_VARIANTS),
             CX("0.155.0", None, "T", "L", _CODEX_PARSE_FAILURE, when=("min-items",)),
+            CX("0.140.0", None, "T", "L", _CODEX_PARSE_FAILURE, when=("ref-type",)),
+            CX(
+                None,
+                "0.140.0",
+                "T",
+                "L",
+                _CODEX_PARSE_FAILURE,
+                when=("additional-description-type",),
+            ),
         ),
         "Fix the malformed keyword.",
         _check_codex_parse,
