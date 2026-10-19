@@ -57,6 +57,12 @@ request, including MCP tool calls, goes to `permission_policy`, which denies
 by default; pass `permission_policy="allow"` to `agent.run(...)` or
 `agent.session(...)` for a trusted ACP agent.
 
+OpenCode's own prompts (reading outside the workspace, `.env` files, repeated
+identical tool calls) also follow `permission_policy` unless a native OpenCode
+tool policy is set: the default denies them, `"allow"` allows them, and
+`"prompt"` sends each one to the permission handler with the permission name,
+patterns and metadata in `PermissionRequest.context`.
+
 ## Async API
 
 `AsyncMCPTestKit`, `AsyncDirectClient`, `AsyncAgentSession`, and
