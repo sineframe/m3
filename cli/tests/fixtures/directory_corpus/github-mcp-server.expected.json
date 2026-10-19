@@ -1,0 +1,2359 @@
+{
+ "_note": "Hand-reviewed directory findings for github-mcp-server.json. verdict 'false-positive' marks hits a rule should not report; update this file deliberately when a rule change adds or removes hits.",
+ "findings": [
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'actions_get' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'actions_list' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_comment_to_pending_review' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_issue_comment' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_issue_comment_reaction' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_issue_reaction' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_pull_request_review_comment' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_pull_request_review_comment_reaction' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_reply_to_pull_request_comment' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'add_sub_issue' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'assign_copilot_to_issue' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'assign_copilot_to_issue_with_intent' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_branch' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_gist' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_issue' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_or_update_file' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_pull_request' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_pull_request_review' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_repository' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'create_repository_ruleset' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'custom_properties_read' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'custom_properties_write' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'dismiss_notification' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'find_duplicate' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'fork_repository' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_code_quality_finding' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_code_scanning_alert' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_commit' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_dependabot_alert' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_discussion' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_discussion_comments' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_file_blame' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_file_contents' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_gist' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_global_security_advisory' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_job_logs' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_label' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_latest_release' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_me' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_notification_details' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_release_by_tag' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_repository_tree' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_secret_scanning_alert' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_tag' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_team_members' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'get_teams' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'hide_issue_comment' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'hide_pull_request_review' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'hide_pull_request_review_comment' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'issue_dependency_read' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'issue_dependency_write' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'issue_read' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'issue_write' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_branches' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_code_scanning_alerts' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_commits' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_dependabot_alerts' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_discussion_categories' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_discussions' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_gists' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_global_security_advisories' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_issue_fields' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_issue_types' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_issues' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_label' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_notifications' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_org_repository_security_advisories' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_pull_requests' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_releases' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_repository_collaborators' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_repository_security_advisories' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_secret_scanning_alerts' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_starred_repositories' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'list_tags' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'mark_all_notifications_read' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'merge_pull_request' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'projects_get' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'projects_list' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'pull_request_read' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'pull_request_review_write' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'push_files' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'repository_ruleset_read' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'reprioritize_sub_issue' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'request_copilot_review' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'request_pull_request_reviewers' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Additive write (creates or adds, does not change existing data); Claude's 'modify or delete' wording is ambiguous here, which the warning's hedge covers."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'resolve_review_thread' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'search_code' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'search_commits' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'search_issues' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'search_orgs' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'search_pull_requests' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'search_repositories' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'search_users' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'set_issue_fields' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'star_repository' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'sub_issue_write' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'submit_pending_pull_request_review' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'ui_get' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint true, destructiveHint absent; Claude requires both hints on every tool. Read-only tool without destructiveHint: one-declared warning."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'unhide_issue_comment' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'unhide_pull_request_review' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'unhide_pull_request_review_comment' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'unresolve_review_thread' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'unstar_repository' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_gist' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_assignees' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_body' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_comment' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_labels' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_milestone' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_state' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_title' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_issue_type' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_pull_request' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_pull_request_body' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_pull_request_branch' annotations",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint absent; Claude requires both hints on every tool."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_pull_request_draft_state' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_pull_request_state' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-claude-safety-hints",
+   "location": "tool 'update_pull_request_title' annotations",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: readOnlyHint false, destructiveHint false. Tool changes existing data."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'actions_get' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'actions_list' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'actions_run_trigger' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'add_comment_to_pending_review' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'add_issue_comment' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'add_reply_to_pull_request_comment' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'assign_copilot_to_issue' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'assign_copilot_to_issue_with_intent' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'create_branch' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'create_gist' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'create_or_update_file' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'create_pull_request' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'create_repository' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'create_repository_ruleset' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'custom_properties_read' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'custom_properties_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'delete_file' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'delete_repository' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'discussion_comment_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'dismiss_notification' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'find_duplicate' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'fork_repository' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_code_quality_finding' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_code_scanning_alert' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_commit' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_dependabot_alert' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_discussion' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_discussion_comments' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_file_blame' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_file_contents' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_gist' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_global_security_advisory' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_job_logs' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_label' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_latest_release' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_me' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_notification_details' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_release_by_tag' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_repository_tree' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_secret_scanning_alert' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_tag' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_team_members' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'get_teams' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'issue_dependency_read' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'issue_dependency_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'issue_read' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'issue_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'label_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_branches' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_code_scanning_alerts' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_commits' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_dependabot_alerts' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_discussion_categories' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_discussions' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_gists' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_global_security_advisories' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_issue_fields' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_issue_types' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_issues' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_label' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_notifications' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_org_repository_security_advisories' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_pull_requests' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_releases' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_repository_collaborators' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_repository_security_advisories' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_secret_scanning_alerts' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_starred_repositories' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'list_tags' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'manage_notification_subscription' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'manage_repository_notification_subscription' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'mark_all_notifications_read' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'merge_pull_request' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'projects_get' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'projects_list' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'projects_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'pull_request_read' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'pull_request_review_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'push_files' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'repository_ruleset_read' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'request_copilot_review' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'search_code' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'search_commits' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'search_issues' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'search_orgs' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'search_pull_requests' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'search_repositories' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'search_users' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'star_repository' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'sub_issue_write' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'ui_get' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'unstar_repository' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'update_gist' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'update_issue_comment' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'update_pull_request' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  },
+  {
+   "rule": "directory-hints-not-explicit",
+   "location": "tool 'update_pull_request_branch' annotations",
+   "directories": {
+    "claude": null,
+    "openai": "error",
+    "muse": null
+   },
+   "verdict": "true",
+   "note": "Annotations verified: destructiveHint absent, openWorldHint absent."
+  }
+ ]
+}

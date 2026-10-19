@@ -1,0 +1,443 @@
+{
+ "rule": "directory-claude-safety-hints",
+ "cases": [
+  {
+   "name": "destructive-missing",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "read-only-missing",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "no-annotations",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "write-destructive-missing",
+   "spec": {
+    "tools": [
+     {
+      "name": "create_note",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "error",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "non-boolean",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": "true",
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "write-not-destructive",
+   "spec": {
+    "tools": [
+     {
+      "name": "save_note",
+      "title": "Save note",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "both-variants",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "openWorldHint": false
+      }
+     },
+     {
+      "name": "save_note",
+      "title": "Save note",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "destructive-write",
+   "spec": {
+    "tools": [
+     {
+      "name": "save_note",
+      "title": "Save note",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": false,
+       "destructiveHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "open-world-missing",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "destructiveHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "openai-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "probe",
+      "title": "Probe tool",
+      "description": "Looks up a record by its identifier.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string",
+         "description": "Record identifier."
+        }
+       }
+      },
+      "annotations": {
+       "readOnlyHint": true,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "openai"
+   ],
+   "expect": "absent",
+   "directories": {
+    "claude": null,
+    "openai": null,
+    "muse": null
+   }
+  },
+  {
+   "name": "destructive-without-read-only",
+   "spec": {
+    "tools": [
+     {
+      "name": "lookup",
+      "title": "Lookup",
+      "description": "Look up a record.",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      },
+      "annotations": {
+       "destructiveHint": false,
+       "openWorldHint": false
+      }
+     }
+    ]
+   },
+   "args": [
+    "--directory",
+    "all"
+   ],
+   "expect": "present",
+   "directories": {
+    "claude": "warning",
+    "openai": null,
+    "muse": null
+   }
+  }
+ ]
+}

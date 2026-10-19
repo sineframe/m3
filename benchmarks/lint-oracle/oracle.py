@@ -12,9 +12,11 @@ Stdlib only (Python >= 3.10).
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures
 import fnmatch
 import gzip
+import http.client
 import importlib.util
 import json
 import os
@@ -27,9 +29,11 @@ import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE = REPO / "cli" / "tests" / "fixtures" / "lint_server.py"
@@ -897,6 +901,350 @@ def coverage(
     return lines
 
 
+# --------------------------------------------------------------------------- directory policies
+
+DIRECTORIES_MODULE = REPO / "cli" / "src" / "m3_cli" / "lint" / "directories.py"
+HEADING = re.compile(r"\x00(\d)\x00([^\x00]*)\x00")
+
+
+class _PolicyHTML(HTMLParser):
+    """Rendered text of a page, with each heading marked by level and id."""
+
+    SKIP = ("script", "style", "svg", "nav", "template")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+        self.skip = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.SKIP:
+            self.skip += 1
+        elif self.skip:
+            return
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self.parts.append(f"\n\x00{tag[1]}\x00{dict(attrs).get('id') or ''}\x00")
+        elif tag in ("p", "li", "br", "div", "tr", "dt", "dd"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.SKIP:
+            self.skip = max(0, self.skip - 1)
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip:
+            self.parts.append(data)
+
+
+def _md_slug(heading: str) -> str:
+    return re.sub(r"[^a-z0-9 -]", "", heading.lower()).strip().replace(" ", "-")
+
+
+def _md_text(markdown: str) -> str:
+    lines = []
+    for line in markdown.splitlines():
+        m = re.match(r"(#{1,6}) (.*)", line)
+        if m:
+            lines.append(
+                f"\x00{len(m.group(1))}\x00{_md_slug(m.group(2))}\x00{m.group(2)}"
+            )
+            continue
+        line = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", line)  # links keep their text
+        line = re.sub(r"^\s*[*-] ", "", line)
+        lines.append(line.replace("`", "").replace("**", ""))
+    return "\n".join(lines)
+
+
+def policy_text(url: str, body: str) -> str:
+    if urlsplit(url).hostname == "claude.com":
+        return _md_text(body)
+    parser = _PolicyHTML()
+    parser.feed(body)
+    return "".join(parser.parts)
+
+
+def policy_section(text: str, anchor: str) -> str | None:
+    """The anchored heading's text up to the next heading at its level or above."""
+
+    marks = list(HEADING.finditer(text))
+    for i, mark in enumerate(marks):
+        if mark.group(2) != anchor:
+            continue
+        level = int(mark.group(1))
+        end = len(text)
+        for later in marks[i + 1 :]:
+            if int(later.group(1)) <= level:
+                end = later.start()
+                break
+        return HEADING.sub("\n", text[mark.start() : end])
+    return None
+
+
+def _squash(text: str) -> str:
+    return " ".join(text.split())
+
+
+def quote_found(section: str, quote: str, item: str | None) -> bool:
+    if item is not None:
+        # Lettered items ("G. Instructional Software ...") each sit on a line.
+        lines = [ln.strip() for ln in section.splitlines()]
+        found = [ln for ln in lines if ln.startswith(f"{item}. ")]
+        if len(found) != 1:
+            return False
+        section = found[0]
+    haystack = _squash(section)
+    position = 0
+    for piece in quote.split(" … "):
+        at = haystack.find(_squash(piece), position)
+        if at < 0:
+            return False
+        position = at + len(_squash(piece))
+    return True
+
+
+def fetch_page(url: str, timeout: float) -> tuple[str | None, str]:
+    """(body, reason); claude.com pages are read in their Markdown form."""
+
+    page = url.split("#", 1)[0]
+    if urlsplit(page).hostname == "claude.com":
+        page += ".md"
+    request = urllib.request.Request(page, headers={"User-Agent": "m3-lint-oracle"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read().decode("utf-8", "replace"), ""
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code}"
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+    ) as exc:
+        # HTTPException covers IncompleteRead from a truncated body.
+        return None, type(exc).__name__
+
+
+def load_sources() -> tuple[str, dict[str, Any]]:
+    spec = importlib.util.spec_from_file_location(
+        "lint_directories", DIRECTORIES_MODULE
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # dataclasses resolve annotations through it
+    spec.loader.exec_module(mod)
+    return mod.POLICY_DATE, mod.SOURCES
+
+
+def run_policies(out: Path, timeout: float) -> int:
+    """Check every directory source quote against its live page."""
+
+    policy_date, sources = load_sources()
+    pages: dict[str, tuple[str | None, str]] = {}
+    for source in sources.values():
+        page = source.url.split("#", 1)[0]
+        if page not in pages:
+            pages[page] = fetch_page(source.url, timeout)
+    slices = out / "policy-sections"
+    slices.mkdir(parents=True, exist_ok=True)
+    verdicts: dict[str, list[str]] = {
+        "page-unavailable": [],
+        "anchor-missing": [],
+        "quote-missing": [],
+        "ok": [],
+    }
+    for key, source in sources.items():
+        page, _, anchor = source.url.partition("#")
+        body, reason = pages[page]
+        if body is None:
+            verdicts["page-unavailable"].append(f"{key} {page} ({reason})")
+            continue
+        section = policy_section(policy_text(source.url, body), anchor)
+        if section is None:
+            verdicts["anchor-missing"].append(f"{key} {source.url}")
+            continue
+        (slices / f"{key}.txt").write_text(
+            f"{source.url}\n\n{section.strip()}\n", encoding="utf-8"
+        )
+        if quote_found(section, source.quote, source.item):
+            verdicts["ok"].append(key)
+        else:
+            where = f" item {source.item}" if source.item else ""
+            verdicts["quote-missing"].append(f"{key} {source.url}{where}")
+    actions = {
+        "page-unavailable": "could not fetch; nothing on this page was checked",
+        "anchor-missing": "the heading moved or was renamed; re-check the page and update the source URL",
+        "quote-missing": "the policy text changed; re-check the section and update the quote and POLICY_DATE",
+    }
+    print(f"policy date in rule data: {policy_date}")
+    for page, (body, _) in sorted(pages.items()):
+        modified = re.search(
+            r'"(?:dateModified|lastUpdatedDate)"\s*:\s*"([^"]+)"', body or ""
+        )
+        print(
+            f"  {page}: {'modified ' + modified.group(1) if modified else 'no modified date'}"
+        )
+    for kind, action in actions.items():
+        if verdicts[kind]:
+            print(f"\n{kind} ({len(verdicts[kind])}): {action}")
+            for line in verdicts[kind]:
+                print(f"  {line}")
+    print(
+        f"\n{len(verdicts['ok'])} of {len(sources)} quotes found verbatim in their sections"
+    )
+    print(f"sections: {slices}")
+    (out / "policies.json").write_text(json.dumps(verdicts, indent=2))
+    if verdicts["anchor-missing"] or verdicts["quote-missing"]:
+        return 1
+    # Unchecked pages are not a pass.
+    return 2 if verdicts["page-unavailable"] else 0
+
+
+DIRECTORY_SERVERS = Path(__file__).parent / "directory_servers.json"
+
+
+def _finding_key(finding: dict[str, Any]) -> tuple[str, str]:
+    return finding["rule"], finding["location"]
+
+
+def _severities(finding: dict[str, Any]) -> dict[str, str | None]:
+    worst: dict[str, str | None] = {d: None for d in ("claude", "openai", "muse")}
+    for effect in finding.get("directories", []):
+        if worst[effect["directory"]] != "error":
+            worst[effect["directory"]] = effect["severity"]
+    return worst
+
+
+def lint_server(url: str, timeout: float) -> tuple[dict[str, Any] | None, str]:
+    proc = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            "cli",
+            "m3",
+            "lint",
+            url,
+            "--directory",
+            "all",
+            "--json",
+            "--fail-on",
+            "never",
+            "--timeout",
+            str(timeout),
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        report = json.loads(proc.stdout)
+    except ValueError:
+        return None, f"lint printed no JSON (exit {proc.returncode})"
+    if "findings" not in report:
+        return None, str(report.get("error", f"exit {proc.returncode}"))
+    if not report["collection"]["complete"]:
+        return report, "listing incomplete; findings cover only what was read"
+    return report, ""
+
+
+def run_directories(out: Path, timeout: float, jobs: int) -> int:
+    """Lint the listed servers and diff their directory findings against the
+    reviewed expectations in directory_servers.json."""
+
+    servers = json.loads(DIRECTORY_SERVERS.read_text())["servers"]
+    catalogue = load_catalogue() or []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        results = list(pool.map(lambda s: lint_server(s["url"], timeout), servers))
+    sections: dict[str, list[str]] = {
+        "unexpected": [],
+        "missing": [],
+        "unavailable": [],
+        "uncovered": [],
+    }
+    seen: set[tuple[str, str, str]] = set()
+    reports = {}
+    for server, (report, note) in zip(servers, results, strict=True):
+        name = server["name"]
+        if report is None:
+            sections["unavailable"].append(f"{name} {server['url']} ({note})")
+            continue
+        if note:
+            sections["unavailable"].append(f"{name} {server['url']} (partial: {note})")
+        reports[name] = report
+        # Compared as multisets: each finding counts on its own, so a second
+        # finding at the same location can't hide a change in the first.
+        actual: collections.Counter[tuple[str, str, str]] = collections.Counter()
+        details: dict[tuple[str, str, str], list[str]] = {}
+        for finding in report["findings"]:
+            if not finding.get("directories"):
+                continue
+            key = (*_finding_key(finding), json.dumps(_severities(finding)))
+            actual[key] += 1
+            details.setdefault(key, []).append(finding["detail"])
+            seen.update(
+                (finding["rule"], e["directory"], e["summary"])
+                for e in finding.get("directories", [])
+            )
+        expected = collections.Counter(
+            (e["rule"], e["location"], json.dumps(e["directories"]))
+            for e in server["expected"]
+        )
+        for key in sorted((actual - expected).elements()):
+            sections["unexpected"].append(
+                f"{name}: {key[0]} {key[1]} {key[2]} detail={details[key][0]!r}"
+            )
+        if note:
+            # A partial listing can't show that an expected finding is gone.
+            continue
+        for key in sorted((expected - actual).elements()):
+            sections["missing"].append(f"{name}: {key[0]} {key[1]} {key[2]}")
+    for rule in catalogue:
+        for effect in rule.get("directories", []):
+            if (rule["id"], effect["directory"], effect["summary"]) not in seen:
+                sections["uncovered"].append(
+                    f"{rule['id']} {effect['directory']} [{effect['severity']}] "
+                    f"{effect['summary']}"
+                )
+    actions = {
+        "unexpected": "decide: a true finding goes into the server's expected list; "
+        "a false positive means fixing the rule and adding a regression case",
+        "missing": "an expected finding was not produced: the rule regressed or the "
+        "server changed; re-run m3 lint on it and compare",
+        "unavailable": "not checked; this is not a pass",
+        "uncovered": "no listed server exercises these effects (case files still "
+        "must); informational",
+    }
+    for kind, action in actions.items():
+        if sections[kind]:
+            print(f"{kind} ({len(sections[kind])}): {action}")
+            for line in sections[kind]:
+                print(f"  {line}")
+            print()
+    # Partially read servers are listed as unavailable, not counted here.
+    checked = sum(1 for report, note in results if report is not None and not note)
+    print(f"{checked} of {len(servers)} servers checked")
+    (out / "directories.json").write_text(
+        json.dumps({"sections": sections, "reports": reports}, indent=2)
+    )
+    print(f"reports: {out / 'directories.json'}")
+    if sections["unexpected"] or sections["missing"]:
+        return 1
+    # Unchecked servers are not a pass.
+    return 2 if sections["unavailable"] else 0
+
+
+def _run_dir(given: str | None) -> Path:
+    out = (
+        Path(given)
+        if given
+        else Path(__file__).parent
+        / "runs"
+        / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ).resolve()  # harnesses run inside run directories; paths must be absolute
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -909,7 +1257,22 @@ def main() -> int:
     p.add_argument("--timeout", type=float, default=180.0)
     p.add_argument("--jobs", type=int, default=4)
     p.add_argument("--cases-dir", default=str(DEFAULT_CASES))
+    p.add_argument(
+        "--policies",
+        action="store_true",
+        help="check every directory policy quote against its live page",
+    )
+    p.add_argument(
+        "--directories",
+        action="store_true",
+        help="lint the listed servers in directory_servers.json against their expectations",
+    )
     a = p.parse_args()
+
+    if a.policies:
+        return run_policies(_run_dir(a.out), a.timeout)
+    if a.directories:
+        return run_directories(_run_dir(a.out), min(a.timeout, 60.0), a.jobs)
 
     binaries: list[tuple[str, str, str]] = []
     claude = a.claude or ([shutil.which("claude")] if shutil.which("claude") else [])
@@ -931,14 +1294,7 @@ def main() -> int:
         print("oracle: no claude or codex binary found", file=sys.stderr)
         return 2
 
-    out = (
-        Path(a.out)
-        if a.out
-        else Path(__file__).parent
-        / "runs"
-        / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    ).resolve()  # harnesses run inside run directories; paths must be absolute
-    out.mkdir(parents=True, exist_ok=True)
+    out = _run_dir(a.out)
 
     cases: list[tuple[str, dict[str, Any]]] = []
     for f in sorted(Path(a.cases_dir).glob("*.json")):
@@ -950,12 +1306,15 @@ def main() -> int:
             if a.case and not any(fnmatch.fnmatch(ident, g) for g in a.case):
                 continue
             cases.append((data["rule"], c))
-    if not cases:
-        print("oracle: no cases selected", file=sys.stderr)
-        return 2
     catalogue = load_catalogue()
     if catalogue is None:
         print("oracle: could not read m3 lint --list-rules --json", file=sys.stderr)
+        return 2
+    # Directory rules have no harness effect to observe.
+    harness_rules = {rule["id"] for rule in catalogue if rule["effects"]}
+    cases = [(rule, c) for rule, c in cases if rule in harness_rules]
+    if not cases:
+        print("oracle: no cases selected", file=sys.stderr)
         return 2
     session_rules = {
         rule["id"]

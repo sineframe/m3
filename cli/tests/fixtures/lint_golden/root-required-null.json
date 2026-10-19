@@ -1,0 +1,157 @@
+{
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   root-required-null  tool 'probe'\n  claude_code all versions [server]: Claude Code rejects the whole tools/list.\n  detail: required is null\n  fix: Use \"required\": [] or omit it.\n\nERROR   schema-invalid-2020-12  tool 'probe'\n  claude_code >=2.1.216 [tool]: Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated).\n  detail: required: type\n  fix: Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).\n\n2 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 2,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "root-schema",
+     "detail": "required is null",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "server",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Claude Code rejects the whole tools/list."
+      }
+     ],
+     "fix": "Use \"required\": [] or omit it.",
+     "location": "tool 'probe'",
+     "rule": "root-required-null",
+     "severity": "error",
+     "title": "root required is null"
+    },
+    {
+     "category": "schema-validity",
+     "detail": "required: type",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.216"
+       },
+       "summary": "Claude Code silently drops tools whose schema is invalid under JSON Schema 2020-12 (rollout-gated)."
+      }
+     ],
+     "fix": "Make the schema valid JSON Schema 2020-12 (for example, unique required entries, numeric exclusiveMinimum, prefixItems instead of list items).",
+     "location": "tool 'probe'",
+     "rule": "schema-invalid-2020-12",
+     "severity": "error",
+     "title": "inputSchema invalid under JSON Schema 2020-12"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

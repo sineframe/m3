@@ -137,6 +137,7 @@ NAVIGATION = [
         "items": [
             "reference",
             "reference-cli",
+            "reference-directory-readiness",
             "reference-output",
             "reference-credentials",
             "reference-acp",

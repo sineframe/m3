@@ -1,0 +1,531 @@
+{
+ "cc-collision": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 3 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   tool-name-collision  tools/list\n  claude_code >=2.1.50 [tool]: Claude Code keeps only the first tool; calls to the others go to it.\n  codex >=0.119.0 [degraded]: Codex keeps both under hash-suffixed names.\n  detail: 'probe.x', 'probe_x'\n  fix: Make names unique after replacing characters outside [A-Za-z0-9_] with _.\n\nINFO    tool-name-sanitized  tool 'probe.x'\n  claude_code all versions [advisory]: Claude Code shows this tool under a rewritten name.\n  codex all versions [advisory]: Codex shows this tool under a rewritten name (- becomes _).\n  detail: rewritten as 'probe_x'\n  fix: Use snake_case ASCII names.\n\n1 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 3,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 3,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "names",
+     "detail": "'probe.x', 'probe_x'",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.50"
+       },
+       "summary": "Claude Code keeps only the first tool; calls to the others go to it."
+      },
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "0.119.0"
+       },
+       "summary": "Codex keeps both under hash-suffixed names."
+      }
+     ],
+     "fix": "Make names unique after replacing characters outside [A-Za-z0-9_] with _.",
+     "location": "tools/list",
+     "rule": "tool-name-collision",
+     "severity": "error",
+     "title": "tool names collide"
+    },
+    {
+     "category": "names",
+     "detail": "rewritten as 'probe_x'",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Claude Code shows this tool under a rewritten name."
+      },
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex shows this tool under a rewritten name (- becomes _)."
+      }
+     ],
+     "fix": "Use snake_case ASCII names.",
+     "location": "tool 'probe.x'",
+     "rule": "tool-name-sanitized",
+     "severity": "info",
+     "title": "tool name rewritten by the harness"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "cx-collision": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 3 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nWARNING tool-name-collision  tools/list\n  codex >=0.119.0 [degraded]: Codex keeps both under hash-suffixed names.\n  detail: 'probe-x', 'probe_x'\n  fix: Make names unique after replacing characters outside [A-Za-z0-9_] with _.\n\nINFO    tool-name-sanitized  tool 'probe-x'\n  codex all versions [advisory]: Codex shows this tool under a rewritten name (- becomes _).\n  detail: rewritten as 'probe_x'\n  fix: Use snake_case ASCII names.\n\n0 errors, 1 warnings, 1 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 3,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 3,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 1,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [
+    {
+     "category": "names",
+     "detail": "'probe-x', 'probe_x'",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "0.119.0"
+       },
+       "summary": "Codex keeps both under hash-suffixed names."
+      }
+     ],
+     "fix": "Make names unique after replacing characters outside [A-Za-z0-9_] with _.",
+     "location": "tools/list",
+     "rule": "tool-name-collision",
+     "severity": "warning",
+     "title": "tool names collide"
+    },
+    {
+     "category": "names",
+     "detail": "rewritten as 'probe_x'",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex shows this tool under a rewritten name (- becomes _)."
+      }
+     ],
+     "fix": "Use snake_case ASCII names.",
+     "location": "tool 'probe-x'",
+     "rule": "tool-name-sanitized",
+     "severity": "info",
+     "title": "tool name rewritten by the harness"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 3 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 3,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 3,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "old-claude": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 3 tools | - prompts | - resources\nevaluated: claude_code@2.1.0\n\nERROR   tool-name-collision  tools/list\n  claude_code <2.1.50 [session]: The Anthropic API rejects duplicate tool names; every request fails.\n  detail: 2 tools named 'probe'\n  fix: Make names unique after replacing characters outside [A-Za-z0-9_] with _.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 3,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 3,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "names",
+     "detail": "2 tools named 'probe'",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "session",
+       "range": {
+        "fixed": "2.1.50",
+        "introduced": null
+       },
+       "summary": "The Anthropic API rejects duplicate tool names; every request fails."
+      }
+     ],
+     "fix": "Make names unique after replacing characters outside [A-Za-z0-9_] with _.",
+     "location": "tools/list",
+     "rule": "tool-name-collision",
+     "severity": "error",
+     "title": "tool names collide"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "old-codex": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 3 tools | - prompts | - resources\nevaluated: codex@0.118.0\n\nERROR   tool-name-collision  tools/list\n  codex <0.119.0 [tool]: Codex drops the second tool.\n  detail: 'probe-x', 'probe_x'\n  fix: Make names unique after replacing characters outside [A-Za-z0-9_] with _.\n\nINFO    tool-name-sanitized  tool 'probe-x'\n  codex all versions [advisory]: Codex shows this tool under a rewritten name (- becomes _).\n  detail: rewritten as 'probe_x'\n  fix: Use snake_case ASCII names.\n\n1 errors, 0 warnings, 1 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 3,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 3,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 1,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.118.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "names",
+     "detail": "'probe-x', 'probe_x'",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": "0.119.0",
+        "introduced": null
+       },
+       "summary": "Codex drops the second tool."
+      }
+     ],
+     "fix": "Make names unique after replacing characters outside [A-Za-z0-9_] with _.",
+     "location": "tools/list",
+     "rule": "tool-name-collision",
+     "severity": "error",
+     "title": "tool names collide"
+    },
+    {
+     "category": "names",
+     "detail": "rewritten as 'probe_x'",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "advisory",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex shows this tool under a rewritten name (- becomes _)."
+      }
+     ],
+     "fix": "Use snake_case ASCII names.",
+     "location": "tool 'probe-x'",
+     "rule": "tool-name-sanitized",
+     "severity": "info",
+     "title": "tool name rewritten by the harness"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 3 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   tool-name-collision  tools/list\n  claude_code >=2.1.50 [tool]: Claude Code keeps only the first tool; calls to the others go to it.\n  codex all versions [tool]: Codex keeps one copy.\n  detail: 2 tools named 'probe'\n  fix: Make names unique after replacing characters outside [A-Za-z0-9_] with _.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 3,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 3,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "names",
+     "detail": "2 tools named 'probe'",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.50"
+       },
+       "summary": "Claude Code keeps only the first tool; calls to the others go to it."
+      },
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": null
+       },
+       "summary": "Codex keeps one copy."
+      }
+     ],
+     "fix": "Make names unique after replacing characters outside [A-Za-z0-9_] with _.",
+     "location": "tools/list",
+     "rule": "tool-name-collision",
+     "severity": "error",
+     "title": "tool names collide"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

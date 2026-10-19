@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from .codex import code_mode_type_too_large, codex_normalized_size
 from .collect import ListingResult, Snapshot, capabilities_of, declared
+from .directories import DirectoryEffect
 from .schema import (
     CODEX_CONSTRAINT_KEYWORDS,
     COMBINATORS,
@@ -28,7 +29,7 @@ from .schema import (
     utf8_size,
     utf16_len,
 )
-from .versions import HarnessKind, Target, VersionRange
+from .versions import HarnessKind, VersionRange
 
 Impact = Literal["session", "server", "tool", "degraded", "advisory"]
 Severity = Literal["error", "warning", "info"]
@@ -50,6 +51,7 @@ Category = Literal[
     "names",
     "text",
     "result-hints",
+    "directory",
 ]
 
 
@@ -78,6 +80,21 @@ class Rule:
     effects: tuple[Effect, ...]
     fix: str
     check: Callable[[Snapshot], Iterable[Hit]]
+    directory_effects: tuple[DirectoryEffect, ...] = ()
+    # Variant-specific fixes, keyed by variant or by the part before ":" in
+    # "kind:scope" variants; a hit whose variants have none uses `fix`.
+    fixes: tuple[tuple[str, str], ...] = ()
+    # Used instead of `fix` when the finding has directory effects.
+    directory_fix: str | None = None
+
+    def fix_for(self, hit: Hit) -> str:
+        chosen = dict(self.fixes)
+        found: list[str] = []
+        for variant in sorted(hit.variants):
+            fix = chosen.get(variant, chosen.get(variant.split(":", 1)[0]))
+            if fix is not None and fix not in found:
+                found.append(fix)
+        return " ".join(found) if found else self.fix
 
 
 @dataclass(frozen=True)
@@ -86,6 +103,7 @@ class Finding:
     hit: Hit
     effects: tuple[Effect, ...]
     severity: Severity
+    directory_effects: tuple[DirectoryEffect, ...] = ()
 
 
 # --- effect construction --------------------------------------------------
@@ -379,7 +397,9 @@ def _check_description_type(snapshot: Snapshot) -> Iterator[Hit]:
     for tool in _tools(snapshot):
         if "description" in tool and not isinstance(tool["description"], str):
             kind = type(tool["description"]).__name__
-            yield Hit(_where(tool), f"description is {kind}")
+            # Codex accepts a null description; any other non-string fails.
+            variant = "null" if tool["description"] is None else "non-null"
+            yield Hit(_where(tool), f"description is {kind}", frozenset({variant}))
 
 
 def _check_execution(snapshot: Snapshot) -> Iterator[Hit]:
@@ -1165,7 +1185,7 @@ _PARSE_VARIANTS = (
     "null-root",
 )
 
-RULES: tuple[Rule, ...] = (
+HARNESS_RULES: tuple[Rule, ...] = (
     # protocol
     Rule(
         "initialize-server-info",
@@ -1485,6 +1505,15 @@ RULES: tuple[Rule, ...] = (
                 "V",
                 "L",
                 "A non-string description makes Claude Code reject the whole tools/list.",
+            ),
+            CX(
+                None,
+                None,
+                "V",
+                "L",
+                "Codex rejects the tools/list when a description is neither a string "
+                "nor null; none of the server's tools are available.",
+                when=("non-null",),
             ),
         ),
         "Omit description or make it a string.",
@@ -2349,32 +2378,3 @@ RULES: tuple[Rule, ...] = (
         _check_safety_annotations,
     ),
 )
-
-RULE_ORDER = {rule.id: index for index, rule in enumerate(RULES)}
-
-
-def _applies(effect: Effect, hit: Hit, targets: list[Target]) -> bool:
-    if effect.when is not None and not effect.when & hit.variants:
-        return False
-    return any(
-        target.harness == effect.harness and effect.range.contains(target.version)
-        for target in targets
-    )
-
-
-def evaluate(
-    snapshot: Snapshot, targets: list[Target], ignore: set[str]
-) -> list[Finding]:
-    findings: list[Finding] = []
-    for rule in RULES:
-        if rule.id in ignore:
-            continue
-        for hit in rule.check(snapshot):
-            effects = tuple(e for e in rule.effects if _applies(e, hit, targets))
-            if not effects:
-                continue
-            severity = min(
-                (SEVERITY[e.impact] for e in effects), key=SEVERITY_RANK.__getitem__
-            )
-            findings.append(Finding(rule, hit, effects, severity))
-    return findings

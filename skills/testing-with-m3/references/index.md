@@ -71,6 +71,7 @@
 - [Compatibility and current boundaries](reference-compatibility.md): These docs describe the release shown in the site header. The SDK requires Python 3.10 or newer. A CLI-managed project must use the matching SDK version.
 - [Configuration](reference-configuration.md): Project identity and environment-file loading behavior.
 - [Credential reference](reference-credentials.md): Resolution and validation behavior for endpoint, agent, judge, ACP, and upload credentials.
+- [Directory readiness](reference-directory-readiness.md): m3 lint --directory checks an MCP server's metadata against the published listing rules of the Claude connector directory, the OpenAI plugin directory and the Muse connector directory, and links each finding to the policy text it comes from.
 - [Managed harness runtimes](reference-managed-runtimes.md): Reference for native harness selection, version resolution, executable acquisition, provenance, cache configuration, leases, and failure behavior.
 - [CLI output and trace limitations](reference-output.md): What each M3 line printed after a pytest run means, and which trace limitations are routine.
 - [pytest integration](reference-pytest.md): Install sf-m3[pytest] or run m3 setup. The plugin adds M3 fixtures, selection, storage integration, and feedback generation while leaving ordinary pytest selection after -- intact.

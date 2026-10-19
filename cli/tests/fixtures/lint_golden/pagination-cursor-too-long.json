@@ -1,0 +1,192 @@
+{
+ "boundary-65536": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 2
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 2
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   pagination-cursor-too-long  tools/list\n  codex >=0.162.0 [server]: Codex rejects cursors longer than 64 KiB.\n  detail: cursor 65537 bytes\n  fix: Keep cursors short.\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 2,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 2
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "cursor 65537 bytes",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "codex",
+       "impact": "server",
+       "range": {
+        "fixed": null,
+        "introduced": "0.162.0"
+       },
+       "summary": "Codex rejects cursors longer than 64 KiB."
+      }
+     ],
+     "fix": "Keep cursors short.",
+     "location": "tools/list",
+     "rule": "pagination-cursor-too-long",
+     "severity": "error",
+     "title": "cursor longer than 64 KiB"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

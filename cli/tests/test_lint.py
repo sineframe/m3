@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from m3_cli import main
-from m3_cli.lint.rules import RULES
+from m3_cli.lint.catalogue import RULES
 
 LINT_SERVER = Path(__file__).parent / "fixtures" / "lint_server.py"
 SERVER = [sys.executable, str(LINT_SERVER)]
@@ -701,3 +701,37 @@ def test_http_utf16_reply_is_not_json(http_server, capsys) -> None:
     assert report["collection"]["complete"] is False
     assert report["collection"]["listings"]["tools/list"]["error"] == "invalid"
     assert "tools-list-failed" in _rules(report)
+
+
+def test_body_reader_stops_when_the_response_closes_itself() -> None:
+    """Python 3.13's read1 closes the connection with the last byte of a
+    Content-Length body; the reader must see the end of the body there, not
+    set a timeout on the closed socket."""
+
+    from m3_cli.lint.wire import _DeadlineReader
+
+    class Response:
+        length = None
+
+        def __init__(self) -> None:
+            self.chunks = [b'{"jsonrpc": "2.0"}']
+            self.fp = None
+
+        def isclosed(self) -> bool:
+            return not self.chunks
+
+        def read1(self, size: int) -> bytes:
+            return self.chunks.pop(0) if self.chunks else b""
+
+    class Socket:
+        def __init__(self, response: Response) -> None:
+            self.response = response
+
+        def settimeout(self, value: float) -> None:
+            if self.response.isclosed():
+                raise OSError(9, "Bad file descriptor")
+
+    response = Response()
+    reader = _DeadlineReader(response, time.monotonic() + 5)  # type: ignore[arg-type]
+    reader._socket = Socket(response)
+    assert reader.read_all() == b'{"jsonrpc": "2.0"}'

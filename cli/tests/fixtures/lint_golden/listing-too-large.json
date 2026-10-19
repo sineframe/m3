@@ -1,0 +1,256 @@
+{
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "non-ascii": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   listing-too-large  tools/list\n  claude_code >=2.1.296 [tool]: Claude Code uses only about the first 16 MB of a listing; later tools are skipped.\n  detail: 6291818 bytes; 1048577 UTF-16 units in non-ASCII strings\n  fix: Shrink tool definitions.\n\nWARNING description-too-long  tool 'probe'\n  claude_code >=2.1.296 [degraded]: Claude Code truncates tool descriptions after 4096 characters (16384 once loaded through tool search).\n  detail: 1048577 UTF-16 units\n  fix: Put the essentials first and keep descriptions within 2048 characters.\n\n1 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "6291818 bytes; 1048577 UTF-16 units in non-ASCII strings",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.296"
+       },
+       "summary": "Claude Code uses only about the first 16 MB of a listing; later tools are skipped."
+      }
+     ],
+     "fix": "Shrink tool definitions.",
+     "location": "tools/list",
+     "rule": "listing-too-large",
+     "severity": "error",
+     "title": "tool listing larger than 16 MB"
+    },
+    {
+     "category": "text",
+     "detail": "1048577 UTF-16 units",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.296"
+       },
+       "summary": "Claude Code truncates tool descriptions after 4096 characters (16384 once loaded through tool search)."
+      }
+     ],
+     "fix": "Put the essentials first and keep descriptions within 2048 characters.",
+     "location": "tool 'probe'",
+     "rule": "description-too-long",
+     "severity": "warning",
+     "title": "tool description truncated"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 2 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   listing-too-large  tools/list\n  claude_code >=2.1.296 [tool]: Claude Code uses only about the first 16 MB of a listing; later tools are skipped.\n  detail: 16777656 bytes; 0 UTF-16 units in non-ASCII strings\n  fix: Shrink tool definitions.\n\nWARNING description-too-long  tool 'probe'\n  claude_code >=2.1.296 [degraded]: Claude Code truncates tool descriptions after 4096 characters (16384 once loaded through tool search).\n  detail: 16777300 UTF-16 units\n  fix: Put the essentials first and keep descriptions within 2048 characters.\n\n1 errors, 1 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 2,
+      "pages": 1,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 2,
+    "tool_pages": 1
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 1
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "16777656 bytes; 0 UTF-16 units in non-ASCII strings",
+     "effects": [
+      {
+       "evidence": "source",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.296"
+       },
+       "summary": "Claude Code uses only about the first 16 MB of a listing; later tools are skipped."
+      }
+     ],
+     "fix": "Shrink tool definitions.",
+     "location": "tools/list",
+     "rule": "listing-too-large",
+     "severity": "error",
+     "title": "tool listing larger than 16 MB"
+    },
+    {
+     "category": "text",
+     "detail": "16777300 UTF-16 units",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "degraded",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.296"
+       },
+       "summary": "Claude Code truncates tool descriptions after 4096 characters (16384 once loaded through tool search)."
+      }
+     ],
+     "fix": "Put the essentials first and keep descriptions within 2048 characters.",
+     "location": "tool 'probe'",
+     "rule": "description-too-long",
+     "severity": "warning",
+     "title": "tool description truncated"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}

@@ -434,6 +434,13 @@
       "kind": "reference"
     },
     {
+      "id": "reference-directory-readiness",
+      "title": "Directory readiness",
+      "source": "reference/directory-readiness.md",
+      "description": "m3 lint --directory checks an MCP server's metadata against the published listing rules of the Claude connector directory, the OpenAI plugin directory and the Muse connector directory, and links each finding to the policy text it comes from.",
+      "kind": "reference"
+    },
+    {
       "id": "reference",
       "title": "Reference",
       "source": "reference/index.md",
@@ -859,6 +866,7 @@
       "items": [
         "reference",
         "reference-cli",
+        "reference-directory-readiness",
         "reference-output",
         "reference-credentials",
         "reference-acp",

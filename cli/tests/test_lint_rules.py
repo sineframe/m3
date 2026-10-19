@@ -18,8 +18,9 @@ from typing import Any
 import pytest
 
 from m3_cli import main
+from m3_cli.lint.catalogue import RULES
 from m3_cli.lint.codex import codex_normalized_size
-from m3_cli.lint.rules import RULES
+from m3_cli.lint.directories import DIRECTORIES
 from m3_cli.lint.versions import parse_version
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -100,6 +101,18 @@ def test_case(rule_id: str, name: str) -> None:
         ]
         assert levels, f"no {harness} effect"
         assert max(levels, key=IMPACT_RANK.__getitem__) == impact
+    if "directories" in case:
+        # The exact severity this rule reports per directory; null means none.
+        assert set(case["directories"]) == set(DIRECTORIES), "name every directory"
+        for directory, expected in case["directories"].items():
+            levels = {
+                effect["severity"]
+                for finding in matching
+                for effect in finding.get("directories", [])
+                if effect["directory"] == directory
+            }
+            worst = "error" if "error" in levels else ("warning" if levels else None)
+            assert worst == expected, (directory, matching)
     assert code == (1 if report["counts"]["error"] > 0 else 0)
     assert report["exit_code"] == code
 
@@ -135,6 +148,22 @@ def test_corpus_complete() -> None:
         missing = {_effect_key(e) for e in rule.effects} - seen
         assert not missing, (
             f"{rule.id}: effects never exercised: {sorted(map(str, missing))}"
+        )
+        exercised: set[tuple[str, str, str]] = set()
+        for case in CORPUS[rule.id]["cases"]:
+            if case["expect"] == "present" and "directories" in case:
+                _, report = _run(rule.id, case["name"])
+                for finding in report["findings"]:
+                    if finding["rule"] == rule.id:
+                        exercised.update(
+                            (e["directory"], e["severity"], e["summary"])
+                            for e in finding.get("directories", [])
+                        )
+        unexercised = {
+            (e.directory, e.severity, e.summary) for e in rule.directory_effects
+        } - exercised
+        assert not unexercised, (
+            f"{rule.id}: directory effects never exercised: {sorted(unexercised)}"
         )
 
 

@@ -1,0 +1,192 @@
+{
+ "boundary-20": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 20 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 20,
+      "pages": 20,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 20,
+    "tool_pages": 20
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "negative": {
+  "exit_code": 0,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 21 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nno findings\n0 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 0,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 21,
+      "pages": 11,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 21,
+    "tool_pages": 11
+   },
+   "counts": {
+    "error": 0,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 0,
+   "findings": [],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ },
+ "positive": {
+  "exit_code": 1,
+  "human": "m3 lint: quirk 1.0.0 | protocol 2025-11-25 | 21 tools | - prompts | - resources\nevaluated: claude_code@2.1.302, codex@0.163.0\n\nERROR   pagination-over-20-pages  tools/list\n  claude_code >=2.1.144 [tool]: Claude Code stops after 20 tools/list pages; later tools are ignored.\n  detail: 21 pages\n  fix: Use at most 20 pages (larger pages).\n\n1 errors, 0 warnings, 0 notes\n",
+  "human_exit_code": 1,
+  "json": {
+   "collection": {
+    "complete": true,
+    "discover": "error",
+    "listings": {
+     "tools/list": {
+      "error": null,
+      "items": 21,
+      "pages": 21,
+      "truncated": false
+     }
+    },
+    "prompt_count": null,
+    "resource_count": null,
+    "template_count": null,
+    "tool_count": 21,
+    "tool_pages": 21
+   },
+   "counts": {
+    "error": 1,
+    "info": 0,
+    "warning": 0
+   },
+   "evaluated": [
+    {
+     "beyond_known": false,
+     "harness": "claude_code",
+     "version": "2.1.302"
+    },
+    {
+     "beyond_known": false,
+     "harness": "codex",
+     "version": "0.163.0"
+    }
+   ],
+   "exit_code": 1,
+   "findings": [
+    {
+     "category": "listing",
+     "detail": "21 pages",
+     "effects": [
+      {
+       "evidence": "live",
+       "harness": "claude_code",
+       "impact": "tool",
+       "range": {
+        "fixed": null,
+        "introduced": "2.1.144"
+       },
+       "summary": "Claude Code stops after 20 tools/list pages; later tools are ignored."
+      }
+     ],
+     "fix": "Use at most 20 pages (larger pages).",
+     "location": "tools/list",
+     "rule": "pagination-over-20-pages",
+     "severity": "error",
+     "title": "tools/list spans more than 20 pages"
+    }
+   ],
+   "schema_version": 1,
+   "server": {
+    "name": "quirk",
+    "protocol_version": "2025-11-25",
+    "version": "1.0.0"
+   },
+   "target": {
+    "command": [
+     "<python>",
+     "<lint_server>"
+    ],
+    "kind": "stdio"
+   }
+  }
+ }
+}
