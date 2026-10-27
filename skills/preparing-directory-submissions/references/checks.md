@@ -319,7 +319,11 @@ It never signs in and never calls a tool. Report its lines as evidence:
   (`openai-domain-verification`).
 
 Without a public URL, mark these rows `not checked` and say that the
-directories need one (`claude-remote-https`, `openai-remote-server`).
+directories need one (`claude-remote-https`, `openai-remote-server`). The
+same holds when the user or the docs say the server, or a listing URL such as
+the privacy policy, isn't deployed yet: mark it `not checked` ("not deployed
+yet"), not `fail`, and list it under what still has to be checked. Report a
+`fail` only for a URL that is supposed to be live.
 
 ## J. Muse
 
