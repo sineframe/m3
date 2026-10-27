@@ -89,7 +89,8 @@ def excerpts(path: Path) -> list[tuple[str, str, list[str]]]:
 
     def flush() -> None:
         paragraphs = [p for p in "\n".join(quote).split("\n\n") if p.strip()]
-        if section and url and paragraphs:
+        if section and paragraphs:
+            # A section without a URL is reported by main(), not skipped.
             found.append((section, url, paragraphs))
 
     for raw in [*path.read_text(encoding="utf-8").splitlines(), ""]:
@@ -106,16 +107,18 @@ def excerpts(path: Path) -> list[tuple[str, str, list[str]]]:
 
 
 def piece_found(page: str, paragraph: str) -> bool:
+    """Every piece of the paragraph is on the page; "…" marks left-out text."""
     for item in re.split(r"\n(?=\s*[-*] )", paragraph):
-        text = squash(plain(item))
-        if text in page:
-            continue
-        position = 0
-        for side in text.split(": ", 1):
-            at = page.find(side, position)
-            if at < 0:
-                return False
-            position = at + len(side)
+        for piece in squash(plain(item)).split("…"):
+            text = piece.strip()
+            if not text or text in page:
+                continue
+            position = 0
+            for side in text.split(": ", 1):
+                at = page.find(side, position)
+                if at < 0:
+                    return False
+                position = at + len(side)
     return True
 
 
@@ -125,6 +128,11 @@ def main() -> int:
     total = 0
     for path in sorted(REFERENCES.glob("policy-*.md")):
         for section, url, paragraphs in excerpts(path):
+            if not url:
+                print(f"NO URL {path.name} {section}: the excerpt can't be checked")
+                total += len(paragraphs)
+                missing += len(paragraphs)
+                continue
             page_url = url.split("#", 1)[0]
             if page_url not in pages:
                 pages[page_url] = fetch(url)

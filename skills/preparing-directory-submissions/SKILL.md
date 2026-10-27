@@ -14,7 +14,7 @@ directories and writes one report:
 - **muse**: the Muse connector directory (Meta).
 
 M3 provides the deterministic part: `m3 lint --directory` checks tool
-metadata, and M3 direct tests call tools and record what they return. M3 never
+metadata, and M3 direct tests call tools and record what they return. Neither
 runs a model. You make every judgment call, and you back each one with
 evidence.
 
@@ -25,6 +25,9 @@ The policy excerpts in `references/` were checked on **2026-10-27**.
 - Quote the policy line, with its link, behind every failure. Take quotes
   from the policy references, verbatim. No quote, no failure: without one,
   report a warning and say what is unclear.
+- Take every `file:line` from a numbered view of the file (`grep -n`,
+  `nl -ba`, or a read that shows line numbers). Never estimate a line number;
+  if you can't get it, cite the function name instead.
 - Never say or imply that the submission will be approved, is ready, or
   passes review. Report what was checked and what was found.
 - Never edit the server without asking. Propose fixes as diffs in the
@@ -106,9 +109,11 @@ m3 lint https://mcp.example.com/mcp --directory all --json
 
 Pass `--header NAME:VALUE` only if the user gives you a header for a test
 account; lint never prints header values. Read the JSON from the command's
-output; don't add it to the project. Exit status 1 means findings; 2 means nothing could be
-checked (fix the start command, or run `m3 lint` without `--directory` to see
-the listing problem).
+output; don't add it to the project. Exit status 0 means no error findings
+(warnings may still be listed; read `findings`), 1 means at least one error
+finding, and 2 means a usage error or that nothing could be checked (fix the
+start command, or run `m3 lint` without `--directory` to see the listing
+problem).
 
 Every finding has `rule`, `location`, `detail`, `fix` and a `directories`
 list with each directory's `severity`, `quote`, `policy_url` and

@@ -100,8 +100,10 @@ before. Use `-g` in place of `-y` to install it globally. Rerun the
 command after upgrading M3; the skill's policy excerpts are dated, and newer
 releases carry newer ones.
 
-The skill works with any M3 release. Without `m3 lint --directory`, the agent
-still runs the judgment checks, marks the lint rows "not checked" and tells
-you how to upgrade.
+The skill is available from the first M3 release that includes it, so
+`VERSION` must be that release or later. If the `m3` command the agent finds
+has no `m3 lint --directory`, for example an older installation earlier on
+`PATH`, the agent still runs the judgment checks, marks the lint rows "not
+checked" and tells you how to upgrade.
 
 [Read the skill source.](../../../../skills/preparing-directory-submissions/SKILL.md)

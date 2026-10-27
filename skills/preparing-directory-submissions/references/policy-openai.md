@@ -1,7 +1,7 @@
 # OpenAI plugin directory (ChatGPT and Codex): policy excerpts
 
 Last checked: **2026-10-27**. Every excerpt below is copied verbatim from the
-linked page. Quote the excerpt and its link behind every failure you report.
+linked page; `…` marks text left out. Quote the excerpt and its link behind every failure you report.
 Before quoting, re-read the live page when you can (see
 [Re-read the live policy](../SKILL.md#re-read-the-live-policy)) and say in the
 report if the text changed.
@@ -214,7 +214,7 @@ https://developers.openai.com/plugins/plugin-guidelines#tool-independence-and-ex
 https://developers.openai.com/plugins/plugin-guidelines#correct-annotation
 
 > Set readOnlyHint, destructiveHint, and openWorldHint to explicit boolean
-> values (true or false) in each tool’s annotations object.
+> values (true or false) in each tool’s annotations object. …
 >
 > readOnlyHint: Use true for retrieval, computation, or previews that do not
 > modify the environment. Use false for external-state changes, persisting
@@ -341,6 +341,8 @@ these, verbatim:
 
 ### openai-reject-connect
 
+https://developers.openai.com/plugins/deploy/app-review#review-and-approval-faqs
+
 > We’re unable to connect to your MCP server using the MCP URL and/or test
 > credentials we were given.
 >
@@ -353,13 +355,19 @@ these, verbatim:
 
 ### openai-reject-test-cases
 
+https://developers.openai.com/plugins/deploy/app-review#review-and-approval-faqs
+
 > One or more of your test cases did not produce correct results.
+>
+> …
 >
 > Ensure that the returned textual output closely adheres to the user’s
 > request, and does not offer extraneous information that is irrelevant to the
 > request, including personal identifiers.
 
 ### openai-reject-privacy
+
+https://developers.openai.com/plugins/deploy/app-review#review-and-approval-faqs
 
 > Your plugin returns user-related data types that are not disclosed in your
 > privacy policy.
@@ -374,6 +382,8 @@ these, verbatim:
 
 ### openai-reject-hints
 
+https://developers.openai.com/plugins/deploy/app-review#review-and-approval-faqs
+
 > Tool hint annotations do not appear to match the tool’s behavior:
 >
 > readOnlyHint: Set to true if it strictly fetches/looks up/lists/retrieves
@@ -385,7 +395,7 @@ these, verbatim:
 > cause irreversible outcomes (deleting, overwriting, sending messages or
 > transactions you can’t undo, revoking access, or destructive admin actions),
 > even in only select modes, through default parameters, or through indirect
-> side effects.
+> side effects. …
 >
 > openWorldHint: Set to true if the tool accesses the public internet or
 > open-ended external entities. This includes read-only tools such as web

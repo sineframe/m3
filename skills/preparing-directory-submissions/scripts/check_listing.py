@@ -24,8 +24,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 PROMO = re.compile(
-    r"\b(free|trial|discount|\d+\s?% off|save \d+|pricing|price|subscribe|subscription|"
-    r"upgrade|best|#1|number one|top[- ]rated|official|leading|cheapest|fastest)\b",
+    r"(?<!\w)(free|trial|discount|\d+\s?% off|save \d+|pricing|price|subscribe|subscription|"
+    r"upgrade|best|#1|number one|top[- ]rated|official|leading|cheapest|fastest|"
+    r"better than|unlike|compared (?:to|with)|vs\.?)(?!\w)",
     re.IGNORECASE,
 )
 SUFFIX = re.compile(r"\b(MCP Server|MCP|Plugin)\s*$", re.IGNORECASE)
@@ -55,7 +56,7 @@ def promo(check: str, text: object) -> None:
             line(
                 "JUDGE",
                 check,
-                f"possible pricing, promotion or ranking: “…{text[start : match.end() + 30]}…”",
+                f"possible pricing, promotion, ranking or comparison: “…{text[start : match.end() + 30]}…”",
             )
 
 
@@ -88,18 +89,34 @@ def image_size(path: Path) -> tuple[int, int] | None:
             bits = int.from_bytes(data[21:25], "little")
             return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
         return None
-    text = data[:4096].decode("utf-8", "replace")
-    if "<svg" in text:
-        box = re.search(
-            r'viewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)', text
-        )
-        if box:
-            return int(float(box.group(1))), int(float(box.group(2)))
-        w = re.search(r'\bwidth="([\d.]+)"', text)
-        h = re.search(r'\bheight="([\d.]+)"', text)
-        if w and h:
-            return int(float(w.group(1))), int(float(h.group(1)))
+    sizes = svg_sizes(data)
+    if sizes:
+        # OpenAI accepts square numeric dimensions or a square viewBox, so
+        # prefer whichever of the two qualifies.
+        good = [(w, h) for w, h in sizes if w == h and w >= 48]
+        return (good or sizes)[0]
     return None
+
+
+def svg_sizes(data: bytes) -> list[tuple[int, int]]:
+    """The numeric width/height and the viewBox size of an SVG, as found."""
+    text = data[:4096].decode("utf-8", "replace")
+    tag = re.search(r"<svg\b[^>]*>", text)
+    if tag is None:
+        return []
+    attributes = tag.group(0)
+    sizes = []
+    w = re.search(r"""\bwidth=["']([\d.]+)(?:px)?["']""", attributes)
+    h = re.search(r"""\bheight=["']([\d.]+)(?:px)?["']""", attributes)
+    if w and h:
+        sizes.append((int(float(w.group(1))), int(float(h.group(1)))))
+    box = re.search(
+        r"""viewBox=["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)""",
+        attributes,
+    )
+    if box:
+        sizes.append((int(float(box.group(1))), int(float(box.group(2)))))
+    return sizes
 
 
 def icon(check: str, root: Path, value: object) -> None:
@@ -128,7 +145,7 @@ def icon(check: str, root: Path, value: object) -> None:
         problems.append("not square")
     if min(w, h) < 48:
         problems.append("smaller than 48 px")
-    if max(w, h) > 4096:
+    if max(w, h) > 4096 and not svg_sizes(path.read_bytes()):
         problems.append("larger than 4096 px")
     line(
         "FAIL" if problems else "PASS",

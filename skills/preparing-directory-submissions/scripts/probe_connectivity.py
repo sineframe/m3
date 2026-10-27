@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Check that a remote MCP endpoint is reachable the way directories need.
 
-Plain HTTP only: one unauthenticated MCP `initialize` POST (repeated with each
-directory's Origin header), the OAuth discovery documents it points to, and
-for OpenAI the domain challenge path. It never sends credentials, never signs
-in and never calls a tool. It prints status codes and header names, never
-response bodies beyond what the checks need.
+Plain HTTP only: one unauthenticated MCP `initialize` POST (repeated with the
+Origin header of each directory's web app, https://claude.ai and
+https://chatgpt.com; the directories don't publish the Origin they send), a
+DELETE that closes any session an initialize opened, GETs for the OAuth
+discovery documents the server points to, and for OpenAI a GET of the domain
+challenge path. It never sends credentials, never signs in and never calls a
+tool. It prints status codes and header names, never response bodies beyond
+what the checks need.
 
 Usage: probe_connectivity.py URL [--directory claude|openai ...] [--timeout S]
 """
@@ -106,6 +109,19 @@ def _json(body):
         return None
 
 
+def _is_initialize_result(body):
+    """True when the body is a JSON-RPC initialize result, as JSON or SSE."""
+    text = body.decode("utf-8", "replace") if isinstance(body, bytes) else ""
+    candidates = [text] + [
+        line[5:].strip() for line in text.splitlines() if line.startswith("data:")
+    ]
+    for candidate in candidates:
+        message = _json(candidate)
+        if isinstance(message, dict) and isinstance(message.get("result"), dict):
+            return "protocolVersion" in message["result"]
+    return False
+
+
 def _check_oauth(url, www_authenticate, timeout):
     pointer = _resource_metadata(www_authenticate)
     parts = urlsplit(url)
@@ -162,11 +178,18 @@ def _check_authorization_server(server, timeout):
         status, _, body = _request(candidate, timeout=timeout)
         document = _json(body) if status == 200 else None
         if isinstance(document, dict) and document.get("authorization_endpoint"):
-            _report(
-                "authorization server metadata",
-                "pass",
-                f"{candidate} serves authorization and token endpoints",
-            )
+            if document.get("token_endpoint"):
+                _report(
+                    "authorization server metadata",
+                    "pass",
+                    f"{candidate} lists authorization and token endpoints",
+                )
+            else:
+                _report(
+                    "authorization server metadata",
+                    "fail",
+                    f"{candidate} lists no token_endpoint",
+                )
             return
     _report(
         "authorization server metadata",
@@ -188,7 +211,12 @@ def _check_challenge(url, timeout):
         return
     text = body.decode("utf-8", "replace").strip() if isinstance(body, bytes) else ""
     content_type = headers.get("Content-Type", "") if headers else ""
-    if not text or "\n" in text or text.startswith(("{", "[")):
+    if (
+        not text
+        or "\n" in text
+        or text.startswith(("{", "[", "<"))
+        or "html" in content_type.lower()
+    ):
         _report(
             "openai domain challenge",
             "fail",
@@ -226,30 +254,39 @@ def main() -> int:
         _report("unauthenticated initialize", "fail", f"no HTTP response: {body}")
         return 1
     www_authenticate = headers.get("WWW-Authenticate") if headers else None
-    if status == 401:
+    if status == 401 and www_authenticate:
         _report(
             "unauthenticated initialize",
             "pass",
-            "401 Unauthorized"
-            + (
-                " with WWW-Authenticate"
-                if www_authenticate
-                else " without WWW-Authenticate"
-            ),
+            "401 Unauthorized with WWW-Authenticate",
         )
         _check_oauth(args.url, www_authenticate, args.timeout)
+    elif status == 401:
+        _report(
+            "unauthenticated initialize",
+            "fail",
+            "401 Unauthorized without WWW-Authenticate; Claude needs the header to find the sign-in metadata",
+        )
+        _check_oauth(args.url, None, args.timeout)
+    elif status == 200 and _is_initialize_result(body):
+        _report(
+            "unauthenticated initialize",
+            "pass",
+            "200 with an initialize result: the server is authless",
+        )
     elif status == 200:
         _report(
             "unauthenticated initialize",
-            "pass",
-            "200: the server is authless (initialize succeeded without credentials)",
+            "fail",
+            "200 but the body is not an MCP initialize result; is this the MCP endpoint?",
         )
     elif status in (301, 302, 303, 307, 308):
         location = headers.get("Location", "") if headers else ""
         _report(
             "unauthenticated initialize",
-            "fail",
-            f"{status} redirect to {location}; directories need a 401 to start sign-in",
+            "warning",
+            f"{status} redirect to {location}; submit the final URL, and if this is a "
+            "sign-in page, Claude can't start sign-in (it needs a 401)",
         )
     else:
         _report(

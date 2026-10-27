@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "fieldnotes": {
-      "command": "python",
-      "args": ["-m", "fieldnotes_mcp.server"]
+      "url": "https://mcp.fieldnotes.example/mcp"
     }
   }
 }

@@ -1,7 +1,7 @@
 # Muse connector directory (Meta): policy excerpts
 
 Last checked: **2026-10-27**. Every excerpt below is copied verbatim from the
-linked page. Quote the excerpt and its link behind every failure you report.
+linked page; `…` marks text left out. Quote the excerpt and its link behind every failure you report.
 Before quoting, re-read the live page when you can (see
 [Re-read the live policy](../SKILL.md#re-read-the-live-policy)) and say in the
 report if the text changed.

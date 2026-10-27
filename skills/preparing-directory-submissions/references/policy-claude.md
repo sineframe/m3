@@ -1,7 +1,7 @@
 # Claude connector directory: policy excerpts
 
 Last checked: **2026-10-27**. Every excerpt below is copied verbatim from the
-linked page. Quote the excerpt and its link behind every failure you report.
+linked page; `…` marks text left out. Quote the excerpt and its link behind every failure you report.
 Before quoting, re-read the live page when you can (see
 [Re-read the live policy](../SKILL.md#re-read-the-live-policy)) and say in the
 report if the text changed.
@@ -12,7 +12,7 @@ Pages:
 - Submission: https://claude.com/docs/connectors/building/submission
 - Authentication: https://claude.com/docs/connectors/building/authentication
 - MCP overview: https://claude.com/docs/connectors/building/mcp
-- Software Directory Policy (modified 2026-10-24):
+- Software Directory Policy (last updated 2026-10-27):
   https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy
 
 The Software Directory Policy anchors whole sections only. Cite its lettered
@@ -136,6 +136,7 @@ https://claude.com/docs/connectors/building/review-criteria#gather-what-to-inclu
 
 > - **Test credentials**: required, and they must be for a fully populated
 >   account
+> - …
 > - **Public documentation**: required by your publish date. A blog post or
 >   help-center article is sufficient, and you can share docs privately with
 >   Anthropic during review
@@ -151,7 +152,8 @@ https://claude.com/docs/connectors/building/submission#pre-submission-checklist-
 >   a plugin instead
 > - **Authentication works for Claude's client**: OAuth 2.0 if your tools act
 >   on a user's account, or no authentication for public data, as
->   Authentication for connectors describes.
+>   Authentication for connectors describes …
+> - …
 > - **You have the listing materials**: documentation URL, privacy policy URL,
 >   support contact, an icon, and for an MCP App the carousel screenshots
 > - **You have a test account for reviewers**: credentials for a fully
@@ -356,9 +358,15 @@ https://support.claude.com/en/articles/13145358-anthropic-software-directory-pol
 
 https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy#h_f6c96a50f3
 
-> A. Software that transfers money, cryptocurrency, or other financial assets,
-> or executes financial transactions autonomously on behalf of users, without
-> human-in-the-loop safeguards.
+> A. Software that transfers money or other financial assets, or executes
+> financial transactions autonomously on behalf of users, without
+> human-in-the-loop safeguards. We do not generally allow cryptocurrency
+> software in our directory.
+
+(Changed on 2026-10-27: earlier text read "transfers money, cryptocurrency, or
+other financial assets". The review criteria bullet in
+[claude-unsupported-use-cases](#claude-unsupported-use-cases) still names
+cryptocurrency.)
 
 ### claude-policy-4B
 

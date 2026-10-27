@@ -83,7 +83,7 @@ Supported tasks:
   - Sensitive write: replace a note's text; the old text can't be recovered ("Replace the text of my launch risks note with …")
   - Sensitive write: delete a note; can't be undone ("Delete my press list note.")
 How it improves on the browser: reads and edits the user's private workspace through their account, so Muse answers from the notes themselves instead of opening pages one at a time.
-Account, plan or regional restrictions: needs a Fieldnotes account; no plan or regional limits.
+Account, plan or regional restrictions: needs a Fieldnotes account; [fill in plan and regional limits].
 ```
 
 ## Direct tests

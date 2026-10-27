@@ -30,9 +30,10 @@ or isn't listed, and you don't borrow the first one's quote.
 Every check reads the same material, so collect it once:
 
 1. The tool list as the server advertises it: name, title, description,
-   input schema, annotations, and the server `instructions`. Take it from the
-   `m3 lint --json` run if you have one. Otherwise read it from the code, or
-   list it with an M3 direct test that calls `client.list_all_tools()`.
+   input schema, annotations, and the server `instructions`. The `m3 lint
+   --json` report doesn't include it (only findings and counts). Read it from
+   the code, or list it with an M3 direct test that calls
+   `client.list_all_tools()`.
 2. For each tool, the implementation: the handler and every helper it calls
    that can write, send, pay or reach the network. Note `file:line` for each.
 3. Text the tools add to their results, such as hints appended to a
@@ -68,7 +69,7 @@ render_map description`, `server instructions`, `src/tools/x.ts:58`).
 
 | Directory | Quote |
 |---|---|
-| Claude | `claude-prompt-injection`; also `claude-policy-2D`, `claude-policy-2E`, `claude-policy-4C` for promotion |
+| Claude | `claude-prompt-injection` (its last item covers "promote products and services"); also `claude-policy-2D`, `claude-policy-2E` |
 | OpenAI | `openai-fair-play`, `openai-descriptions`; `openai-tool-names` for promotional names; `openai-respect-user-intent` for hiding or overriding |
 | Muse | `muse-3.2-factual-descriptions` |
 
@@ -116,9 +117,12 @@ Flag:
   people: **fail** for OpenAI (`openai-correct-annotation`). Claude doesn't
   define openWorldHint; don't report it for Claude.
 - A name or title that contradicts the behavior (`get_`, `check_`, `list_`,
-  `find_`, "View …" on a write; `delete_` on a read): **fail** for OpenAI
-  (`openai-tool-names`, `openai-predictable-behavior`), **fail** for Claude
-  (`claude-accurate-descriptions`).
+  `find_`, "View …" on a write; `delete_` on a read): **warning** for OpenAI
+  (`openai-tool-names` and `openai-predictable-behavior` are "should"
+  rules) and **warning** for Claude (`claude-accurate-descriptions` covers the
+  description, not the name). When the description hides the same behavior,
+  that is a **fail** on its own: quote `claude-accurate-descriptions` and
+  `claude-policy-2B` for Claude, `openai-descriptions` for OpenAI.
 - A missing hint or a non-boolean one is a lint finding; carry lint's row
   unchanged. Still give the tool its own B row: state the class you found and
   the hints it should declare, and point to the lint row. Every tool gets a B
@@ -142,8 +146,10 @@ hidden write, prefer splitting it, so the read keeps readOnlyHint true.
    - OpenAI: **fail**, quote `openai-tool-independence` ("operation
      selection").
    - Muse: the tool is classified Write as a whole (`muse-3.2-classification`).
-     Report it under J as a **warning**: every read through it will need
-     write approval.
+     Report it under J as a **warning**, and say what changes: Muse 3.3 asks
+     the same way for reads and non-sensitive writes, but if any operation
+     makes the tool a Sensitive write (a delete, a send), every call through
+     it, reads included, needs approval each time with no Always allow.
    - If lint already reported `directory-read-write-tool` for the same
      input, keep lint's row and add your judged row only if it says
      something lint's doesn't (for example the `delete` value).
@@ -164,22 +170,26 @@ Read every input name, description and schema. Flag inputs that ask for:
 - conversation history, transcripts, previous turns, "full context",
   memory or summaries;
 - credentials: passwords, API keys, tokens, OTP or MFA codes;
-- payment data: card numbers, CVV, bank account numbers to charge;
+- payment data: card numbers, CVV, bank account numbers;
 - government IDs: SSN, passport, national ID, tax ID of a person;
 - precise location: GPS coordinates or a street address of the user.
 
 A destination account for a transfer is a payment detail; report it here
 and also under E.
 
-| Directory | Quote |
-|---|---|
-| Claude | `claude-functional-quality` (chat history), `claude-policy-1E`, `claude-policy-1G` |
-| OpenAI | `openai-minimal-inputs` (history, precise location), `openai-restricted-data` (credentials, payment, government IDs) |
-| Muse | `muse-4.2-minimum-data`; `muse-4.4-secrets` for credentials and payment data |
+Each directory's text covers a different part of this list, so the status
+depends on the directory:
 
-All of these are **fail** when the input clearly asks for the data. An
-address input on a tool whose job is a business address, or a place search
-the user types, is not the user's precise location; don't flag it.
+| Directory | fail (the quote names the data) | warning (only a necessity rule applies) |
+|---|---|---|
+| Claude | conversation history, memory, summaries: `claude-functional-quality`, `claude-policy-1G` | everything else on the list: `claude-policy-1E` ("necessary to perform their function") |
+| OpenAI | history and prior turns, precise location: `openai-minimal-inputs`; card data, credentials, government IDs: `openai-restricted-data` | bank account numbers (not card data, so not PCI DSS): `openai-restricted-data` "Collection minimization" |
+| Muse | credentials and payment data passed as tool inputs: `muse-4.4-secrets` ("collect and transmit them only through secure flows") | everything else on the list: `muse-4.2-minimum-data` |
+
+A warning says what the tool would need the data for, so the user can
+judge necessity. An address input on a tool whose job is a business address,
+or a place search the user types, is not the user's precise location; don't
+flag it.
 
 Fix: remove the input, or narrow it to a short task-specific field (for
 example `request: str` described as "the user's request in one sentence").
@@ -188,9 +198,16 @@ example `request: str` described as "the user's request in one sentence").
 
 Flag tools whose purpose the directory doesn't accept:
 
-- moving money or crypto, or placing trades: **fail** for Claude
-  (`claude-unsupported-use-cases`, `claude-policy-4A`), OpenAI
+- moving money or crypto: **fail** for Claude
+  (`claude-unsupported-use-cases`; `claude-policy-4A` also says "We do not
+  generally allow cryptocurrency software"), OpenAI
   (`openai-prohibited-financial`) and Muse (`muse-4.6-finance`);
+- placing trades: **fail** for OpenAI (`openai-prohibited-financial`:
+  "investment trades") and Muse (`muse-4.6-finance`: "place financial trade
+  orders"). For Claude it's a **warning**: the review criteria don't name
+  trades, and `claude-policy-4A` covers transactions executed "autonomously
+  … without human-in-the-loop safeguards", so it depends on whether the user
+  confirms each trade;
 - AI-generated images, video or audio: **fail** for Claude
   (`claude-unsupported-use-cases`, `claude-policy-4B`). Design-only
   outputs (diagrams, charts, slides, UI mockups) are allowed. Muse's page
@@ -225,9 +242,14 @@ from the submitted server (or from the build submitted to that directory).
    - internal identifiers, trace or request ids, timestamps and debug
      payloads the user didn't ask for: **fail** for OpenAI
      (`openai-response-minimization`), **warning** for Claude and Muse;
-   - a privacy policy that is missing, not https, or doesn't cover
-     collection, use, recipients, retention and contact: **fail**
-     (`openai-privacy-policy`, `claude-policy-3A`).
+   - a privacy policy that is missing or not https, or that leaves out what
+     the directory requires: **fail**. OpenAI (`openai-privacy-policy`) needs
+     the categories of personal data collected, purposes of use, categories
+     of recipients, retention timelines and user controls. Claude
+     (`claude-policy-3A`) needs data collection, usage and retention; a local
+     connector's policy also needs third-party sharing and contact
+     information (`claude-local-privacy-policy`). Muse asks that the data
+     questionnaire match the policy (`muse-5.3-data-questionnaire`).
 
 Never copy returned values, tokens or personal data into the report. Name the
 field and the line that adds it.
@@ -247,7 +269,8 @@ It checks displayName and shortDescription (30 characters), longDescription
 (4,000), the four https URLs, the icon (square, at least 48 px), the
 "MCP" / "MCP Server" / "Plugin" suffix, default prompts and test case counts.
 It prints `FAIL` for a broken limit and `JUDGE` for text you must read:
-pricing, promotion, comparisons, generic one-word names. Decide each `JUDGE`
+words that suggest pricing, promotion, ranking or comparison, and one-word
+names. The word list is short, so also read the text yourself. Decide each `JUDGE`
 line yourself and quote the text. Quote `openai-listing-limits`,
 `openai-icons` and `openai-names-and-descriptions`.
 
@@ -280,10 +303,12 @@ record the answer:
 
 Never ask for the credentials, never write them to a file, and never use
 them yourself. Status: `pass` when the user confirmed every point,
-`not checked` while waiting, `fail` if the account needs MFA or a code.
-Quote `openai-review-information` and `openai-test-credentials` for
-OpenAI, `claude-policy-3D` and `claude-submission-materials` for Claude,
-and `muse-5.5-test-account` for Muse. An authless server needs no account;
+`not checked` while waiting. If the account needs MFA, a code or a magic
+link, that is a **fail** for OpenAI only (`openai-review-information`,
+`openai-test-credentials`); Claude and Muse don't mention MFA, so for them
+it's a **warning** that reviewers may not get in. A missing or empty test
+account is a **fail** for Claude (`claude-policy-3D`,
+`claude-submission-materials`) and Muse (`muse-5.5-test-account`). An authless server needs no account;
 record `pass` with "no sign-in required".
 
 ## I. Connectivity
@@ -295,9 +320,11 @@ python3 SKILL_DIR/scripts/probe_connectivity.py https://mcp.example.com/mcp --di
 ```
 
 The probe sends plain HTTP requests only: an MCP `initialize` POST without
-credentials (repeated with each directory's `Origin` header), the OAuth
-discovery documents it points to, and for OpenAI the domain challenge path.
-It never signs in and never calls a tool. Report its lines as evidence:
+credentials (repeated with the `Origin` of each directory's web app,
+`https://claude.ai` and `https://chatgpt.com`), a `DELETE` that closes any
+session the server opened, GETs for the OAuth discovery documents it points
+to, and for OpenAI a GET of the domain challenge path. It never signs in and
+never calls a tool. Report its lines as evidence:
 
 - not `https`, or a private, loopback or unresolvable host: **fail**
   (`claude-remote-https`, `openai-remote-server`);
