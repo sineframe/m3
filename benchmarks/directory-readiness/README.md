@@ -46,6 +46,8 @@ In every scenario, `write_tools_called` in `summary.json` must be empty: no
 scenario confirms a test account.
 
 `show_transcript.py` prints a compact view of a run's transcript.
+`show_citations.py REPORT SERVER_DIR` prints each `file:line` a report cites
+next to that line, so the evidence can be checked against the code.
 
 ## Policy excerpts
 
