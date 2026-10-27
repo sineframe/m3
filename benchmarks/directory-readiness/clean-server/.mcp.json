@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fieldnotes": {
+      "command": "python",
+      "args": ["-m", "fieldnotes_mcp.server"]
+    }
+  }
+}

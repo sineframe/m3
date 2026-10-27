@@ -1,0 +1,14 @@
+{
+  "customers": [
+    {"id": "cus_001", "name": "Harbor Bakery", "email": "accounts@harborbakery.example", "phone": "+1 503 555 0141", "internal_account_id": "acct_88213"},
+    {"id": "cus_002", "name": "Juniper Design Co", "email": "billing@juniper.example", "phone": "+1 503 555 0199", "internal_account_id": "acct_88240"}
+  ],
+  "invoices": [
+    {"id": "INV-1001", "customer_id": "cus_001", "amount": 1250.0, "currency": "USD", "status": "paid", "due": "2026-09-30"},
+    {"id": "INV-1002", "customer_id": "cus_002", "amount": 980.0, "currency": "USD", "status": "overdue", "due": "2026-10-10"},
+    {"id": "INV-1003", "customer_id": "cus_001", "amount": 410.5, "currency": "USD", "status": "open", "due": "2026-11-15"}
+  ],
+  "offline_places": [
+    {"display_name": "Harbor Bakery, 1201 SE Water Ave, Portland, OR", "lat": "45.5122", "lon": "-122.6655"}
+  ]
+}

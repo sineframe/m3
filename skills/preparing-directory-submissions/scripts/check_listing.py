@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""Check listing text and assets against the directories' published limits.
+
+OpenAI: reads a Codex manifest (.codex-plugin/plugin.json) or an Agent
+Plugins manifest (plugin.json with extensions.com.openai). Claude: checks the
+portal fields passed on the command line.
+
+Prints one line per check: PASS, FAIL (a published limit is broken), or JUDGE
+(text you must read and decide on, such as pricing or a generic name).
+
+Usage:
+  check_listing.py [MANIFEST]
+  check_listing.py --claude-name TEXT --claude-one-liner TEXT --claude-description TEXT
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import struct
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+
+PROMO = re.compile(
+    r"\b(free|trial|discount|\d+\s?% off|save \d+|pricing|price|subscribe|subscription|"
+    r"upgrade|best|#1|number one|top[- ]rated|official|leading|cheapest|fastest)\b",
+    re.IGNORECASE,
+)
+SUFFIX = re.compile(r"\b(MCP Server|MCP|Plugin)\s*$", re.IGNORECASE)
+
+
+def line(status: str, check: str, detail: str) -> None:
+    print(f"{status:6} {check}: {detail}")
+
+
+def length(check: str, text: object, limit: int, required: bool = True) -> None:
+    if not isinstance(text, str) or not text.strip():
+        if required:
+            line("FAIL", check, "missing")
+        return
+    count = len(text)
+    line(
+        "PASS" if count <= limit else "FAIL",
+        check,
+        f"{count} characters (limit {limit})",
+    )
+
+
+def promo(check: str, text: object) -> None:
+    if isinstance(text, str):
+        for match in PROMO.finditer(text):
+            start = max(0, match.start() - 30)
+            line(
+                "JUDGE",
+                check,
+                f"possible pricing, promotion or ranking: “…{text[start : match.end() + 30]}…”",
+            )
+
+
+def image_size(path: Path) -> tuple[int, int] | None:
+    data = path.read_bytes()
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return struct.unpack(">II", data[16:24])
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i < len(data) - 9:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xC0, 0xC1, 0xC2):
+                h, w = struct.unpack(">HH", data[i + 5 : i + 9])
+                return w, h
+            i += 2 + struct.unpack(">H", data[i + 2 : i + 4])[0]
+        return None
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        chunk = data[12:16]
+        if chunk == b"VP8X":
+            return 1 + int.from_bytes(data[24:27], "little"), 1 + int.from_bytes(
+                data[27:30], "little"
+            )
+        if chunk == b"VP8 ":
+            w, h = struct.unpack("<HH", data[26:30])
+            return w & 0x3FFF, h & 0x3FFF
+        if chunk == b"VP8L":
+            bits = int.from_bytes(data[21:25], "little")
+            return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+        return None
+    text = data[:4096].decode("utf-8", "replace")
+    if "<svg" in text:
+        box = re.search(
+            r'viewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)', text
+        )
+        if box:
+            return int(float(box.group(1))), int(float(box.group(2)))
+        w = re.search(r'\bwidth="([\d.]+)"', text)
+        h = re.search(r'\bheight="([\d.]+)"', text)
+        if w and h:
+            return int(float(w.group(1))), int(float(h.group(1)))
+    return None
+
+
+def icon(check: str, root: Path, value: object) -> None:
+    if not isinstance(value, str) or not value:
+        line(
+            "FAIL", check, "missing; a square icon of at least 48 by 48 px is required"
+        )
+        return
+    path = (root / value).resolve()
+    if not path.is_file():
+        line("FAIL", check, f"{value} does not exist")
+        return
+    if path.stat().st_size > 5 * 1024 * 1024:
+        line("FAIL", check, f"{value} is larger than 5 MiB")
+    size = image_size(path)
+    if size is None:
+        line(
+            "JUDGE",
+            check,
+            f"{value}: could not read the dimensions; check it is square and at least 48 px",
+        )
+        return
+    w, h = size
+    problems = []
+    if w != h:
+        problems.append("not square")
+    if min(w, h) < 48:
+        problems.append("smaller than 48 px")
+    if max(w, h) > 4096:
+        problems.append("larger than 4096 px")
+    line(
+        "FAIL" if problems else "PASS",
+        check,
+        f"{value} is {w}x{h}" + (f" ({', '.join(problems)})" if problems else ""),
+    )
+
+
+def url(check: str, value: object) -> None:
+    if not isinstance(value, str) or not value:
+        line("FAIL", check, "missing; required for MCP review")
+        return
+    parts = urlsplit(value)
+    if parts.scheme != "https":
+        line("FAIL", check, f"{value} is not https")
+    elif parts.username or parts.password:
+        line("FAIL", check, "URL embeds credentials")
+    elif len(value) > 1024:
+        line("FAIL", check, f"{len(value)} characters (limit 1024)")
+    else:
+        line("PASS", check, value)
+
+
+def find_manifest(start: Path) -> Path | None:
+    for candidate in (start / "plugin.json", start / ".codex-plugin" / "plugin.json"):
+        if candidate.is_file():
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+            if candidate.name == "plugin.json" and candidate.parent == start:
+                if "com.openai" not in data.get("extensions", {}):
+                    continue
+            return candidate
+    return None
+
+
+def check_openai(manifest: Path) -> None:
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    extension = data.get("extensions", {}).get("com.openai", {})
+    interface = extension.get("interface") or data.get("interface") or {}
+    root = (
+        manifest.parent.parent
+        if manifest.parent.name == ".codex-plugin"
+        else manifest.parent
+    )
+    print(f"OpenAI listing from {manifest}")
+
+    name = interface.get("displayName")
+    length("displayName", name, 30)
+    if isinstance(name, str):
+        if SUFFIX.search(name):
+            line(
+                "FAIL",
+                "displayName",
+                f"“{name}” appends “{SUFFIX.search(name).group(1)}” to the product name",
+            )
+        if len(name.split()) == 1:
+            line(
+                "JUDGE",
+                "displayName",
+                f"“{name}” is one word; is it a generic dictionary term not tied to the brand?",
+            )
+    length("shortDescription", interface.get("shortDescription"), 30)
+    length("longDescription", interface.get("longDescription"), 4000)
+    for field in ("shortDescription", "longDescription"):
+        promo(field, interface.get(field))
+    for field in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
+        url(field, interface.get(field))
+    icon("logo", root, interface.get("logo"))
+    if "composerIcon" in interface:
+        icon("composerIcon", root, interface.get("composerIcon"))
+
+    prompts = interface.get("defaultPrompt")
+    if isinstance(prompts, str):
+        prompts = [prompts]
+    if isinstance(prompts, list):
+        if len(prompts) > 3:
+            line("FAIL", "defaultPrompt", f"{len(prompts)} prompts (at most 3)")
+        for index, prompt in enumerate(prompts, 1):
+            length(f"defaultPrompt[{index}]", prompt, 128)
+
+    cases = (extension.get("review") or {}).get("test_cases")
+    if isinstance(cases, dict):
+        positive = len(cases.get("positive") or [])
+        negative = len(cases.get("negative") or [])
+        line(
+            "PASS" if positive == 5 else "FAIL",
+            "review.test_cases.positive",
+            f"{positive} cases (exactly 5 for initial review)",
+        )
+        line(
+            "PASS" if negative == 3 else "FAIL",
+            "review.test_cases.negative",
+            f"{negative} cases (exactly 3 for initial review)",
+        )
+    else:
+        line(
+            "JUDGE",
+            "review.test_cases",
+            "not in the manifest; enter 5 positive and 3 negative cases in the portal",
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("manifest", nargs="?")
+    parser.add_argument("--claude-name")
+    parser.add_argument("--claude-one-liner")
+    parser.add_argument("--claude-description")
+    args = parser.parse_args()
+
+    claude = (args.claude_name, args.claude_one_liner, args.claude_description)
+    if any(value is not None for value in claude):
+        print("Claude listing (portal fields)")
+        length("server name", args.claude_name, 100)
+        length("one-liner", args.claude_one_liner, 200)
+        length("description", args.claude_description, 2000)
+        for field, value in zip(("one-liner", "description"), claude[1:], strict=True):
+            promo(field, value)
+        if args.manifest is None:
+            return 0
+
+    manifest = Path(args.manifest) if args.manifest else find_manifest(Path.cwd())
+    if manifest is None or not manifest.is_file():
+        print(
+            "No OpenAI manifest found (.codex-plugin/plugin.json, or plugin.json with extensions.com.openai)"
+        )
+        return 1
+    check_openai(manifest)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

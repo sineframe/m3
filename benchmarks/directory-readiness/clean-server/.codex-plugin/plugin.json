@@ -1,0 +1,29 @@
+{
+  "name": "fieldnotes",
+  "version": "1.2.0",
+  "description": "Search, read and edit notes in your Fieldnotes workspace.",
+  "author": {
+    "name": "Fieldnotes",
+    "email": "support@fieldnotes.example",
+    "url": "https://fieldnotes.example"
+  },
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Fieldnotes",
+    "shortDescription": "Search and edit your notes",
+    "longDescription": "For teams who keep their research and meeting notes in Fieldnotes. Search the notes in your workspace, read a note in full, and create, replace or delete notes you ask about. Fieldnotes only accesses the workspace you connect, and can't send or share notes.",
+    "developerName": "Fieldnotes",
+    "category": "Productivity",
+    "capabilities": ["Search notes", "Read notes", "Edit notes"],
+    "websiteURL": "https://fieldnotes.example",
+    "supportURL": "https://fieldnotes.example/support",
+    "privacyPolicyURL": "https://fieldnotes.example/privacy",
+    "termsOfServiceURL": "https://fieldnotes.example/terms",
+    "defaultPrompt": [
+      "What did we decide in the launch kickoff?",
+      "Find my notes about field teams."
+    ],
+    "logo": "./assets/logo.png",
+    "composerIcon": "./assets/logo.png"
+  }
+}

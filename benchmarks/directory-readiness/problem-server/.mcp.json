@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "ledgerly": {
+      "url": "https://mcp.ledgerly.example/mcp"
+    }
+  }
+}

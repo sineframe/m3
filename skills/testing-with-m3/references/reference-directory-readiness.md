@@ -27,7 +27,11 @@ checked. Run without `--directory` to see what is wrong with the listing.
 **Passing does not mean a directory will approve the server.** Reviewers also
 test behaviour, authentication, privacy policies, documentation and use
 cases, none of which metadata shows. These checks catch the listing rules that
-the metadata can show, before a reviewer does.
+the metadata can show, before a reviewer does. For the checks that need
+judgment, install the
+[preparing-directory-submissions agent skill](https://m3.sineframe.com/docs/guides/agents/skill#prepare-a-directory-submission):
+your coding agent runs these lint checks, then reads the code, docs and
+listing, and writes one readiness report.
 
 ## Reading a finding
 
