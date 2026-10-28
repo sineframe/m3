@@ -28,6 +28,9 @@ import urllib.request
 from urllib.parse import urljoin, urlsplit
 
 ORIGINS = {"claude": "https://claude.ai", "openai": "https://chatgpt.com"}
+# Second-level labels that, under a two-letter country TLD, form a public
+# suffix (example.co.uk): the challenge search doesn't go above them.
+SECOND_LEVEL = {"ac", "co", "com", "edu", "gov", "ltd", "ne", "net", "or", "org"}
 INITIALIZE = {
     "jsonrpc": "2.0",
     "id": 1,
@@ -48,6 +51,31 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+def _first_event(response, limit=65536):
+    """Read an SSE stream up to the end of its first data event.
+
+    A Streamable HTTP server may keep the stream open after the response, so
+    reading to the end would wait for the timeout.
+    """
+    lines = []
+    size = 0
+    has_data = False
+    while size < limit:
+        try:
+            line = response.readline(limit - size)
+        except (OSError, TimeoutError):
+            break
+        if not line:
+            break
+        size += len(line)
+        lines.append(line)
+        if line.startswith(b"data:"):
+            has_data = True
+        elif has_data and not line.strip():
+            break
+    return b"".join(lines)
+
+
 def _request(url, method="GET", body=None, headers=None, timeout=10.0):
     """(status, headers, body bytes) or (None, None, error text)."""
     request = urllib.request.Request(url, data=body, method=method)
@@ -56,6 +84,9 @@ def _request(url, method="GET", body=None, headers=None, timeout=10.0):
         request.add_header(name, value)
     try:
         with _OPENER.open(request, timeout=timeout) as response:
+            content_type = response.headers.get("Content-Type", "")
+            if "text/event-stream" in content_type.lower():
+                return response.status, response.headers, _first_event(response)
             return response.status, response.headers, response.read(65536)
     except urllib.error.HTTPError as error:
         return error.code, error.headers, error.read(65536)
@@ -222,14 +253,30 @@ def _check_authorization_server(server, timeout):
     )
 
 
+def _challenge_hosts(url):
+    """The MCP host, then its parent domains, stopping above the registrable
+    domain. Without a public-suffix list this stops at two labels, or three
+    when the last two look like a country's second level (co.uk, com.au)."""
+    host = urlsplit(url).hostname or ""
+    try:
+        ipaddress.ip_address(host)
+        return [host]
+    except ValueError:
+        pass
+    labels = host.split(".")
+    keep = 2
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in SECOND_LEVEL:
+        keep = 3
+    return [".".join(labels[i:]) for i in range(len(labels) - keep + 1)] or [host]
+
+
 def _check_challenge(url, timeout, base=None):
     """Look for the token on the portal's challenge base, or the MCP host and
     its parent domains (OpenAI accepts "an eligible parent domain")."""
     if base:
         hosts = [urlsplit(base if "//" in base else f"https://{base}").hostname]
     else:
-        labels = (urlsplit(url).hostname or "").split(".")
-        hosts = [".".join(labels[i:]) for i in range(len(labels) - 1)]
+        hosts = _challenge_hosts(url)
     tried = []
     for host in hosts:
         challenge = f"https://{host}/.well-known/openai-apps-challenge"
@@ -247,18 +294,15 @@ def _check_challenge(url, timeout, base=None):
             or text.startswith(("{", "[", "<"))
             or "html" in content_type.lower()
         ):
-            # Only the base the portal names must hold the token.
-            _report(
-                "openai domain challenge",
-                "fail" if base else "warning",
-                f"{challenge} -> 200 but the body is not a single plain-text token ({content_type})",
-            )
-        else:
-            _report(
-                "openai domain challenge",
-                "pass",
-                f"{challenge} -> 200, one plain-text token of {len(text)} characters ({content_type})",
-            )
+            # A catch-all page answers 200 for any path; keep looking on the
+            # parent domains unless the portal named this base.
+            tried.append(f"{host} -> 200 but not a plain-text token ({content_type})")
+            continue
+        _report(
+            "openai domain challenge",
+            "pass",
+            f"{challenge} -> 200, one plain-text token of {len(text)} characters ({content_type})",
+        )
         return
     _report(
         "openai domain challenge",
