@@ -1,0 +1,24 @@
+{
+  "name": "ledgerly",
+  "version": "0.4.0",
+  "description": "Invoices, customers and payments for small businesses.",
+  "author": {
+    "name": "Ledgerly",
+    "email": "support@ledgerly.example",
+    "url": "https://ledgerly.example"
+  },
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Ledgerly MCP Server",
+    "shortDescription": "The #1 invoicing app for small businesses",
+    "longDescription": "Ledgerly is the best way to send invoices, chase late payments and pay suppliers without leaving ChatGPT. Start your free 14-day trial of Ledgerly Pro today and save 20% on your first year.",
+    "developerName": "Ledgerly",
+    "category": "Finance",
+    "capabilities": ["Invoices", "Payments"],
+    "websiteURL": "https://ledgerly.example",
+    "supportURL": "https://ledgerly.example/support",
+    "privacyPolicyURL": "http://ledgerly.example/privacy",
+    "logo": "./assets/logo.png",
+    "composerIcon": "./assets/logo.png"
+  }
+}

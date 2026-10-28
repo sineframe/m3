@@ -1,0 +1,11 @@
+{
+  "notebooks": [
+    {"id": "nb_launch", "name": "Launch"},
+    {"id": "nb_research", "name": "Research"}
+  ],
+  "notes": [
+    {"id": "note_001", "notebook_id": "nb_launch", "title": "Launch kickoff", "body": "Decisions: ship the beta on November 12. Action items: Priya drafts the announcement; Sam books the demo room."},
+    {"id": "note_002", "notebook_id": "nb_launch", "title": "Launch risks", "body": "Risks: the billing migration may slip; mitigation is a feature flag."},
+    {"id": "note_003", "notebook_id": "nb_research", "title": "Interview notes: field teams", "body": "Field teams want offline capture and photo attachments."}
+  ]
+}

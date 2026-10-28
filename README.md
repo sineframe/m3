@@ -183,6 +183,12 @@ npx --yes skills@1.7.0 add sineframe/m3#vVERSION --skill testing-with-m3 --agent
 `VERSION` is the output of `m3 --version`. See the
 [agent skill guide](https://m3.sineframe.com/docs/guides/agents/skill).
 
+Submitting a server to the Claude, OpenAI or Muse directory? Install the
+`preparing-directory-submissions` skill the same way, with
+`--skill preparing-directory-submissions`. It runs `m3 lint --directory`,
+does the checks that need judgment and writes one readiness report; see
+[Prepare a directory submission](https://m3.sineframe.com/docs/guides/agents/skill#prepare-a-directory-submission).
+
 ## Documentation
 
 - [Documentation](https://m3.sineframe.com/docs/)

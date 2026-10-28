@@ -1,0 +1,6 @@
+[project]
+name = "fieldnotes-mcp"
+version = "1.2.0"
+description = "Fieldnotes MCP server (example that meets the directory rules)"
+requires-python = ">=3.10"
+dependencies = ["mcp>=2.0.0,<3"]

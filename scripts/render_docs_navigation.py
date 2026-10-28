@@ -205,7 +205,12 @@ REDIRECTS = [
 
 ALIASES = {
     "getting-started": ["quick start", "first MCP test"],
-    "guides-agents-skill": ["npx skills", "testing-with-m3"],
+    "guides-agents-skill": [
+        "npx skills",
+        "testing-with-m3",
+        "preparing-directory-submissions",
+        "directory submission",
+    ],
     "reference-output": [
         "M3 execution timeout",
         "capture_incomplete",

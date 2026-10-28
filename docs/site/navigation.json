@@ -156,11 +156,13 @@
       "id": "guides-agents-skill",
       "title": "Install the M3 agent skill",
       "source": "guides/agents/skill.md",
-      "description": "How m3 init and m3 setup install the testing-with-m3 agent skill, and how to install it yourself.",
+      "description": "How m3 init and m3 setup install the testing-with-m3 agent skill, how to install it yourself, and how to add the preparing-directory-submissions skill for directory listings.",
       "kind": "guides",
       "searchAliases": [
         "npx skills",
-        "testing-with-m3"
+        "testing-with-m3",
+        "preparing-directory-submissions",
+        "directory submission"
       ]
     },
     {
