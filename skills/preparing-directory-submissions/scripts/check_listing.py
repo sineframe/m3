@@ -7,6 +7,7 @@ portal fields passed on the command line.
 
 Prints one line per check: PASS, FAIL (a published limit is broken), or JUDGE
 (text you must read and decide on, such as pricing or a generic name).
+Exits 1 if any line is FAIL, 2 if there was nothing to check, else 0.
 
 Usage:
   check_listing.py [MANIFEST]
@@ -32,7 +33,12 @@ PROMO = re.compile(
 SUFFIX = re.compile(r"\b(MCP Server|MCP|Plugin)\s*$", re.IGNORECASE)
 
 
+FAILED: list[str] = []
+
+
 def line(status: str, check: str, detail: str) -> None:
+    if status == "FAIL":
+        FAILED.append(check)
     print(f"{status:6} {check}: {detail}")
 
 
@@ -129,10 +135,13 @@ def icon(check: str, root: Path, value: object) -> None:
     if not path.is_file():
         line("FAIL", check, f"{value} does not exist")
         return
+    problems = []
     if path.stat().st_size > 5 * 1024 * 1024:
-        line("FAIL", check, f"{value} is larger than 5 MiB")
+        problems.append("larger than 5 MiB")
     size = image_size(path)
     if size is None:
+        if problems:
+            line("FAIL", check, f"{value} is {', '.join(problems)}")
         line(
             "JUDGE",
             check,
@@ -140,7 +149,6 @@ def icon(check: str, root: Path, value: object) -> None:
         )
         return
     w, h = size
-    problems = []
     if w != h:
         problems.append("not square")
     if min(w, h) < 48:
@@ -303,16 +311,16 @@ def main() -> int:
         for field, value in zip(("one-liner", "description"), claude[1:], strict=True):
             promo(field, value)
         if args.manifest is None:
-            return 0
+            return 1 if FAILED else 0
 
     manifest = Path(args.manifest) if args.manifest else find_manifest(Path.cwd())
     if manifest is None or not manifest.is_file():
         print(
             "No OpenAI manifest found (.codex-plugin/plugin.json, or plugin.json with extensions.com.openai)"
         )
-        return 1
+        return 2
     check_openai(manifest)
-    return 0
+    return 1 if FAILED else 0
 
 
 if __name__ == "__main__":

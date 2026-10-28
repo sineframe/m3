@@ -64,8 +64,11 @@ python3 benchmarks/directory-readiness/run_triggers.py --ref HEAD --ref WORKTREE
 
 Runs nine prompts (five about directory submission or rejection, four about
 plain M3 testing) several times each and records which skill loads first, for
-each skill version given. On 2026-10-28, before and after the description
-rewrite, every run loaded the expected skill (27 of 27 each).
+each skill version given. A prompt counts as a hit only when the expected
+skill loads first: preparing-directory-submissions for the submission
+prompts, testing-with-m3 for the others; no skill or a timeout is a miss. On
+2026-10-28, before and after the description rewrite, all 27 runs of each
+were hits.
 
 `show_transcript.py` prints a compact view of a run's transcript.
 `show_citations.py REPORT SERVER_DIR` prints each `file:line` a report cites

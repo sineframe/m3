@@ -18,7 +18,7 @@ metadata, and M3 direct tests call tools and record what they return. Neither
 runs a model. You make every judgment call, and you back each one with
 evidence.
 
-The policy excerpts in `references/` were checked on **2026-10-27**.
+The policy excerpts in `references/` were checked on **2026-10-28**.
 
 ## Rules
 

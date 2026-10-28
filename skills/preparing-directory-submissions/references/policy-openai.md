@@ -1,6 +1,6 @@
 # OpenAI plugin directory (ChatGPT and Codex): policy excerpts
 
-Last checked: **2026-10-27**. Every excerpt below is copied verbatim from the
+Last checked: **2026-10-28**. Every excerpt below is copied verbatim from the
 linked page; `…` marks text left out. Quote the excerpt and its link behind every failure you report.
 Before quoting, re-read the live page when you can (see
 [Re-read the live policy](../SKILL.md#re-read-the-live-policy)) and say in the
@@ -13,7 +13,7 @@ Pages:
 - Submission: https://developers.openai.com/plugins/deploy/submission
 
 Note: the phrase "manipulative ranking language" does not appear on these
-pages as of 2026-10-27. Quote [openai-fair-play](#openai-fair-play),
+pages as of 2026-10-28. Quote [openai-fair-play](#openai-fair-play),
 [openai-descriptions](#openai-descriptions) or
 [openai-tool-names](#openai-tool-names) for steering and ranking language.
 

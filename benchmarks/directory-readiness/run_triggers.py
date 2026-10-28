@@ -5,7 +5,8 @@ Runs a fixed set of prompts, several times each, in fresh Claude Code
 sessions that have both M3 skills installed, and records which skill each
 session loads first. Prompts about directory submission, listing, review or
 rejection should load preparing-directory-submissions; general M3 and MCP
-testing prompts should not.
+testing prompts should load testing-with-m3. A session that loads no skill,
+or times out, counts as a miss.
 
 Compare skill versions by passing git refs: each ref's skills/ directory is
 installed into its own project. "WORKTREE" means the files on disk.
@@ -33,31 +34,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_scenario import REPO, SKILLS, prepare, skills_loaded
 
 SKILL = "preparing-directory-submissions"
-# (prompt, should the readiness skill load?)
-PROMPTS: list[tuple[str, bool]] = [
-    ("Is this MCP server ready to list in the Claude connector directory?", True),
+OTHER = "testing-with-m3"
+# (prompt, the skill that should load first)
+PROMPTS: list[tuple[str, str]] = [
+    ("Is this MCP server ready to list in the Claude connector directory?", SKILL),
     (
         'OpenAI rejected our ChatGPT app. The email says: "Your plugin returns '
         'user-related data types that are not disclosed in your privacy policy." '
         "What do we fix?",
-        True,
+        SKILL,
     ),
     (
         "We're about to submit our Codex plugin for review. Can you check it first?",
-        True,
+        SKILL,
     ),
     (
         "Muse's reviewers flagged that one of our tools hides a send action. Help me sort it out.",
-        True,
+        SKILL,
     ),
     (
         "What do I need to change before submitting this connector to Anthropic's directory?",
-        True,
+        SKILL,
     ),
-    ("Write tests for my MCP server.", False),
-    ("Add an m3 test that checks search_notes returns the kickoff note.", False),
-    ("m3 test says my test has no suite name. How do I fix it?", False),
-    ("Set up M3 in this project.", False),
+    ("Write tests for my MCP server.", OTHER),
+    ("Add an m3 test that checks search_notes returns the kickoff note.", OTHER),
+    ("m3 test says my test has no suite name. How do I fix it?", OTHER),
+    ("Set up M3 in this project.", OTHER),
 ]
 
 
@@ -80,16 +82,20 @@ def skills_source(ref: str, root: Path) -> Path:
 
 def run_once(project: Path, env: dict[str, str], prompt: str, model: str) -> str:
     with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False) as out:
-        subprocess.run(
-            [
-                "claude", "-p", prompt, "--model", model,
-                "--output-format", "stream-json", "--verbose",
-                "--max-turns", "2", "--allowedTools", "Skill,Read,Glob,Grep",
-                "--no-session-persistence",
-            ],
-            cwd=project, env=env, stdout=out, stderr=subprocess.STDOUT,
-            timeout=600, check=False,
-        )  # fmt: skip
+        try:
+            subprocess.run(
+                [
+                    "claude", "-p", prompt, "--model", model,
+                    "--output-format", "stream-json", "--verbose",
+                    "--max-turns", "2", "--allowedTools", "Skill,Read,Glob,Grep",
+                    "--no-session-persistence",
+                ],
+                cwd=project, env=env, stdout=out, stderr=subprocess.STDOUT,
+                timeout=600, check=False,
+            )  # fmt: skip
+        except subprocess.TimeoutExpired:
+            # One hung session is a miss, not the end of the matrix.
+            return "timeout"
         loaded = skills_loaded(Path(out.name))
     return loaded[0] if loaded else "none"
 
@@ -133,7 +139,7 @@ def main() -> int:
         cells = []
         for ref in refs:
             loaded = results.get((ref, index), [])
-            hits = sum((skill == SKILL) == expected for skill in loaded)
+            hits = sum(skill == expected for skill in loaded)
             cells.append(f"{hits}/{len(loaded)} ({', '.join(sorted(set(loaded)))})")
         rows.append(
             {
@@ -142,11 +148,7 @@ def main() -> int:
                 "results": {ref: results.get((ref, index), []) for ref in refs},
             }
         )
-        print(
-            f"| {prompt[:70]} | {'load' if expected else 'skip'} | "
-            + " | ".join(cells)
-            + " |"
-        )
+        print(f"| {prompt[:70]} | {expected} | " + " | ".join(cells) + " |")
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "triggers.json").write_text(json.dumps(rows, indent=2) + "\n")
     return 0

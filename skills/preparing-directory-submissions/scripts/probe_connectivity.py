@@ -8,7 +8,7 @@ DELETE that closes any session an initialize opened, GETs for the OAuth
 discovery documents the server points to, and for OpenAI a GET of the domain
 challenge path. It never sends credentials, never signs in and never calls a
 tool. It prints status codes and header names, never response bodies beyond
-what the checks need.
+what the checks need. Exits 1 if any line is FAIL, else 0.
 
 Usage: probe_connectivity.py URL [--directory claude|openai ...] [--timeout S]
                              [--challenge-base HOST]
@@ -113,7 +113,12 @@ def _initialize(url, origin, timeout):
     return status, response_headers, body
 
 
+FAILED = []
+
+
 def _report(check, status, detail):
+    if status == "fail":
+        FAILED.append(check)
     print(f"{status.upper():8} {check}: {detail}")
 
 
@@ -425,7 +430,7 @@ def main() -> int:
 
     if "openai" in directories:
         _check_challenge(args.url, args.timeout, args.challenge_base)
-    return 0
+    return 1 if FAILED else 0
 
 
 if __name__ == "__main__":

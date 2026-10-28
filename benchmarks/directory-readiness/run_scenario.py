@@ -325,16 +325,21 @@ def main() -> int:
     ]
     if args.scenario == "trigger-negative":
         command += ["--max-turns", "6"]
+    timed_out = False
     with transcript.open("w", encoding="utf-8") as stream:
-        subprocess.run(
-            command,
-            cwd=project,
-            env=env,
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-            timeout=3600,
-            check=False,
-        )
+        try:
+            subprocess.run(
+                command,
+                cwd=project,
+                env=env,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+                timeout=3600,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            # Keep going: the summary still records what the run did.
+            timed_out = True
 
     if (root / "calls.log").is_file():
         shutil.copy(root / "calls.log", out / "calls.log")
@@ -361,6 +366,7 @@ def main() -> int:
     ).stdout.splitlines()
     summary = {
         "scenario": name,
+        "timed_out": timed_out,
         "skills_installed": list(skills),
         # Files the agent added or changed, outside tool and env folders.
         "files_changed": [

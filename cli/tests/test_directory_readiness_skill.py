@@ -60,18 +60,20 @@ def test_quoted_policy_ids_exist() -> None:
     assert cited - ids == set()
 
 
-def _listing(manifest: Path) -> list[str]:
+def _listing(manifest: Path) -> tuple[int, list[str]]:
     result = subprocess.run(
         [sys.executable, str(SKILL / "scripts" / "check_listing.py"), str(manifest)],
         capture_output=True,
         text=True,
-        check=True,
     )
-    return result.stdout.splitlines()
+    return result.returncode, result.stdout.splitlines()
 
 
 def test_listing_check_flags_the_problem_manifest() -> None:
-    lines = _listing(EXAMPLES / "problem-server" / ".codex-plugin" / "plugin.json")
+    status, lines = _listing(
+        EXAMPLES / "problem-server" / ".codex-plugin" / "plugin.json"
+    )
+    assert status == 1
     failures = {
         line.split()[1].rstrip(":") for line in lines if line.startswith("FAIL")
     }
@@ -86,7 +88,10 @@ def test_listing_check_flags_the_problem_manifest() -> None:
 
 
 def test_listing_check_passes_the_clean_manifest() -> None:
-    lines = _listing(EXAMPLES / "clean-server" / ".codex-plugin" / "plugin.json")
+    status, lines = _listing(
+        EXAMPLES / "clean-server" / ".codex-plugin" / "plugin.json"
+    )
+    assert status == 0
     assert not [line for line in lines if line.startswith("FAIL")]
 
 

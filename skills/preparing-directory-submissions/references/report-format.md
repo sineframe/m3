@@ -12,7 +12,7 @@ the note in brackets says so.
 - Directories: Claude, OpenAI, Muse
 - Server: how it was reached (`python -m pkg.server` over stdio, or the URL)
 - M3: `m3 --version` output; lint policy date from the JSON report
-- Policy excerpts: checked 2026-10-27; live pages re-read YYYY-MM-DD: no change / CHANGES / could not re-read
+- Policy excerpts: checked 2026-10-28; live pages re-read YYYY-MM-DD: no change / CHANGES / could not re-read
 - Tools: N (names)
 
 This report lists what was checked and what was found. It is not a prediction
