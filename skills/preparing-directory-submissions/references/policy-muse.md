@@ -6,16 +6,24 @@ Before quoting, re-read the live page when you can (see
 [Re-read the live policy](../SKILL.md#re-read-the-live-policy)) and say in the
 report if the text changed.
 
-Page: https://platform.muse.ai/docs (Connector guidelines)
+Pages:
+
+- Connector guidelines: https://platform.muse.ai/docs
+- Muse Connector Terms (effective September 18, 2026; checked 2026-10-28):
+  https://platform.muse.ai/terms. The guidelines are "incorporated into and
+  governed by the Connector Terms", and the Terms' "Prohibited Practices"
+  add rules of their own. The Terms page has no section anchors; cite the
+  section name.
 
 Muse reviews your documentation and classifies each tool itself. Tool
 annotations in the Muse portal are "coming soon" (5.6), so `m3 lint` reports
 Muse as not checked. Every Muse row in a readiness report is judged.
 
-What the page does not say, as of 2026-10-27: it does not mention AI image,
-video or audio generation, it does not ask for example prompts by name (5.1
-asks for "supported tasks"), and it does not name conversation history,
-government IDs or precise location. Cite 4.2 and 4.4 for data requests.
+What neither page says, as of 2026-10-28: neither mentions AI image, video
+or audio generation in general (the Terms forbid non-consensual intimate
+imagery), the guidelines don't ask for example prompts by name (5.1 asks for
+"supported tasks"), and neither names government IDs or precise location.
+Cite 4.2 and 4.4 for data requests.
 
 ## Completion and value
 
@@ -203,3 +211,67 @@ https://platform.muse.ai/docs#6-review-process
 
 > We review submissions in three stages. Meeting these guidelines does not
 > guarantee approval.
+
+## Connector Terms: Prohibited Practices
+
+### muse-terms-scope
+
+https://platform.muse.ai/terms
+
+> Exceed declared scope: including by performing undisclosed functions,
+> accessing undeclared endpoints, or acting beyond user authorization.
+
+### muse-terms-extract
+
+https://platform.muse.ai/terms
+
+> Extract or reconstruct data: including by scraping content, building
+> exfiltration or prompt-injection vectors, or compiling chat histories from
+> indirect signals.
+
+### muse-terms-sensitive-attributes
+
+https://platform.muse.ai/terms
+
+> Infer or act on sensitive attributes: including by using indirect signals
+> to determine or act upon a user's or third party's health status, sexual
+> orientation, religion, political affiliation, race, ethnicity, or other
+> protected characteristics—unless the attribute was explicitly stated by the
+> data subject or expressly provided by the User.
+
+### muse-terms-high-consequence
+
+https://platform.muse.ai/terms
+
+> Execute high-consequence actions without explicit user authorization:
+> including by controlling physical systems where actions could have dangerous
+> consequences (e.g., locks, security systems, vehicles, heating appliances),
+> performing financial transactions above material thresholds, or irreversibly
+> deleting user data—without the User having directly and unambiguously
+> authorized the specific action.
+
+### muse-terms-material-terms
+
+https://platform.muse.ai/terms
+
+> Fail to disclose material terms before financial commitment: including by
+> enrolling in recurring charges, converting trials to paid plans, or
+> finalizing non-refundable transactions without clear notice of cost,
+> frequency, cancellation terms, and penalties.
+
+### muse-terms-professional
+
+https://platform.muse.ai/terms
+
+> Act autonomously on professional determinations: including by making and
+> executing medical, legal, or financial decisions without user review and
+> approval.
+
+### muse-terms-intimate-imagery
+
+https://platform.muse.ai/terms
+
+> Generate or distribute non-consensual intimate imagery: including
+> AI-generated sexual depictions of real individuals, synthetic intimate media
+> produced without subject consent, or any sexualized content depicting
+> minors—whether real, AI-generated, or composite.

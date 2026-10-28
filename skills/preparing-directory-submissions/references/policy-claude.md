@@ -161,6 +161,27 @@ https://claude.com/docs/connectors/building/submission#pre-submission-checklist-
 >   populated account, which you enter in the portal and which only reviewers
 >   see
 
+### claude-submission-targets
+
+https://claude.com/docs/connectors/building/submission#choose-where-to-submit-your-connector
+
+> - **Local MCP servers**: desktop extension listings in the directory are
+>   deprecated, and the directory no longer accepts local servers packaged as
+>   MCP Bundles (MCPB). To distribute a local server through the directory,
+>   include it in a plugin
+
+### claude-plugin-points-at-server
+
+https://claude.com/docs/connectors/building/submission#pre-submission-checklist-for-connectors
+
+> - **If a plugin of yours points at this server, submit the server anyway**:
+>   the connector listing gives your organization the server's details,
+>   authentication configuration, and dashboard, and lets you pair it with the
+>   plugin.
+
+Plugins have their own checklist, which this skill doesn't cover:
+https://claude.com/docs/plugins/pre-submission-checklist
+
 ### claude-listing-fields
 
 https://claude.com/docs/connectors/building/submission#submit-through-the-developer-portal
@@ -205,6 +226,13 @@ https://claude.com/docs/connectors/building/submission#submit-through-the-develo
 
 https://claude.com/docs/connectors/building/submission#privacy-policy-for-local-connectors
 
+> Local connectors must include:
+>
+> - A "Privacy Policy" section in `README.md`
+> - A `privacy_policies` array in `manifest.json`, for `manifest_version` 0.2
+>   and later
+> - HTTPS URLs to privacy policies
+>
 > The privacy policy must cover:
 >
 > - Data collection practices
@@ -262,7 +290,23 @@ https://claude.com/docs/connectors/building/authentication#network-reference
 
 All items: https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy
 
-### claude-policy-1D (section 1, item D)
+### claude-policy-1A (section 1, item A)
+
+https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy#h_bc5419edab
+
+> A. Software must not violate or facilitate violation of our Usage Policy,
+> including high-risk use cases around legal, healthcare, insurance, finance
+> and other areas.
+
+### claude-policy-1B
+
+https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy#h_bc5419edab
+
+> B. When Software is providing a high-risk use case, Developers must comply
+> with the human-in-the-loop measures and provide direct disclosure to
+> consumers (as detailed in our AUP) to be included in our directory.
+
+### claude-policy-1D
 
 https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy#h_bc5419edab
 
@@ -400,6 +444,20 @@ https://support.claude.com/en/articles/13145358-anthropic-software-directory-pol
 
 > C. Software that serves advertisements, sponsored content, paid product
 > placements, or exists primarily as an advertising or promotional vehicle.
+
+### claude-policy-4D
+
+https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy#h_f6c96a50f3
+
+> D. Software that primarily serves adult and/or sexual content (18+ content)
+> to users.
+
+### claude-policy-4E
+
+https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy#h_f6c96a50f3
+
+> E. Software that may redirect users to evade our safeguards and violate our
+> AUP to conduct high-harm misuse.
 
 ### claude-policy-5A
 

@@ -63,10 +63,19 @@ Do these in order, and keep notes for the report header.
      describes. If `m3` is missing, test rows are `not checked` too.
 2. **Choose the directories.** Use what the user named. Otherwise infer it
    from the repo: `.codex-plugin/plugin.json`, or a `plugin.json` with
-   `extensions.com.openai`, means openai; a `.claude-plugin/` directory, a
-   `manifest.json` for an MCP bundle, or docs that mention the Claude
+   `extensions.com.openai`, means openai; docs that mention the Claude
    directory mean claude; docs that mention Muse mean muse. Ask only when
    nothing points anywhere, and then offer `all`.
+   - A `.claude-plugin/` directory means a Claude *plugin* submission, which
+     has its own checklist that this skill doesn't cover
+     (https://claude.com/docs/plugins/pre-submission-checklist). Say so. If
+     the plugin points at a remote MCP server, Claude asks for that server to
+     be submitted as a connector too (`claude-plugin-points-at-server`), and
+     this skill checks the server.
+   - An MCP bundle (`manifest.json` for MCPB) can't be listed: the directory
+     no longer accepts local servers packaged as MCPB
+     (`claude-submission-targets`). Tell the user it has to go in a plugin,
+     and check the server only if it will also run remotely.
 3. **Find the server.** Look for a public URL (README, `.mcp.json`,
    `mcp.json`, the manifest) and a local start command (README,
    `pyproject.toml` scripts, `package.json` scripts, a `Dockerfile`). Lint

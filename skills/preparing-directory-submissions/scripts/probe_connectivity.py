@@ -11,6 +11,7 @@ tool. It prints status codes and header names, never response bodies beyond
 what the checks need.
 
 Usage: probe_connectivity.py URL [--directory claude|openai ...] [--timeout S]
+                             [--challenge-base HOST]
 """
 
 from __future__ import annotations
@@ -221,36 +222,55 @@ def _check_authorization_server(server, timeout):
     )
 
 
-def _check_challenge(url, timeout):
-    host = urlsplit(url).hostname
-    challenge = f"https://{host}/.well-known/openai-apps-challenge"
-    status, headers, body = _request(challenge, timeout=timeout)
-    if status != 200:
-        _report(
-            "openai domain challenge",
-            "warning",
-            f"{challenge} -> {status or body}; serve the portal's token here (or on an eligible parent domain)",
-        )
-        return
-    text = body.decode("utf-8", "replace").strip() if isinstance(body, bytes) else ""
-    content_type = headers.get("Content-Type", "") if headers else ""
-    if (
-        not text
-        or "\n" in text
-        or text.startswith(("{", "[", "<"))
-        or "html" in content_type.lower()
-    ):
-        _report(
-            "openai domain challenge",
-            "fail",
-            f"{challenge} -> 200 but the body is not a single plain-text token ({content_type})",
-        )
+def _check_challenge(url, timeout, base=None):
+    """Look for the token on the portal's challenge base, or the MCP host and
+    its parent domains (OpenAI accepts "an eligible parent domain")."""
+    if base:
+        hosts = [urlsplit(base if "//" in base else f"https://{base}").hostname]
     else:
-        _report(
-            "openai domain challenge",
-            "pass",
-            f"{challenge} -> 200, one plain-text token of {len(text)} characters ({content_type})",
+        labels = (urlsplit(url).hostname or "").split(".")
+        hosts = [".".join(labels[i:]) for i in range(len(labels) - 1)]
+    tried = []
+    for host in hosts:
+        challenge = f"https://{host}/.well-known/openai-apps-challenge"
+        status, headers, body = _request(challenge, timeout=timeout)
+        if status != 200:
+            tried.append(f"{host} -> {status or body}")
+            continue
+        text = (
+            body.decode("utf-8", "replace").strip() if isinstance(body, bytes) else ""
         )
+        content_type = headers.get("Content-Type", "") if headers else ""
+        if (
+            not text
+            or "\n" in text
+            or text.startswith(("{", "[", "<"))
+            or "html" in content_type.lower()
+        ):
+            # Only the base the portal names must hold the token.
+            _report(
+                "openai domain challenge",
+                "fail" if base else "warning",
+                f"{challenge} -> 200 but the body is not a single plain-text token ({content_type})",
+            )
+        else:
+            _report(
+                "openai domain challenge",
+                "pass",
+                f"{challenge} -> 200, one plain-text token of {len(text)} characters ({content_type})",
+            )
+        return
+    _report(
+        "openai domain challenge",
+        "fail" if base else "warning",
+        f"no token at /.well-known/openai-apps-challenge ({'; '.join(tried)}); "
+        + (
+            "serve the portal's token at this base"
+            if base
+            else "serve the portal's token on the MCP host or an eligible parent "
+            "domain, then rerun with --challenge-base HOST from the portal"
+        ),
+    )
 
 
 def main() -> int:
@@ -260,6 +280,10 @@ def main() -> int:
         "--directory", action="append", choices=sorted(ORIGINS), default=[]
     )
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--challenge-base",
+        help="the challenge base host the OpenAI portal shows, if it isn't the MCP host",
+    )
     args = parser.parse_args()
     directories = args.directory or sorted(ORIGINS)
     parts = urlsplit(args.url)
@@ -356,7 +380,7 @@ def main() -> int:
             )
 
     if "openai" in directories:
-        _check_challenge(args.url, args.timeout)
+        _check_challenge(args.url, args.timeout, args.challenge_base)
     return 0
 
 

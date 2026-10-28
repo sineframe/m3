@@ -83,6 +83,15 @@ https://developers.openai.com/plugins/deploy/submission#icons-and-screenshots
 
 ## Safety and fair play
 
+### openai-appropriateness
+
+https://developers.openai.com/plugins/plugin-guidelines#appropriateness
+
+> Plugins must be suitable for general audiences, including users aged
+> 13–17. Plugins may not explicitly target children under 13. Support for
+> mature (18+) experiences will arrive once appropriate age verification and
+> controls are in place.
+
 ### openai-respect-user-intent
 
 https://developers.openai.com/plugins/plugin-guidelines#respect-user-intent

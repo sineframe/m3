@@ -231,12 +231,27 @@ Flag tools whose purpose the directory doesn't accept:
   confirms each trade;
 - AI-generated images, video or audio: **fail** for Claude
   (`claude-unsupported-use-cases`, `claude-policy-4B`). Design-only
-  outputs (diagrams, charts, slides, UI mockups) are allowed. Muse's page
-  doesn't mention media generation; don't report it for Muse.
+  outputs (diagrams, charts, slides, UI mockups) are allowed. Muse's pages
+  don't mention media generation in general; don't report it for Muse
+  unless it produces intimate imagery of real people, which the Terms
+  forbid (`muse-terms-intimate-imagery`).
 - selling digital goods or services, new subscriptions, upgrades, credits:
   **fail** for OpenAI (`openai-commerce`). For Claude, quote
   `claude-policy-4C` only if the tool serves ads or exists mainly to
-  promote.
+  promote. For Muse, a recurring charge or a trial that converts to paid
+  must state cost, frequency and cancellation terms first
+  (`muse-terms-material-terms`); missing those is a **fail**.
+- adult or sexual content as the main purpose: **fail** for Claude
+  (`claude-policy-4D`) and OpenAI (`openai-appropriateness`: plugins "must be
+  suitable for general audiences, including users aged 13–17").
+- high-risk use cases (legal, healthcare, insurance, finance and similar
+  advice or decisions): **warning** for Claude. `claude-policy-1A` and
+  `claude-policy-1B` allow them only with human-in-the-loop measures and
+  direct disclosure to consumers; say what the server does and whether
+  those exist. For Muse, a tool that makes and executes medical, legal or
+  financial decisions without user review is prohibited by the Terms
+  (`muse-terms-professional`); report it as a **warning** and say whether
+  the user reviews each decision.
 
 Evidence: the tool name, what its code does (`store.transfer(...)` at
 `file:line`), and the description.
@@ -255,16 +270,24 @@ from the submitted server (or from the build submitted to that directory).
 3. Report:
    - each user-related data type that tools return and the policy doesn't
      disclose: **fail** for OpenAI (`openai-reject-privacy`), **fail** for
-     Claude (`claude-policy-3A`), **fail** for Muse
-     (`muse-5.3-data-questionnaire`);
+     Claude (`claude-policy-3A`), **warning** for Muse: 5.3 asks that the
+     data processing questionnaire "match your privacy policy"
+     (`muse-5.3-data-questionnaire`), so the gap shows up only once the
+     questionnaire is answered truthfully. Say which answers would differ;
    - secrets in tool output (session tokens, API keys, passwords): **fail**
      for every directory (`openai-reject-privacy`, `claude-policy-1D`,
      `muse-4.4-secrets`);
    - internal identifiers, trace or request ids, timestamps and debug
      payloads the user didn't ask for: **fail** for OpenAI
      (`openai-response-minimization`), **warning** for Claude and Muse;
-   - a privacy policy that is missing or not https, or that leaves out what
-     the directory requires: **fail**. OpenAI (`openai-privacy-policy`) needs
+   - a privacy policy URL that isn't https: **fail** for OpenAI
+     (`openai-listing-limits`: "privacyPolicyURL: HTTPS privacy policy") and
+     for a Claude local connector (`claude-local-privacy-policy`: "HTTPS URLs
+     to privacy policies"); **warning** for a remote Claude connector, since
+     `claude-policy-3A` asks only for "a clear, accessible privacy policy
+     link"; Muse states no scheme, so don't report it for Muse;
+   - a privacy policy that is missing, or that leaves out what the directory
+     requires: **fail** for OpenAI and Claude. OpenAI (`openai-privacy-policy`) needs
      the categories of personal data collected, purposes of use, categories
      of recipients, retention timelines and user controls. Claude
      (`claude-policy-3A`) needs data collection, usage and retention; a local
@@ -388,9 +411,12 @@ tell these apart, because it never calls a tool.
   since neither directory's page states its origin; cite the MCP transport
   rule that servers answer an invalid `Origin` with `403`
   (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports);
-- for OpenAI, `/.well-known/openai-apps-challenge` that isn't a single plain
-  text token: **warning** before the portal issues a token, **fail** after
-  (`openai-domain-verification`).
+- for OpenAI, the domain challenge: the token may sit on the MCP host or an
+  eligible parent domain (`openai-domain-verification`), and the probe tries
+  both. Before the portal issues a token, a missing token is a **warning**.
+  Once the user has the challenge URL from the portal, rerun with
+  `--challenge-base HOST`; a missing token there, or a body that isn't a
+  single plain-text token, is a **fail**.
 
 Without a public URL, mark these rows `not checked` and say that the
 directories need one (`claude-remote-https`, `openai-remote-server`). The
@@ -432,6 +458,22 @@ lint reports Muse as not checked.
    (`muse-5.4-documentation`, `muse-5.6-annotations`). List each missing
    item.
 8. **Test account**: reuse check H against `muse-5.5-test-account`.
+9. **Connector Terms.** The guidelines are governed by the Muse Connector
+   Terms, whose "Prohibited Practices" add these checks:
+   - a tool that irreversibly deletes user data, or pays above a material
+     threshold, must act only on the user's explicit authorization of that
+     specific action (`muse-terms-high-consequence`). Muse asks for approval
+     of sensitive writes every time (3.3), so this is a **fail** only when
+     the tool does it without a call the user approves, for example a
+     cleanup inside another tool;
+   - inferring health, sexual orientation, religion, politics, race or
+     ethnicity from indirect signals (`muse-terms-sensitive-attributes`):
+     **fail**;
+   - reconstructing chat history from indirect signals, or scraping
+     (`muse-terms-extract`): **fail**. A tool that asks for the history
+     directly is D's warning;
+   - undisclosed functions or endpoints (`muse-terms-scope`): reuse J.2.
 
-Also apply E's money movement rule (`muse-4.6-finance`) and, for
-transaction tools, `muse-4.7-transactions`.
+Also apply E's money movement rule (`muse-4.6-finance`), E's material-terms
+rule (`muse-terms-material-terms`) and, for transaction tools,
+`muse-4.7-transactions`.
