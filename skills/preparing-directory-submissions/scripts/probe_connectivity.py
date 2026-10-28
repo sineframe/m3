@@ -170,6 +170,15 @@ def _check_oauth(url, www_authenticate, timeout):
             )
             _check_authorization_server(server, timeout)
             return
+        if candidate == pointer:
+            # Clients follow the pointer first; a working fallback below
+            # doesn't make a broken pointer right.
+            _report(
+                "resource_metadata pointer",
+                "warning",
+                f"{candidate} -> {status or body}: the pointer doesn't serve the metadata",
+            )
+            continue
         _report(
             "protected resource metadata", "info", f"{candidate} -> {status or body}"
         )
@@ -286,7 +295,8 @@ def main() -> int:
         _report(
             "unauthenticated initialize",
             "pass",
-            "200 with an initialize result: the server is authless",
+            "200 with an initialize result: authless, or lazy authentication that "
+            "gates only some tool calls (read the code to tell)",
         )
     elif status == 200:
         _report(
@@ -302,15 +312,29 @@ def main() -> int:
             f"{status} redirect to {location}; submit the final URL, and if this is a "
             "sign-in page, Claude can't start sign-in (it needs a 401)",
         )
+    elif status == 400:
+        _report(
+            "unauthenticated initialize",
+            "warning",
+            "400 Bad Request: the server may speak only MCP 2026-07-28, which drops "
+            "the initialize handshake this probe sends; check its protocol version",
+        )
     else:
         _report(
             "unauthenticated initialize",
             "fail",
-            f"HTTP {status}; expected 401 (sign-in) or 200 (authless)",
+            f"HTTP {status}; expected 401 (sign-in) or 200 (authless or lazy auth)",
         )
 
     for directory in directories:
         origin = ORIGINS[directory]
+        if status not in (200, 401):
+            _report(
+                f"origin {origin}",
+                "not checked",
+                f"the request without Origin got {status}, so there is nothing to compare",
+            )
+            continue
         origin_status, _, origin_body = _initialize(args.url, origin, args.timeout)
         if origin_status == status:
             _report(

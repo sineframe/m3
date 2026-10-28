@@ -189,7 +189,11 @@ def check_openai(manifest: Path) -> None:
         if manifest.parent.name == ".codex-plugin"
         else manifest.parent
     )
-    print(f"OpenAI listing from {manifest}")
+    codex = manifest.parent.name == ".codex-plugin"
+    print(
+        f"OpenAI listing from {manifest} "
+        f"({'Codex' if codex else 'Agent Plugins'} format)"
+    )
 
     name = interface.get("displayName")
     length("displayName", name, 30)
@@ -212,8 +216,43 @@ def check_openai(manifest: Path) -> None:
         promo(field, interface.get(field))
     for field in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
         url(field, interface.get(field))
-    icon("logo", root, interface.get("logo"))
-    if "composerIcon" in interface:
+    length("developerName", interface.get("developerName"), 80)
+    category = interface.get("category")
+    if isinstance(category, str) and category.strip():
+        line("PASS", "category", category)
+    else:
+        line(
+            "FAIL",
+            "category",
+            "missing; required (a category title from the dashboard)",
+        )
+    capabilities = interface.get("capabilities")
+    if isinstance(capabilities, list):
+        if len(capabilities) > 20:
+            line("FAIL", "capabilities", f"{len(capabilities)} labels (at most 20)")
+        for index, label in enumerate(capabilities, 1):
+            length(f"capabilities[{index}]", label, 120)
+        if not capabilities:
+            line("PASS", "capabilities", "[] (no labels)")
+    elif codex:
+        line(
+            "FAIL",
+            "capabilities",
+            "missing; required in the Codex format (use [] if none)",
+        )
+
+    # Codex requires both icons; a portable package may leave the primary
+    # icon to the dashboard, which needs one before submission.
+    if interface.get("logo") or codex:
+        icon("logo", root, interface.get("logo"))
+    else:
+        line(
+            "JUDGE",
+            "logo",
+            "missing; the dashboard requires a primary icon before submission: add "
+            "logo here or provide the icon in the dashboard",
+        )
+    if interface.get("composerIcon") or codex:
         icon("composerIcon", root, interface.get("composerIcon"))
 
     prompts = interface.get("defaultPrompt")

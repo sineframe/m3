@@ -44,6 +44,14 @@ https://developers.openai.com/plugins/deploy/submission#listing-metadata
 > longDescription: Description of tasks, intended users, and limitations;
 > required, at most 4000 characters.
 >
+> developerName: Publisher name; required, at most 80 characters.
+>
+> category: Required category title from the dashboard, such as Productivity
+> or Developer Tools.
+>
+> capabilities: Capability labels; at most 20, with at most 120 characters
+> each. Required in the Codex format; use [] if there are none.
+>
 > websiteURL: HTTPS product website, at most 1024 characters.
 >
 > supportURL: HTTPS customer support page, at most 1024 characters.
@@ -62,6 +70,11 @@ lines above join each field name to its "value and submission limit" cell.)
 ### openai-icons
 
 https://developers.openai.com/plugins/deploy/submission#icons-and-screenshots
+
+> Include logo and composerIcon in packages you prepare for distribution.
+> Codex package validation requires both; you can upload a portable package
+> without them, but the dashboard requires a primary app icon before
+> submission.
 
 > Supported image formats are PNG, JPEG, WebP, and SVG, at most 5 MiB each.
 > Icons and logos must be square and at least 48 by 48 pixels. Raster images

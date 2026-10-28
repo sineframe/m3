@@ -12,6 +12,7 @@ Pages:
 - Submission: https://claude.com/docs/connectors/building/submission
 - Authentication: https://claude.com/docs/connectors/building/authentication
 - MCP overview: https://claude.com/docs/connectors/building/mcp
+- Lazy authentication: https://claude.com/docs/connectors/building/lazy-authentication
 - Software Directory Policy (last updated 2026-10-27):
   https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy
 
@@ -225,6 +226,22 @@ https://claude.com/docs/connectors/building/authentication#serve-discovery-metad
 
 > The `401` status is required, because Claude doesn't honor a
 > `WWW-Authenticate` header on a `200` response.
+
+### claude-lazy-auth
+
+https://claude.com/docs/connectors/building/lazy-authentication#answer-a-protected-call-with-401-before-the-mcp-sdk-runs
+
+> Claude starts sign-in only when the HTTP request itself fails with `401
+> Unauthorized` and a `WWW-Authenticate` header. A tool handler can't produce
+> that response: once the MCP SDK is running a tool, whatever the handler
+> returns is wrapped in a `200`. The check has to run in your HTTP handler, on
+> the parsed JSON-RPC body, before the request reaches the SDK.
+
+> `initialize`, `tools/list`, and calls to `list_products` never hit the gate,
+> so the connector is fully usable before sign-in.
+
+(From the page's example, where `list_products` is a public tool. With lazy
+authentication, an unauthenticated `initialize` correctly gets a `200`.)
 
 ### claude-auth-types
 

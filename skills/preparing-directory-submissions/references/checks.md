@@ -89,18 +89,34 @@ For each tool, read the implementation and classify it:
 
 Follow helper calls. A tool named `check_…` whose loop calls
 `send_email(...)` is a sensitive write; cite the line of the send, not just
-the tool's decorator. Note whether the tool reaches the public internet or
-affects people other than the user (`urlopen` to a public API, email to a
-customer, a post): that sets openWorldHint.
+the tool's decorator.
+
+Then note two things the hints depend on:
+
+- **Open world.** Does the tool deal with public or open-ended entities: web
+  search, any place or page, arbitrary recipients, posts to a public
+  platform, email to people outside the account? That is openWorldHint
+  true. A tool confined to the user's own account, workspace or a bounded
+  catalog may use false even when it calls a remote API: OpenAI says
+  "Connectivity alone does not determine this value"
+  (`openai-correct-annotation`). Network calls alone don't set it.
+- **Destructive.** Does any effect destroy or overwrite data, or can't be
+  taken back: delete, overwrite, cancel, revoke access, a payment, a message
+  or email once sent? That is destructiveHint true. An additive write (a new
+  record, a new share that adds access) is false; being able to undo an
+  action doesn't by itself make it false.
 
 Then compare with the declared hints:
 
 | Your class | readOnlyHint | destructiveHint | openWorldHint |
 |---|---|---|---|
-| read, private data | true | false | false |
-| read, public internet or open-ended | true | false | true |
-| write, additive only | false | false | true if it reaches others or the public |
-| sensitive write | false | true | true if it reaches others or the public |
+| read, own account or bounded catalog | true | false | false |
+| read, open-ended entities | true | false | true |
+| write, additive | false | false | true if open-ended |
+| write with a destructive or irreversible effect | false | true | true if open-ended |
+
+Muse's "sensitive write" (J.1) is a different scale: a share or publish is
+a Muse sensitive write even when it isn't destructive for OpenAI.
 
 Flag:
 
@@ -108,14 +124,19 @@ Flag:
   directory. Quote `claude-tool-annotations` and `claude-policy-2B` for
   Claude, `openai-correct-annotation` and `openai-reject-hints` for OpenAI.
   For Muse, report it under J instead (Muse classifies from your docs).
-- destructiveHint false on a sensitive write: **fail** for OpenAI
-  (`openai-correct-annotation`: "irreversible sends or transactions"). For
-  Claude it's a **fail** when the tool deletes or modifies data
-  (`claude-tool-annotations`); for a send that changes no data it's a
-  **warning**, because Claude's hint definitions don't mention sends.
-- openWorldHint false on a tool that reaches the public internet or other
-  people: **fail** for OpenAI (`openai-correct-annotation`). Claude doesn't
-  define openWorldHint; don't report it for Claude.
+- destructiveHint false on a write with a destructive or irreversible
+  effect: **fail** for OpenAI (`openai-correct-annotation`: "deletion,
+  overwriting, cancellation, access revocation, or irreversible sends or
+  transactions"). For an additive publish or share, it's a **warning**: say
+  whether it can be taken back. For Claude it's a **fail** when the tool
+  deletes or modifies data (`claude-tool-annotations`); for a send that
+  changes no data it's a **warning**, because Claude's hint definitions don't
+  mention sends.
+- openWorldHint false on a tool that deals with open-ended entities or
+  people outside the account: **fail** for OpenAI
+  (`openai-correct-annotation`). openWorldHint true on a tool confined to
+  the user's own account isn't wrong ("may use false"); don't flag it.
+  Claude doesn't define openWorldHint; don't report it for Claude.
 - A name or title that contradicts the behavior (`get_`, `check_`, `list_`,
   `find_`, "View …" on a write; `delete_` on a read): **warning** for OpenAI
   (`openai-tool-names` and `openai-predictable-behavior` are "should"
@@ -266,8 +287,11 @@ python3 SKILL_DIR/scripts/check_listing.py PATH/TO/plugin.json
 ```
 
 It checks displayName and shortDescription (30 characters), longDescription
-(4,000), the four https URLs, the icon (square, at least 48 px), the
-"MCP" / "MCP Server" / "Plugin" suffix, default prompts and test case counts.
+(4,000), developerName (80), category, capabilities (required in the Codex
+format; at most 20 labels of 120 characters), the four https URLs, the icons
+(square, at least 48 px; Codex requires logo and composerIcon, while a
+portable package may leave the primary icon to the dashboard), the "MCP" /
+"MCP Server" / "Plugin" suffix, default prompts and test case counts.
 It prints `FAIL` for a broken limit and `JUDGE` for text you must read:
 words that suggest pricing, promotion, ranking or comparison, and one-word
 names. The word list is short, so also read the text yourself. Decide each `JUDGE`
@@ -328,15 +352,38 @@ never calls a tool. Report its lines as evidence:
 
 - not `https`, or a private, loopback or unresolvable host: **fail**
   (`claude-remote-https`, `openai-remote-server`);
-- a server that needs sign-in but answers the unauthenticated request with
-  anything other than `401` plus a `WWW-Authenticate` header (a `200`, a
-  `403`, a redirect to a login page): **fail** for Claude
-  (`claude-auth-401`), and for OpenAI quote `openai-reject-connect`;
+First read the code to learn how the server signs users in: every request,
+only some tools (lazy authentication: a gate in the HTTP handler that
+answers calls to protected tools with `401`), or never. The probe can't
+tell these apart, because it never calls a tool.
+
+- a server that signs in on every request but answers the unauthenticated
+  `initialize` with anything other than `401` plus a `WWW-Authenticate`
+  header (a `200`, a `403`, a redirect to a login page): **fail** for Claude
+  (`claude-lazy-auth`: Claude starts sign-in "only when the HTTP request
+  itself fails with `401 Unauthorized` and a `WWW-Authenticate` header"), and
+  for OpenAI quote `openai-reject-connect`;
+- a `401` with no `WWW-Authenticate` header at all: **fail** for Claude
+  (`claude-lazy-auth`);
 - a `401` without a `resource_metadata` pointer whose well-known fallback
-  paths also fail: **fail** for Claude (`claude-auth-401`);
-- a `200` to `initialize`: the server is authless. Record `pass` with
+  paths also fail: **fail** for Claude (`claude-auth-401`). A pointer that
+  doesn't resolve is a **warning** even when a well-known path works,
+  because clients follow the pointer first;
+- a `200` to `initialize` on a lazy-auth server is expected
+  (`claude-lazy-auth`: "`initialize`, `tools/list`, and calls to
+  `list_products` never hit the gate"). Record `pass` for discovery, then
+  judge the gate from the code: protected tools must be refused in the HTTP
+  handler with `401` and `WWW-Authenticate`, not with a `200` tool error.
+  Cite the gate's `file:line`; a gate inside the tool handler is a **fail**
+  (`claude-lazy-auth`: "A tool handler can't produce that response");
+- a `200` to `initialize` on a server with no sign-in: record `pass` with
   "authless" and confirm with the user that its data is meant to be public
   (`claude-auth-types`);
+- a `400` to `initialize`: the server may speak only MCP 2026-07-28, which
+  drops the `initialize` handshake and rejects it with `400 Bad Request`
+  (https://modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle).
+  Report a **warning**, not a fail: the probe only speaks the 2025-11-25
+  handshake. Check the server's SDK and protocol version in the code;
 - a `403` or other refusal only when an `Origin` header is sent: **warning**,
   since neither directory's page states its origin; cite the MCP transport
   rule that servers answer an invalid `Origin` with `403`
