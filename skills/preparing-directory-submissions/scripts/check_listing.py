@@ -106,8 +106,8 @@ def svg_sizes(data: bytes) -> list[tuple[int, int]]:
         return []
     attributes = tag.group(0)
     sizes = []
-    w = re.search(r"""\bwidth=["']([\d.]+)(?:px)?["']""", attributes)
-    h = re.search(r"""\bheight=["']([\d.]+)(?:px)?["']""", attributes)
+    w = re.search(r"""(?<![\w-])width=["']([\d.]+)(?:px)?["']""", attributes)
+    h = re.search(r"""(?<![\w-])height=["']([\d.]+)(?:px)?["']""", attributes)
     if w and h:
         sizes.append((int(float(w.group(1))), int(float(h.group(1)))))
     box = re.search(

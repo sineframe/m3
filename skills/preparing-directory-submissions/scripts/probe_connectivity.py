@@ -147,8 +147,22 @@ def _check_oauth(url, www_authenticate, timeout):
     for candidate in candidates:
         status, _, body = _request(candidate, timeout=timeout)
         document = _json(body) if status == 200 else None
-        if isinstance(document, dict) and document.get("authorization_servers"):
-            server = document["authorization_servers"][0]
+        servers = (
+            document.get("authorization_servers")
+            if isinstance(document, dict)
+            else None
+        )
+        if servers is not None and not (
+            isinstance(servers, list) and servers and isinstance(servers[0], str)
+        ):
+            _report(
+                "protected resource metadata",
+                "fail",
+                f"{candidate}: authorization_servers must be a non-empty array of URLs (RFC 9728)",
+            )
+            return
+        if servers:
+            server = servers[0]
             _report(
                 "protected resource metadata",
                 "pass",

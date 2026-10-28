@@ -39,7 +39,7 @@ runs make real model calls; they are not part of CI.
 | `clean-all` | no failures; judged and not-checked rows stay visible; no approval claim |
 | `problem-muse` | Read / Write / Sensitive write classes with `file:line` evidence; the browser hand-off is flagged; Muse never passes on lint |
 | `problem-rejection` | pasted "Tool hint annotations do not appear to match the tool's behavior" leads the report with check B for every tool |
-| `problem-legacy-m3` | an M3 without `m3 lint --directory`: judgment checks still run, lint rows are `not checked` with upgrade instructions |
+| `problem-legacy-m3` | an M3 without `m3 lint --directory` (released `sf-m3-cli` 0.3.1, run through `uvx`; the runner stops if it can't start it or if it has `--directory`): judgment checks still run, lint rows are `not checked` with upgrade instructions |
 | `trigger-negative` | "Write tests for my MCP server." loads `testing-with-m3`, not this skill |
 
 In every scenario, `write_tools_called` in `summary.json` must be empty: no

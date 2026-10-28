@@ -59,6 +59,9 @@ SCENARIOS: dict[str, tuple[str, str, str]] = {
     ),
     "trigger-negative": ("clean-server", "Write tests for my MCP server.", "current"),
 }
+# The released CLI the "legacy" scenario runs through uvx: it predates
+# `m3 lint --directory` (it has no `lint` command at all).
+LEGACY_M3 = "0.3.1"
 # What the headless agent may use; anything else is denied. Edit and Write
 # stay allowed so a run shows whether the agent edits the server unasked.
 ALLOWED_TOOLS = (
@@ -134,6 +137,35 @@ def install_call_log(venv: Path, log: Path) -> None:
     (site / "_readiness_call_log.pth").write_text("import _readiness_call_log\n")
 
 
+def check_legacy_m3(command: list[str], cwd: Path) -> None:
+    """Stop unless the pinned legacy release runs and lacks `lint --directory`."""
+    try:
+        version = subprocess.run(
+            [*command, "--version"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        lint = subprocess.run(
+            [*command, "lint", "--help"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SystemExit(f"legacy m3 {LEGACY_M3} is unavailable: {error}") from error
+    if version.returncode != 0 or LEGACY_M3 not in version.stdout:
+        raise SystemExit(
+            f"legacy m3 {LEGACY_M3} is unavailable: {version.stderr.strip()}"
+        )
+    if "--directory" in lint.stdout:
+        raise SystemExit(
+            f"m3 {LEGACY_M3} supports lint --directory; pin an older release"
+        )
+
+
 def prepare(server: str, m3: str, root: Path) -> tuple[Path, dict[str, str]]:
     project = root / "project"
     shutil.copytree(
@@ -174,13 +206,15 @@ def prepare(server: str, m3: str, root: Path) -> tuple[Path, dict[str, str]]:
 
     bin_dir = root / "bin"
     bin_dir.mkdir()
-    target = (
-        REPO / ".venv" / "bin" / "m3"
-        if m3 == "current"
-        else Path(shutil.which("m3") or "m3")
-    )
+    if m3 == "current":
+        command = [str(REPO / ".venv" / "bin" / "m3")]
+    else:
+        command = ["uvx", "--from", f"sf-m3-cli=={LEGACY_M3}", "m3"]
+        check_legacy_m3(command, root)
     shim = bin_dir / "m3"
-    shim.write_text(f'#!/bin/sh\nexec "{target}" "$@"\n')
+    shim.write_text(
+        "#!/bin/sh\nexec " + " ".join(f'"{part}"' for part in command) + ' "$@"\n'
+    )
     shim.chmod(0o755)
     env = dict(
         os.environ,
