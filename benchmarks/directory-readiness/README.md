@@ -43,7 +43,29 @@ runs make real model calls; they are not part of CI.
 | `trigger-negative` | "Write tests for my MCP server." loads `testing-with-m3`, not this skill |
 
 In every scenario, `write_tools_called` in `summary.json` must be empty: no
-scenario confirms a test account.
+scenario confirms a test account. `files_changed` lists what the agent added
+or changed in the project; with the skill it should hold only the report, the
+readiness tests and the files `m3 init` creates.
+
+`--baseline` runs a scenario with only `testing-with-m3` installed, to see
+what an agent does without this skill. On 2026-10-28 both baselines
+(`problem-all`, `problem-rejection`) edited the server, its docs and its
+manifest without asking, ran tools by importing the server module (one of them
+called `send_overdue_reminders`, which sends email), quoted no policy, wrote
+no report or review test cases, and missed the undisclosed fields, the icon
+and listing limits, and the Muse classes. The skill's rules, red flags and
+report format address those.
+
+## Triggering
+
+```sh
+python3 benchmarks/directory-readiness/run_triggers.py --ref HEAD --ref WORKTREE --reps 3
+```
+
+Runs nine prompts (five about directory submission or rejection, four about
+plain M3 testing) several times each and records which skill loads first, for
+each skill version given. On 2026-10-28, before and after the description
+rewrite, every run loaded the expected skill (27 of 27 each).
 
 `show_transcript.py` prints a compact view of a run's transcript.
 `show_citations.py REPORT SERVER_DIR` prints each `file:line` a report cites

@@ -1,6 +1,6 @@
 ---
 name: preparing-directory-submissions
-description: Use when a builder is getting an MCP server, connector, app or plugin ready for review or listing in the Claude connector directory, the OpenAI plugin directory (ChatGPT apps and Codex plugins) or the Muse connector directory (Meta), or when a directory submission was rejected or got reviewer feedback, including pasted rejection emails and portal findings. Runs m3 lint --directory, does the checks that need judgment (steering language, hints against behavior, catch-all tools, data requests, unsupported use cases, privacy, listing text, reviewer access, connectivity, Muse tool classes), drafts the review test cases with M3 direct tests, and writes one readiness report with evidence and fixes. Not for testing an MCP server in general, writing tests, or debugging M3 runs when no directory submission is involved; use testing-with-m3 for those.
+description: Use when an MCP server, connector, app or plugin is being prepared for, submitted to, or reviewed by the Claude connector directory, the OpenAI plugin directory (ChatGPT apps, Codex plugins) or the Muse connector directory (Meta); when a directory submission was rejected, flagged, held or sent back, including pasted rejection emails, reviewer feedback and portal or scan findings; or when someone asks whether a server is ready to list, publish or resubmit. Not for testing an MCP server, writing or debugging M3 tests, or setting up M3 when no directory submission is in view; testing-with-m3 covers those.
 license: Apache-2.0
 ---
 
@@ -38,12 +38,36 @@ The policy excerpts in `references/` were checked on **2026-10-27**.
   fields, not their values.
 - Never call a tool you classified as a write or sensitive write unless the
   user confirmed, in this conversation, that the server points at a
-  dedicated test account. Never call a money-movement, trading or
-  media-generation tool at all. Classify from the code, not from the hints.
+  dedicated test account. That covers every way of running it: an MCP call,
+  an M3 test, or importing the server's module and calling the function.
+  Never call a money-movement, trading or media-generation tool at all.
+  Classify from the code, not from the hints.
 - Carry `m3 lint` findings into the report unchanged. Don't reinterpret,
   upgrade or downgrade their severities.
 - Never report Muse as passing because lint ran. Lint reports Muse as not
   checked; every Muse row is judged or test.
+
+## Red flags
+
+Stop and re-read the rules if you are about to:
+
+- write or edit a file of the server, its docs, its privacy policy or its
+  manifest;
+- import the server's module and call a tool function, or run a test that
+  calls a tool you haven't classified as a read;
+- write a policy rule from memory ("as far as I know, OpenAI restricts…");
+- write "passes", "ready" or "will be approved" about a directory;
+- cite a line number you didn't read from a numbered view;
+- mark a Muse row `pass` because lint ran.
+
+| Thought | Reality |
+|---|---|
+| "The fixes are obvious, I'll apply them." | The user asked whether the server is ready, not for changes. Put each fix in the report as a diff and ask. |
+| "I'll call the function directly to check my fix works." | Calling a write tool's function runs the write: the email goes out, the payment is recorded. An in-process call is still a call. |
+| "readOnlyHint is true, so calling it is safe." | The hint is what you are checking. A tool marked read-only can send email. |
+| "Lint is clean, so the metadata is fine." | Lint covers the rules metadata can decide. Muse isn't checked by lint at all, and steering, hints against behavior and privacy need your judgment. |
+| "The live page has sentences my excerpt doesn't, so the policy changed." | Excerpts quote parts of sections. Only changed or missing excerpt text is a change. |
+| "There's no live URL yet, so connectivity fails." | Undeployed is `not checked`. Fail only a URL that is supposed to be live. |
 
 ## 1. Preflight
 

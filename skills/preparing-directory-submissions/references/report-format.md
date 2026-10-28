@@ -70,6 +70,9 @@ that no check here sees.
 
 ## Rows
 
+Each table has exactly one B row per tool, named `B. Hints vs behavior:
+TOOL`, passing tools included. Other checks may group tools in one row.
+
 Put rows in this order inside each directory table:
 
 1. Rows for checks that pasted feedback mapped to, for every tool.

@@ -166,7 +166,13 @@ def check_legacy_m3(command: list[str], cwd: Path) -> None:
         )
 
 
-def prepare(server: str, m3: str, root: Path) -> tuple[Path, dict[str, str]]:
+def prepare(
+    server: str,
+    m3: str,
+    root: Path,
+    skills: tuple[str, ...] = SKILLS,
+    source: Path = REPO,
+) -> tuple[Path, dict[str, str]]:
     project = root / "project"
     shutil.copytree(
         HERE / server,
@@ -222,14 +228,14 @@ def prepare(server: str, m3: str, root: Path) -> tuple[Path, dict[str, str]]:
     )
     env.update(DISABLE_TELEMETRY="1", DO_NOT_TRACK="1")
     env.pop("VIRTUAL_ENV", None)
-    for skill in SKILLS:
+    for skill in skills:
         run(
             [
                 "npx",
                 "--yes",
                 "skills@1.7.0",
                 "add",
-                str(REPO),
+                str(source),
                 "--skill",
                 skill,
                 "--agent",
@@ -263,12 +269,30 @@ def skills_loaded(transcript: Path) -> list[str]:
     return loaded
 
 
+def final_answer(transcript: Path) -> str:
+    """The agent's last message to the user."""
+    answer = ""
+    for raw in transcript.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            answer = str(event.get("result") or "")
+    return answer
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("scenario", nargs="?", choices=sorted(SCENARIOS))
     parser.add_argument("--out", type=Path, default=HERE / ".runs")
     parser.add_argument("--model", default="opus")
     parser.add_argument("--list", action="store_true")
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="install only testing-with-m3, to see what an agent does without this skill",
+    )
     args = parser.parse_args()
     if args.list or args.scenario is None:
         for name, (server, prompt, m3) in SCENARIOS.items():
@@ -276,11 +300,13 @@ def main() -> int:
         return 0
 
     server, prompt, m3 = SCENARIOS[args.scenario]
-    out = (args.out / args.scenario).resolve()
+    name = args.scenario + ("-baseline" if args.baseline else "")
+    out = (args.out / name).resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
-    root = Path(tempfile.mkdtemp(prefix=f"readiness-{args.scenario}-"))
-    project, env = prepare(server, m3, root)
+    root = Path(tempfile.mkdtemp(prefix=f"readiness-{name}-"))
+    skills = ("testing-with-m3",) if args.baseline else SKILLS
+    project, env = prepare(server, m3, root, skills)
     (out / "prompt.txt").write_text(prompt + "\n", encoding="utf-8")
 
     transcript = out / "transcript.jsonl"
@@ -312,9 +338,9 @@ def main() -> int:
 
     if (root / "calls.log").is_file():
         shutil.copy(root / "calls.log", out / "calls.log")
-    for name in ("directory-readiness-report.md",):
-        if (project / name).is_file():
-            shutil.copy(project / name, out / name)
+    report = project / "directory-readiness-report.md"
+    if report.is_file():
+        shutil.copy(report, out / report.name)
     if (project / "tests").is_dir():
         shutil.copytree(
             project / "tests",
@@ -326,8 +352,22 @@ def main() -> int:
         if (root / "calls.log").is_file()
         else []
     )
+    (out / "answer.md").write_text(final_answer(transcript) + "\n", encoding="utf-8")
+    changed = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
     summary = {
-        "scenario": args.scenario,
+        "scenario": name,
+        "skills_installed": list(skills),
+        # Files the agent added or changed, outside tool and env folders.
+        "files_changed": [
+            line
+            for line in changed
+            if not line[3:].startswith((".agents/", ".claude/", ".venv/", ".m3/"))
+        ],
         "project": str(project),
         "skills_loaded": skills_loaded(transcript),
         "tools_called": sorted(set(calls)),
