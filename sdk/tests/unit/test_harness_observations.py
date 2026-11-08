@@ -619,7 +619,9 @@ def test_sink_bounds_redacts_text_and_derives_stderr_state() -> None:
     sink.emit(
         ProcessObservedObservation(
             **_common(
-                observation_id="bounded-process", phase="exited", stderr="CANARY-TOKEN-abcdef"
+                observation_id="bounded-process",
+                phase="exited",
+                stderr="CANARY-TOKEN-abcdef",
             )
         )
     )
