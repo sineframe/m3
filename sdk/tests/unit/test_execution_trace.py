@@ -258,17 +258,33 @@ def test_finalization_is_idempotent_but_conflicting_outcomes_are_rejected() -> N
 
 def test_payloads_are_redacted_before_commit_and_fail_closed() -> None:
     store = InMemoryExecutionStore()
-    config = RedactionConfig(secrets=frozenset({"secret"}), include_environment=False)
+    config = RedactionConfig(
+        secrets=frozenset({"secret-value"}), include_environment=False
+    )
     recorder = ExecutionTraceRecorder(
         store, "execution-redaction", redaction_config=config
     )
-    event = recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": "secret"})
+    event = recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": "secret-value"})
     assert event.payload["raw"] == REDACTED
     assert store.events("execution-redaction")[-1].payload["raw"] == REDACTED
     with pytest.raises(RedactionError):
         recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": object()})
     assert len(recorder.events()) == 2
     assert recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": "safe"}).sequence == 2
+
+
+@pytest.mark.parametrize("secret", ["a", "ab", "executi"])
+def test_short_secrets_do_not_corrupt_event_identity(secret: str) -> None:
+    # Values shorter than any real credential match by accident inside IDs,
+    # kinds and timestamps; redacting them there used to crash the recorder.
+    store = InMemoryExecutionStore()
+    config = RedactionConfig(secrets=frozenset({secret}), include_environment=False)
+    recorder = ExecutionTraceRecorder(
+        store, "execution-short-secret", redaction_config=config
+    )
+    event = recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": "abc"})
+    assert event.execution_id.root == "execution-short-secret"
+    assert event.payload["raw"] == "abc"
 
 
 def test_sqlite_reopen_and_payload_blob_contain_no_canaries(tmp_path: Path) -> None:
