@@ -128,7 +128,11 @@ def run(mode: str) -> int:
                     for item in params.get("prompt", [])
                     if isinstance(item, dict) and item.get("type") == "text"
                 )
-                tool_name = "failure" if mode == "recover" and turns == 1 else "echo"
+                tool_name = (
+                    "failure"
+                    if mode == "recover" and turns == 1
+                    else os.environ.get("SCENARIO_TOOL_NAME", "echo")
+                )
                 request_id += 1
                 result = (
                     _rpc(
