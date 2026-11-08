@@ -599,7 +599,7 @@ def test_reasoning_chunks_coalesce_only_with_same_block_or_adjacent_unidentified
 def test_sink_bounds_redacts_text_and_derives_stderr_state() -> None:
     store = InMemoryExecutionStore(
         config=RedactionConfig(
-            secrets=frozenset({"CANARY"}), include_environment=False
+            secrets=frozenset({"CANARY-TOKEN"}), include_environment=False
         ),
         capture_config=CaptureOptions(raw_preview_bytes=5),
     )
@@ -607,19 +607,21 @@ def test_sink_bounds_redacts_text_and_derives_stderr_state() -> None:
         store,
         "bounded",
         redaction_config=RedactionConfig(
-            secrets=frozenset({"CANARY"}), include_environment=False
+            secrets=frozenset({"CANARY-TOKEN"}), include_environment=False
         ),
     )
     sink = HarnessObservationSink(recorder)
     sink.emit(
         MessageChunkObservation(
-            **_common(observation_id="bounded-message", text="CANARY-abcdef")
+            **_common(observation_id="bounded-message", text="CANARY-TOKEN-abcdef")
         )
     )
     sink.emit(
         ProcessObservedObservation(
             **_common(
-                observation_id="bounded-process", phase="exited", stderr="CANARY-abcdef"
+                observation_id="bounded-process",
+                phase="exited",
+                stderr="CANARY-TOKEN-abcdef",
             )
         )
     )
@@ -633,7 +635,7 @@ def test_sink_bounds_redacts_text_and_derives_stderr_state() -> None:
     assert _event_for_observation(recorder, "bounded-process").payload[
         "stderr_state"
     ] == ("truncated")
-    assert "CANARY" not in repr(events)
+    assert "CANARY-TOKEN" not in repr(events)
     process = next(
         entry
         for entry in recorder.finalize(ExecutionOutcome.COMPLETED).view().timeline

@@ -31,6 +31,9 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
 REDACTED: Final[str] = "[REDACTED]"
+# Shorter values are not real credentials and match by accident inside IDs,
+# timestamps and enum values, which corrupts the records being redacted.
+_MIN_SECRET_LENGTH: Final[int] = 8
 
 
 def _is_pydantic_model(value: object) -> TypeGuard[BaseModel]:
@@ -395,7 +398,8 @@ def _replace_secrets(
     result = value
     secret_values = set(config.secrets).union(config.credential_file_contents)
     for secret in sorted(
-        (item for item in secret_values if item), key=lambda item: (-len(item), item)
+        (item for item in secret_values if len(item) >= _MIN_SECRET_LENGTH),
+        key=lambda item: (-len(item), item),
     ):
         if secret in result:
             result = result.replace(secret, REDACTED)
