@@ -2028,7 +2028,7 @@ _REPLAY_FIXTURES = Path(__file__).parents[3] / "sdk" / "tests" / "fixtures"
 _REPLAY_ROOT = str(Path(__file__).parents[3])
 
 
-def _record_pytest_agent_tool_call(store, environment):
+def _record_pytest_agent_tool_call(store, environment, agent_env=None):
     """Record an agent execution shaped like a pytest test-run attempt."""
     spec = AgentSpec(
         harness=ACPAgent(
@@ -2039,7 +2039,7 @@ def _record_pytest_agent_tool_call(store, environment):
                 "protocol_version": 1,
                 "command": sys.executable,
                 "args": [str(_REPLAY_FIXTURES / "acp_scenario_agent.py"), "normal"],
-                "env": {},
+                "env": agent_env or {},
             },
         ),
         servers=(
@@ -2250,10 +2250,13 @@ def test_v2_tool_call_replay_rejects_redacted_tool_name_even_with_override(
     tmp_path, monkeypatch
 ):
     # A configured secret equal to the tool name records it as "[REDACTED]".
-    monkeypatch.setenv("REPLAY_TOKEN", "echo")
+    # Secrets under 8 characters are not redacted, so use a longer name.
+    monkeypatch.setenv("REPLAY_TOKEN", "replay-echo-tool")
     database = Path(tmp_path).resolve() / "replay-redacted-tool.sqlite"
     store = SQLiteExecutionStore(database)
-    source_id, entry_id, _other = _record_pytest_agent_tool_call(store, {})
+    source_id, entry_id, _other = _record_pytest_agent_tool_call(
+        store, {}, agent_env={"SCENARIO_TOOL_NAME": "replay-echo-tool"}
+    )
     recorded = next(
         item
         for item in store.get_trace_view(source_id).tool_calls
