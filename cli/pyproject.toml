@@ -12,6 +12,12 @@ dependencies = [
   "keyring>=25,<26",
 ]
 
+[project.urls]
+Homepage = "https://m3.sineframe.com/"
+Documentation = "https://m3.sineframe.com/docs/"
+Repository = "https://github.com/sineframe/m3"
+Issues = "https://github.com/sineframe/m3/issues"
+
 [project.scripts]
 m3 = "m3_cli.main:main"
 

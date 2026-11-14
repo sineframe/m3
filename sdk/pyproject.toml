@@ -37,7 +37,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sineframe/m3"
+Homepage = "https://m3.sineframe.com/"
+Documentation = "https://m3.sineframe.com/docs/"
 Repository = "https://github.com/sineframe/m3"
 Issues = "https://github.com/sineframe/m3/issues"
 
