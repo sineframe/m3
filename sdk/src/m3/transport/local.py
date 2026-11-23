@@ -24,6 +24,20 @@ from .. import _timing
 from ..trace.redaction import is_sensitive_key
 from ..types import InProcessServer, SecretReference, StdioServer
 
+# Fixed text only. Startup and handshake messages never include the command,
+# its environment, or anything the server process wrote.
+STDIO_STARTUP_FAILURE_MESSAGE = (
+    "stdio MCP server startup failed: the server command could not be started. "
+    "Check that the command exists and is executable in the environment that "
+    "runs the tests."
+)
+STDIO_HANDSHAKE_FAILURE_HINT = (
+    "The stdio server process exited or never answered the MCP handshake. "
+    "Run the server command by hand in the same environment to see its error. "
+    "If the server is a Python package, install it into the environment that "
+    "runs the tests, for example: uv pip install --python .venv/bin/python -e ."
+)
+
 
 class LocalTransportError(Exception):
     """Base class for sanitized local transport failures."""
@@ -555,6 +569,9 @@ class StdioMCPTransport:
                     ),
                 ) from None
             stack = AsyncExitStack()
+            # Server stderr is discarded, not inherited. Under pytest it would
+            # land in the captured stderr section, which the M3 plugin saves
+            # with the test result and exports in feedback diagnostics.
             errlog = open(os.devnull, "w", encoding="utf-8")
             stack.callback(errlog.close)
             try:
@@ -576,7 +593,7 @@ class StdioMCPTransport:
             raise
         except Exception:
             raise TransportStartupError(
-                "stdio MCP server startup failed",
+                STDIO_STARTUP_FAILURE_MESSAGE,
                 evidence=TransportEvidence(
                     transport="stdio", partial=True, error_kind="startup_failure"
                 ),
@@ -593,6 +610,8 @@ class StdioMCPTransport:
 
 
 __all__ = [
+    "STDIO_HANDSHAKE_FAILURE_HINT",
+    "STDIO_STARTUP_FAILURE_MESSAGE",
     "InProcessMCPTransport",
     "LocalTransportError",
     "StdioMCPTransport",

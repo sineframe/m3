@@ -232,6 +232,9 @@ from .transport.direct import (
     remote_connection as _remote_connection,
 )
 from .transport.local import (
+    STDIO_HANDSHAKE_FAILURE_HINT as _STDIO_HANDSHAKE_FAILURE_HINT,
+)
+from .transport.local import (
     InProcessMCPTransport as _InProcessMCPTransport,
 )
 from .transport.local import (
@@ -299,6 +302,9 @@ from .types import (
 
 _CURRENT_MCP_PROTOCOL = _MCP_LATEST_PROTOCOL_VERSION
 _SERVER_FAILURE_SETTLE_TIMEOUT = 0.05
+# The first exchanges with a server: a transport failure here means the
+# process never completed the MCP handshake.
+_HANDSHAKE_OPERATIONS = frozenset({"session/enter", "initialize", "server/discover"})
 _T = _TypeVar("_T")
 
 
@@ -526,6 +532,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
     ) -> None:
         self._kit = kit
         self._server: _ServerValue | None = server
+        self._owns_stdio_process = isinstance(server, _StdioServer)
         self._timeout = timeout
         self._validate_schemas_option = validate_schemas
         self._secret_resolver = secret_resolver
@@ -592,6 +599,11 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             return await self._guard(value(*args, **kwargs))
 
         return guarded
+
+    def _transport_failure_hint(self, operation: str) -> str | None:
+        if self._owns_stdio_process and operation in _HANDSHAKE_OPERATIONS:
+            return _STDIO_HANDSHAKE_FAILURE_HINT
+        return None
 
     async def _guard(self, operation: _Awaitable[_T]) -> _T:
         try:

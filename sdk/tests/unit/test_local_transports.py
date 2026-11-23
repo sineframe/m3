@@ -14,6 +14,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import ListToolsResult
 
 from m3.transport.local import (
+    STDIO_STARTUP_FAILURE_MESSAGE,
     InProcessMCPTransport,
     StdioMCPTransport,
     TransportProcessError,
@@ -228,7 +229,9 @@ async def test_stdio_startup_errors_are_sanitized() -> None:
     server = StdioServer(name="missing", command="m3-no-such-executable")
     with pytest.raises(TransportStartupError) as error:
         await StdioMCPTransport(server).open()
-    assert str(error.value) == "stdio MCP server startup failed"
+    assert str(error.value) == STDIO_STARTUP_FAILURE_MESSAGE
+    assert str(error.value).startswith("stdio MCP server startup failed: ")
+    assert "Check that the command exists" in str(error.value)
     assert "no-such" not in str(error.value)
     assert error.value.evidence is not None
     assert error.value.evidence.partial is True
