@@ -44,6 +44,30 @@ A failed agent turn ends the execution with the harness's own reason in
 harness gave no reason. A turn that timed out, was cancelled, or was
 interrupted ends the execution with that same outcome rather than `failed`.
 
+## Claude Code turn failed
+
+A Claude Code test that fails with
+`ErrorInfo(code=TRANSPORT_ERROR, message='turn failed', ...)` on its first turn,
+within a few seconds, usually has no credential. M3 starts Claude Code with a
+temporary home directory and does not copy the host's Claude Code login, so a
+signed-in machine is not enough. Provide one of:
+
+- `ANTHROPIC_API_KEY` set to a non-empty value in the environment that runs the
+  test, with no `credential_env` in the selection.
+- A token from `claude setup-token`, exported under a name you choose and
+  mapped with `credential_env={"CLAUDE_CODE_OAUTH_TOKEN": "MY_CLAUDE_TOKEN"}`,
+  or `--credential-env claude_code:CLAUDE_CODE_OAUTH_TOKEN=MY_CLAUDE_TOKEN` for
+  agents selected on the command line.
+
+An explicit `credential_env` is the complete set of credentials the agent
+receives. `m3 doctor --require harness:claude` reports the `claude` executable
+only and passes without a credential.
+
+`UnsupportedFeature: Claude Code does not support exact tool restrictions`
+means the test passed `tools=[...]`. Remove it and assert the call with
+`expect(result).to_have_tool_call(...)`; see
+[the Claude Code first test](../guides/agents/first-test.md#run-the-test-with-claude-code).
+
 ## Tool call was denied
 
 Approval is separate from MCP elicitation. The test's tool selection decides
