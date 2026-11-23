@@ -9,8 +9,19 @@ being tested.
 ## Requirements
 
 M3 supports Python 3.10 and newer. The commands below use
-[uv](https://docs.astral.sh/uv/). The alternative shell installer supports
-macOS and Linux and requires `curl` plus either Python 3.10 or uv.
+[uv](https://docs.astral.sh/uv/). If `uv --version` fails, install uv first. On
+macOS or Linux:
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Open a new terminal afterwards so `uv` is on your `PATH`. The
+[uv installation page](https://docs.astral.sh/uv/getting-started/installation/)
+lists Windows and package-manager installs.
+
+The alternative shell installer supports macOS and Linux and requires `curl`
+plus either uv or a Python 3.10 or newer that can create virtual environments.
 
 ## Install the CLI
 
@@ -36,7 +47,11 @@ curl -LsSf https://m3.sineframe.com/install.sh | sh
 
 The installer selects the latest stable GitHub release, verifies its release
 installer and checksums, and installs the CLI in isolated tool storage. It uses
-uv when available and otherwise creates a dedicated virtual environment. To
+uv when available and otherwise creates a dedicated virtual environment with
+`python3 -m venv`. A stock Ubuntu or Debian system does not include that
+module, so without uv the install stops with `m3 install failed: could not
+create the dedicated virtual environment`. Install uv and rerun the installer,
+or install your distribution's `python3-venv` package, which needs root. To
 update an installation made this way, rerun the same command, then rerun
 `m3 setup` in each project to upgrade its SDK.
 
@@ -50,12 +65,22 @@ m3 setup
 m3 doctor
 ```
 
-`m3 init` creates the project identity and a skipped pytest starter. Replace
-that starter with a real assertion before relying on test results. `m3 setup`
+`m3 init` asks for a project name and a suite name. When a script, CI job, or
+coding agent runs it, pass both: `m3 init --project-name NAME --suite NAME`.
+
+`m3 init` creates the project identity in `m3.toml`, a skipped pytest starter
+at `tests/test_m3_starter.py`, and `.env.example`. It also installs the
+`testing-with-m3` agent skill under `.agents/` and `.claude/` and records it in
+`skills-lock.json`; pass `--no-skill` to `m3 init` and `m3 setup` to leave
+those out. See [install the M3 agent skill](https://m3.sineframe.com/docs/guides/agents/skill).
+
+Replace the starter with a real assertion before relying on test results. `m3 setup`
 installs the SDK release matching the CLI, with pytest, storage, and judge
 support, into the selected project environment. It does not install the CLI in
-that environment or edit dependency manifests and lockfiles. `m3 doctor` checks
-the CLI and project environment separately.
+that environment or edit dependency manifests and lockfiles. It installs only
+the SDK: a Python MCP server you want to test must be installed into the same
+environment separately, as [test your own server](start-your-server.md) shows.
+`m3 doctor` checks the CLI and project environment separately.
 
 Keep the CLI and project SDK on matching releases. If the environment is
 recreated or synchronized, run `m3 setup` again. For a project that manages its

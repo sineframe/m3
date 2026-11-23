@@ -7,7 +7,19 @@ description: "Run the configured command directly from the configured working di
 
 ## Stdio process exits during initialization
 
+The test fails with `TransportError: MCP transport operation failed:
+initialize`, followed by the next step. M3 discards the server's stderr and
+never stores it, so the test output cannot show the server's own error.
+
 Run the configured command directly from the configured working directory.
+If it reports a missing module, install your server into the environment that
+runs the tests: `uv pip install --python .venv/bin/python -e .` from the
+server's project root. `m3 setup` installs only the M3 SDK. See
+[test your own server](../start/your-server.md#make-your-server-launchable).
+
+`TransportStartupError: stdio MCP server startup failed` means the command
+itself could not be started. Check that it exists and is on `PATH`.
+
 Check that its stdout contains only MCP protocol traffic; write diagnostics to
 stderr. Confirm every argument is a separate `StdioServer.args` value.
 
