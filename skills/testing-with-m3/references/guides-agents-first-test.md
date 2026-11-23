@@ -10,6 +10,9 @@ This test starts a local MCP server, gives Codex access to one named tool, and c
 - Install and sign in to the Codex CLI. This example uses the system installation and its normal local authentication.
 - Set `M3_DOCS_CODEX_MODEL` to a model identifier available to that installation. M3 does not choose a provider model for you.
 - M3 approves Codex's MCP tool calls to the test server. The `tools` selection below restricts the test to `shipping:shipping_quote`.
+- Agent tests use your own agent login or API key, and your model provider bills the tokens each run uses. M3 adds no charge and supplies no key. Direct tests, such as [your first MCP test](getting-started.md), need no key.
+
+To use Claude Code instead of Codex, read the requirements in [run the test with Claude Code](#run-the-test-with-claude-code) below.
 
 Credential-free documentation checks skip this live example. See
 [harness compatibility](reference-compatibility.md).
@@ -151,6 +154,82 @@ python -m pytest -q test_agent.py
 The matcher checks the tool name, server alias, arguments, successful result, and call count in this turn. If the agent completes without that call, the assertion fails even if its reply claims it used the tool.
 
 This test selects Codex with `kit.agents(...)`, so it runs under plain pytest. To pass the harness and model on the command line instead, request the pytest `agent` fixture and run `m3 test --harness codex=MODEL`. Read [agent troubleshooting](troubleshooting-agents.md) before you mix fixture-based agent tests with direct tests.
+
+## Run the test with Claude Code
+
+Claude Code needs three changes to the test above: a different harness name, a
+credential you pass explicitly, and no `tools` selection.
+
+Requirements:
+
+- Install the Claude Code CLI; `claude --version` must work in the terminal that runs the test.
+- Set `M3_DOCS_CLAUDE_MODEL` to a model identifier your account can use. M3 passes it to Claude Code as `--model`.
+- Provide a credential. M3 starts Claude Code with a temporary home directory and does not copy your Claude Code login into it, so being signed in on the machine is not enough. Use one of:
+  - An API key. Set `ANTHROPIC_API_KEY` in the environment that runs the test. M3 forwards it when the selection has no `credential_env`.
+  - A subscription token. Run `claude setup-token`, export the token it prints under a name you choose, such as `MY_CLAUDE_TOKEN`, and add `"credential_env": {"CLAUDE_CODE_OAUTH_TOKEN": "MY_CLAUDE_TOKEN"}` to the selection. The mapping holds variable names, not the token.
+
+Save this complete test beside `shipping_server.py` as `test_agent_claude.py`:
+
+```python
+import os
+import sys
+from pathlib import Path
+
+from m3 import MCPTestKit, expect
+from m3.types import StdioServer, TurnOutcome
+
+HERE = Path(__file__).resolve().parent
+
+
+def test_claude_code_calls_the_shipping_tool() -> None:
+    model = os.environ["M3_DOCS_CLAUDE_MODEL"]
+    server = StdioServer(
+        name="shipping",
+        command=sys.executable,
+        args=(str(HERE / "shipping_server.py"),),
+        cwd=str(HERE),
+    )
+    with MCPTestKit(env={}) as kit:
+        agent = kit.agents([{"harness": "claude_code", "models": [model]}])[0]
+        session = agent.session(server=server, timeout=120)
+        with session:
+            turn = session.send(
+                "Use the shipping_quote tool once with weight_kg 2 and zone local. "
+                "Report the returned amount.",
+                timeout=120,
+            )
+        result = session.result
+
+    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
+    expect(result).to_have_tool_call(
+        "shipping_quote",
+        turn=turn,
+        server="shipping",
+        arguments={"weight_kg": 2, "zone": "local"},
+        status="success",
+        count=1,
+    )
+```
+
+Run it from the same directory:
+
+```bash
+python -m pytest -q test_agent_claude.py
+```
+
+The session has no `tools=[...]` argument. Claude Code cannot restrict a
+session to exact tool names, so passing one raises `UnsupportedFeature: Claude
+Code does not support exact tool restrictions; assert the selected tool in the
+trace`. Without `tools`, M3 allows Claude Code the MCP tools of the one bound
+server, at server scope. A Claude Code session takes exactly one server. The
+`to_have_tool_call` assertion is what checks which tool the agent chose.
+
+If the assertion reports `message='turn failed'`, check the credential first.
+With no `ANTHROPIC_API_KEY` and no mapped token, the turn fails within seconds
+with exactly that message, and M3 has no more specific reason from Claude Code
+to show. `m3 doctor --require harness:claude` checks only that the `claude`
+executable is available; it does not check credentials. See
+[agent troubleshooting](troubleshooting-agents.md#claude-code-turn-failed).
 
 To test a different server, change the `StdioServer` command and arguments, then update the alias, allowed tool, prompt, and expected call together. Keep `arguments` explicit in the matcher when argument selection is part of the behavior under test.
 

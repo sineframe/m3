@@ -471,11 +471,24 @@ async def test_transport_errors_are_typed_and_provider_evidence_is_hooked() -> N
         with pytest.raises(TransportError) as error:
             await client.ping()
     assert "socket-secret" not in str(error.value)
+    assert str(error.value) == "MCP transport operation failed: ping"
     assert error.value.details["partial_evidence"]["captured"] is True
     assert [event.phase for event in events if event.operation == "ping"] == [
         "started",
         "failed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_core_client_adds_no_hint_to_a_failed_handshake() -> None:
+    class BrokenSession(FakeSession):
+        async def initialize(self) -> types.InitializeResult:
+            raise OSError("socket-secret")
+
+    with pytest.raises(TransportError) as error:
+        await _client(BrokenSession()).__aenter__()
+    # Only the owner that knows the transport supplies a next step.
+    assert str(error.value) == "MCP transport operation failed: initialize"
 
 
 @pytest.mark.asyncio

@@ -889,13 +889,29 @@ class AsyncDirectClient:
             details=details,
         )
 
+    def _transport_failure_hint(self, operation: str) -> str | None:
+        """Return a fixed next step for a failed operation, if one applies.
+
+        The owner that knows the transport overrides this. A hint is static
+        text chosen from the operation name alone, never from the error.
+        """
+
+        del operation
+        return None
+
     def _transport_failure(
         self, operation: str, error: BaseException
     ) -> TransportError:
+        # The cause is discarded on purpose: its text can carry the command
+        # line, environment values, or server output.
         del error
         self._emit_event(operation, "failed", error_kind="transport")
+        message = f"MCP transport operation failed: {operation}"
+        hint = self._transport_failure_hint(operation)
+        if hint:
+            message = f"{message}. {hint}"
         return TransportError(
-            f"MCP transport operation failed: {operation}",
+            message,
             details={
                 "operation": operation,
                 "phase": "transport",

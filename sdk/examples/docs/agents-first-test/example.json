@@ -13,6 +13,7 @@
     "shipping_server.py",
     "test_server_contract.py",
     "test_agent.py",
+    "test_agent_claude.py",
     "test_harness.py",
     "test_session.py",
     "test_agent_matrix.py"
@@ -20,12 +21,13 @@
   "displayed_blocks": [
     {"page": "guides-agents-first-test", "label": "shipping server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-first-test", "label": "first agent test", "source": "test_agent.py", "kind": "file"},
+    {"page": "guides-agents-first-test", "label": "first agent test with Claude Code", "source": "test_agent_claude.py", "kind": "file"},
     {"page": "guides-agents-harnesses", "label": "harness selection test", "source": "test_harness.py", "kind": "file"},
     {"page": "guides-agents-harnesses", "label": "Codex permissions", "source": "test_harness.py", "kind": "snippet", "context": "Pass either Codex value as the harness, or the equivalent permissions mapping in the kit.agents selection of test_harness.py."},
     {"page": "guides-agents-sessions", "label": "session test", "source": "test_session.py", "kind": "file"},
     {"page": "guides-agents-matrices", "label": "agent matrix test", "source": "test_agent_matrix.py", "kind": "file"}
   ],
-  "dependencies": ["sf-m3[pytest]", "Codex CLI system installation"],
+  "dependencies": ["sf-m3[pytest]", "Codex CLI system installation", "Claude Code CLI system installation for test_agent_claude.py"],
   "working_directory": "project directory",
   "scenarios": [
     {
@@ -52,6 +54,20 @@
         "model": "M3_DOCS_CODEX_MODEL environment variable",
         "mode": "native live provider",
         "status": "requires live verification and provider access"
+      },
+      "verification": "live-provider"
+    },
+    {
+      "id": "claude-code-tool-call",
+      "command": "python -m pytest -q test_agent_claude.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["one successful shipping_quote call with expected arguments"],
+      "compatibility": {
+        "harness": "Claude Code CLI",
+        "model": "M3_DOCS_CLAUDE_MODEL environment variable",
+        "mode": "native live provider",
+        "status": "requires live verification and provider access; only the missing-credential failure was observed, with Claude Code 2.1.330 on Linux on 2026-11-23"
       },
       "verification": "live-provider"
     },
@@ -99,6 +115,6 @@
     }
   ],
   "network": "Provider access is required for native runs. Managed Codex tests also need runtime acquisition. The MCP server is local stdio.",
-  "credentials": "test_harness.py explicitly maps MY_OPENAI_KEY to the Codex child OPENAI_API_KEY. Other Codex examples may reuse eligible host authentication when no explicit references are selected; do not assume other adapters copy host login files. Set model variables to identifiers available to the configured account.",
+  "credentials": "test_harness.py explicitly maps MY_OPENAI_KEY to the Codex child OPENAI_API_KEY. Other Codex examples may reuse eligible host authentication when no explicit references are selected; do not assume other adapters copy host login files. test_agent_claude.py needs a non-empty ANTHROPIC_API_KEY, or a credential_env mapping to CLAUDE_CODE_OAUTH_TOKEN; Claude Code never reuses a host login. Set model variables to identifiers available to the configured account.",
   "cleanup": "MCPTestKit and the session contexts own and close the harness and server processes."
 }

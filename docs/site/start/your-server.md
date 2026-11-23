@@ -12,9 +12,42 @@ Both direct paths can run without an agent provider.
 ## Requirements
 
 Install the M3 CLI and prepare the project SDK as described in [install M3](install.md).
-For stdio, the server command must run in the project environment. For HTTP,
-start the service before running the test; M3 does not start or stop a deployed
-HTTP service.
+For stdio, the server command must run in the project environment; the next
+section shows how to put a Python server there. For HTTP, start the service
+before running the test; M3 does not start or stop a deployed HTTP service.
+
+Direct tests need no API key, and no model provider is billed for them.
+
+## Make your server launchable
+
+`m3 test` runs pytest in the environment `m3 setup` prepared, and a
+`StdioServer` whose command is `sys.executable` starts your server with that
+same Python. `m3 setup` installs only the M3 SDK there. It does not read your
+`pyproject.toml` or lockfile, so your own package is absent until you install
+it.
+
+For a Python server, run this from the server's project root:
+
+```sh
+uv pip install --python .venv/bin/python -e .
+```
+
+`.venv/bin/python` is the project environment `m3 setup` creates by default. If
+setup selected an active virtual environment instead, use that environment's
+Python; `m3 setup` prints the environment it used. Rerun the install when the
+environment is recreated.
+
+A server started with `npx` or as a compiled binary needs nothing installed in
+the Python environment. Give `StdioServer` that command and its arguments, and
+make sure the command is on `PATH` when you run `m3 test`.
+
+Check the command by hand before writing the test, from the directory the test
+will use as `cwd`. A working stdio server keeps running and waits for input;
+stop it with Ctrl+C:
+
+```sh
+.venv/bin/python -m inventory_mcp
+```
 
 ## Stdio: start a local process
 
@@ -81,7 +114,30 @@ server = StdioServer(name="inventory", command=sys.executable,
 
 Then change the tool call and assertions to the behavior your server promises.
 This replacement assumes `inventory_mcp` is installed in the project
-environment; it is not a runnable server supplied by M3.
+environment, as described in [make your server launchable](#make-your-server-launchable);
+it is not a runnable server supplied by M3.
+
+### If the server does not start
+
+When the server process exits before it answers, the test fails with:
+
+```text
+m3.errors.TransportError: MCP transport operation failed: initialize. The stdio server process exited or never answered the MCP handshake. Run the server command by hand in the same environment to see its error. If the server is a Python package, install it into the environment that runs the tests, for example: uv pip install --python .venv/bin/python -e .
+```
+
+`initialize` is the first MCP request, so this failure means the process never
+completed the handshake. The usual cause is a module that is not installed in
+the project environment. M3 discards the server's stderr and keeps the command
+line and environment out of the message, the saved run, and `feedback.json`,
+because any of them can hold credentials. Run the command by hand to read the
+server's own error, such as `No module named inventory_mcp`.
+
+When the command itself cannot be started, for example because it is not on
+`PATH`, the failure is instead:
+
+```text
+m3.transport.local.TransportStartupError: stdio MCP server startup failed: the server command could not be started. Check that the command exists and is executable in the environment that runs the tests.
+```
 
 ## HTTP: connect to a running endpoint
 

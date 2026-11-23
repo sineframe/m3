@@ -21,10 +21,14 @@ from mcp.types import ListToolsResult
 
 from m3._test_runs import activate_test, reset_test
 from m3.async_api import AsyncMCPTestKit, InputRequiredResult
-from m3.errors import KitClosed, ProtocolError, UnsupportedFeature
+from m3.errors import KitClosed, ProtocolError, TransportError, UnsupportedFeature
 from m3.services.profiles import ProfileResolutionError
 from m3.storage import SQLiteExecutionStore
-from m3.transport.local import TransportProcessError, TransportStartupError
+from m3.transport.local import (
+    STDIO_HANDSHAKE_FAILURE_HINT,
+    TransportProcessError,
+    TransportStartupError,
+)
 from m3.types import (
     HTTPServer,
     InProcessServer,
@@ -393,6 +397,65 @@ async def test_kit_close_from_another_task_reaps_stdio_owner() -> None:
     await asyncio.create_task(kit.aclose())
     assert client.transport_evidence is not None
     assert client.transport_evidence.state == "closed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.process_lifecycle
+async def test_stdio_handshake_failure_names_a_next_step_without_server_output(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
+    client = kit.direct(
+        StdioServer(
+            name="broken",
+            command=sys.executable,
+            args=(
+                "-c",
+                "import sys; sys.stderr.write('stderr-marker-7f3a'); sys.exit(3)",
+            ),
+            environment={"BROKEN_SERVER_SETTING": "environment-marker-9c1d"},
+        )
+    )
+    try:
+        with pytest.raises(TransportError) as error:
+            await client.__aenter__()
+    finally:
+        await kit.aclose()
+
+    message = str(error.value)
+    assert message == (
+        f"MCP transport operation failed: initialize. {STDIO_HANDSHAKE_FAILURE_HINT}"
+    )
+    assert "Run the server command by hand" in message
+    assert "uv pip install --python .venv/bin/python -e ." in message
+    # The message and the test's captured output stay free of anything the
+    # server process owned: its stderr, command line, and environment.
+    captured = capfd.readouterr()
+    for text in (message, repr(error.value.details), captured.out, captured.err):
+        assert "stderr-marker-7f3a" not in text
+        assert "environment-marker-9c1d" not in text
+        assert "sys.exit(3)" not in text
+        assert sys.executable not in text
+
+
+@pytest.mark.asyncio
+async def test_handshake_hint_is_limited_to_stdio_handshake_operations() -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
+    try:
+        stdio = kit.direct(StdioServer(name="echo", command=sys.executable))
+        in_process = kit.direct(InProcessServer(name="fixture", factory=_server))
+        http = kit.direct(HTTPServer(name="remote", url="https://example.com/mcp"))
+
+        for operation in ("session/enter", "initialize", "server/discover"):
+            assert stdio._transport_failure_hint(operation) == (
+                STDIO_HANDSHAKE_FAILURE_HINT
+            )
+            assert in_process._transport_failure_hint(operation) is None
+            assert http._transport_failure_hint(operation) is None
+        for operation in ("tools/call", "tools/list", "ping"):
+            assert stdio._transport_failure_hint(operation) is None
+    finally:
+        await kit.aclose()
 
 
 @pytest.mark.asyncio
