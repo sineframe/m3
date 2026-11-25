@@ -79,6 +79,20 @@ from .observations import (
 _MALFORMED = {"capture": "unavailable", "reason": "malformed_source"}
 _MISSING = object()
 _MAX_IDENTIFIER = 256
+# Child variables that give Claude Code a credential or select a provider
+# that authenticates another way.
+_CLAUDE_CREDENTIAL_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+)
+_NO_CREDENTIAL_HINT = (
+    ": no credential was passed to Claude Code; set ANTHROPIC_API_KEY or map "
+    "CLAUDE_CODE_OAUTH_TOKEN with credential_env"
+)
 
 
 def _valid_identifier(value: object) -> bool:
@@ -343,6 +357,7 @@ class ClaudeCodeHarnessAdapter:
         self.executable = _executable(executable, "claude")
         self.environment = dict(environment or {})
         self._resolver_environment = environment
+        self._credential_hint = ""
         self._capabilities = HarnessAdapterCapabilities(
             name="claude-code",
             supports_multiturn=True,
@@ -492,6 +507,14 @@ class ClaudeCodeHarnessAdapter:
                     raise HarnessStartupError("Claude Code credential is unavailable")
                 environment[target] = value
                 runtime_secrets.add(value)
+            # Nothing mapped and no known credential variable in the child:
+            # a failed turn then most likely failed for lack of a credential.
+            self._credential_hint = (
+                ""
+                if runtime_secrets
+                or any(environment.get(name) for name in _CLAUDE_CREDENTIAL_ENV)
+                else _NO_CREDENTIAL_HINT
+            )
             # The isolated child environment is deliberately smaller than the
             # resolver source.  A selected map takes precedence for each
             # named reference, while missing named references retain the
@@ -1143,7 +1166,8 @@ class ClaudeCodeHarnessAdapter:
                 sequence,
                 "failed",
                 ErrorInfo(
-                    code=ErrorCode.TRANSPORT_ERROR, message="Claude Code stream failed"
+                    code=ErrorCode.TRANSPORT_ERROR,
+                    message="Claude Code stream failed" + self._credential_hint,
                 ),
                 observations,
                 limitations,
@@ -1183,7 +1207,7 @@ class ClaudeCodeHarnessAdapter:
                         else ErrorCode.TRANSPORT_ERROR,
                         message="Claude Code turn cancelled"
                         if self._cancel_requested
-                        else "Claude Code stream ended",
+                        else "Claude Code stream ended" + self._credential_hint,
                     ),
                     observations,
                     limitations,
@@ -1432,7 +1456,7 @@ class ClaudeCodeHarnessAdapter:
                         code=ErrorCode.PROTOCOL_ERROR
                         if malformed_error
                         else ErrorCode.TRANSPORT_ERROR,
-                        message="Claude Code turn failed",
+                        message="Claude Code turn failed" + self._credential_hint,
                     )
                     if failed
                     else None,

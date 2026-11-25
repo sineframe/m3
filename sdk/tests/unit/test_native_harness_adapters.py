@@ -1834,6 +1834,67 @@ for line in sys.stdin:
     await adapter.close()
 
 
+_CLAUDE_FAILED_TURN = """\
+import json, sys
+if "--help" in sys.argv:
+    print("--input-format stream-json --output-format stream-json")
+    raise SystemExit(0)
+for line in sys.stdin:
+    json.loads(line)
+    print(json.dumps({"type":"result", "is_error": True, "result": "refused"}), flush=True)
+"""
+
+
+@pytest.mark.asyncio
+async def test_claude_failed_turn_without_credential_names_the_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An ambient key is not forwarded unless the selection references it.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-credential-canary")
+    executable = _executable(tmp_path / "claude-failed.py", _CLAUDE_FAILED_TURN)
+    adapter = ClaudeCodeHarnessAdapter(executable=executable)
+    session = await adapter.open(_launch())
+    result = await session.send(HarnessTurnRequest.from_message("one"))
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.message == (
+        "Claude Code turn failed: no credential was passed to Claude Code; "
+        "set ANTHROPIC_API_KEY or map CLAUDE_CODE_OAUTH_TOKEN with credential_env"
+    )
+    assert "claude-credential-canary" not in repr(result)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_claude_failed_turn_with_credential_has_no_credential_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MY_CLAUDE_TOKEN", "claude-credential-canary")
+    executable = _executable(tmp_path / "claude-failed.py", _CLAUDE_FAILED_TURN)
+    base = _launch()
+    spec = base.spec.model_copy(
+        update={
+            "harness": ClaudeCode(
+                model="fixture",
+                executable=executable,
+                credential_references={
+                    "CLAUDE_CODE_OAUTH_TOKEN": SecretReference(
+                        source="environment", name="MY_CLAUDE_TOKEN"
+                    )
+                },
+            )
+        }
+    )
+    adapter = ClaudeCodeHarnessAdapter(executable=executable)
+    session = await adapter.open(
+        HarnessLaunch(spec, base.servers, base.configurations, base.tool_policy)
+    )
+    result = await session.send(HarnessTurnRequest.from_message("one"))
+    assert result.error is not None
+    assert result.error.message == "Claude Code turn failed"
+    await adapter.close()
+
+
 @pytest.mark.asyncio
 async def test_claude_native_policy_is_preflighted_and_applied_to_argv(
     tmp_path: Path,

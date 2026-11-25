@@ -27,7 +27,7 @@ def test_claude_code_calls_the_shipping_tool() -> None:
             )
         result = session.result
 
-    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
+    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, result.error
     expect(result).to_have_tool_call(
         "shipping_quote",
         turn=turn,
