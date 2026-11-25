@@ -28,6 +28,32 @@ without a harness. See [the pytest plugin reference](../reference/pytest.md).
 Use `m3 doctor --require harness:NAME` for a system runtime, or select a managed
 runtime/version supported on the current OS and CPU.
 
+## Doctor reports no credential
+
+`m3 doctor --require harness:claude` and `--require harness:codex` exit with
+status 1 and print `harness: unavailable (no credential for Claude Code)` or
+`(no credential for Codex)` when the executable runs but M3 has no credential
+to give it. The lines below name each source doctor looked at, and the `Next:`
+line names the ways to provide one:
+
+- Claude Code: set `ANTHROPIC_API_KEY`, or map a token from `claude setup-token`.
+- Codex: set `OPENAI_API_KEY`, or sign in with `codex login` so that
+  `auth.json` exists in `CODEX_HOME` (default `~/.codex`).
+
+Doctor reads the same sources as `m3 test`: the process environment and the
+project root `.env`, or the file passed with `--env-file`. If your tests map a
+credential from another variable, pass the same `--credential-env
+[KIND:]TARGET=SOURCE` to doctor; it then checks that each `SOURCE` is set to a
+non-empty value instead of the default variable. A mapping written only in test
+code as `credential_env={...}` is invisible to doctor, so repeat it on the
+doctor command line.
+
+Doctor checks that a source is present. It does not send the key, token, or
+login to the provider, so a revoked or mistyped credential still passes. For
+OpenCode and Pi the variable depends on the model prefix, which doctor does not
+know, so it lists the variables and reports `credentials: not checked` without
+failing. Doctor never prints a credential value.
+
 ## Codex has no login or rejects the credentials
 
 Codex needs either an API key or a ChatGPT subscription login. Startup fails
@@ -46,9 +72,13 @@ interrupted ends the execution with that same outcome rather than `failed`.
 
 ## Claude Code turn failed
 
-A Claude Code test that fails with
-`ErrorInfo(code=TRANSPORT_ERROR, message='turn failed', ...)` on its first turn,
-within a few seconds, usually has no credential. M3 starts Claude Code with a
+A Claude Code test that fails on its first turn, within a few seconds, usually
+has no credential. The turn error, `turn.error`, is
+`ErrorInfo(code=TRANSPORT_ERROR, message='turn failed', ...)` for every failed
+turn. The execution error, `session.result.error`, carries the reason: when M3
+passed no credential to Claude Code, its message is `Claude Code turn failed:
+no credential was passed to Claude Code; set ANTHROPIC_API_KEY or map
+CLAUDE_CODE_OAUTH_TOKEN with credential_env`. M3 starts Claude Code with a
 temporary home directory and does not copy the host's Claude Code login, so a
 signed-in machine is not enough. Provide one of:
 
@@ -60,8 +90,11 @@ signed-in machine is not enough. Provide one of:
   agents selected on the command line.
 
 An explicit `credential_env` is the complete set of credentials the agent
-receives. `m3 doctor --require harness:claude` reports the `claude` executable
-only and passes without a credential.
+receives. `m3 doctor --require harness:claude` checks for the same two sources
+before you run the test; see [Doctor reports no credential](#doctor-reports-no-credential).
+A message of `Claude Code turn failed` without the credential sentence means a
+credential was passed and the turn failed for another reason, such as a key the
+provider rejected.
 
 `UnsupportedFeature: Claude Code does not support exact tool restrictions`
 means the test passed `tools=[...]`. Remove it and assert the call with

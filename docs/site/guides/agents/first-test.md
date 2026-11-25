@@ -171,6 +171,14 @@ Requirements:
   - An API key. Set `ANTHROPIC_API_KEY` in the environment that runs the test. M3 forwards it when the selection has no `credential_env`.
   - A subscription token. Run `claude setup-token`, export the token it prints under a name you choose, such as `MY_CLAUDE_TOKEN`, and add `"credential_env": {"CLAUDE_CODE_OAUTH_TOKEN": "MY_CLAUDE_TOKEN"}` to the selection. The mapping holds variable names, not the token.
 
+Check both the executable and the credential before you run the test:
+
+```bash
+m3 doctor --require harness:claude
+```
+
+It prints `harness: ready` when `ANTHROPIC_API_KEY` is set to a non-empty value. For the subscription token, add `--credential-env claude_code:CLAUDE_CODE_OAUTH_TOKEN=MY_CLAUDE_TOKEN`. With neither, it exits with status 1 and reports `harness: unavailable (no credential for Claude Code)`. The check looks for the variable; it does not validate the key or token with the provider.
+
 Save this complete test beside `shipping_server.py` as `test_agent_claude.py`:
 
 ```python
@@ -203,7 +211,7 @@ def test_claude_code_calls_the_shipping_tool() -> None:
             )
         result = session.result
 
-    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
+    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, result.error
     expect(result).to_have_tool_call(
         "shipping_quote",
         turn=turn,
@@ -227,11 +235,12 @@ trace`. Without `tools`, M3 allows Claude Code the MCP tools of the one bound
 server, at server scope. A Claude Code session takes exactly one server. The
 `to_have_tool_call` assertion is what checks which tool the agent chose.
 
-If the assertion reports `message='turn failed'`, check the credential first.
-With no `ANTHROPIC_API_KEY` and no mapped token, the turn fails within seconds
-with exactly that message, and M3 has no more specific reason from Claude Code
-to show. `m3 doctor --require harness:claude` checks only that the `claude`
-executable is available; it does not check credentials. See
+The first assertion prints `result.error`, the execution error, which carries
+Claude Code's reason. With no `ANTHROPIC_API_KEY` and no mapped token, the turn
+fails within seconds and the message is `Claude Code turn failed: no credential
+was passed to Claude Code; set ANTHROPIC_API_KEY or map CLAUDE_CODE_OAUTH_TOKEN
+with credential_env`. `turn.error` reports only `turn failed` for every failed
+turn. See
 [agent troubleshooting](../../troubleshooting/agents.md#claude-code-turn-failed).
 
 To test a different server, change the `StdioServer` command and arguments, then update the alias, allowed tool, prompt, and expected call together. Keep `arguments` explicit in the matcher when argument selection is part of the behavior under test.

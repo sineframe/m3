@@ -17,6 +17,9 @@ from typing import Literal as _Literal
 from typing import cast as _cast
 
 from ._credentials import (
+    default_credential_source as _default_credential_source,
+)
+from ._credentials import (
     validate_credential_environment_names as _validate_reserved_names,
 )
 from ._types.specs import AgentSpec as _AgentSpec
@@ -98,21 +101,7 @@ def _credential_refs(
     # An explicit mapping is the complete set: forwarding the harness default
     # alongside it can shadow the mapped credential in the child process.
     if mapping is None and kind in {"claude_code", "codex", "opencode", "pi"}:
-        source = (
-            "ANTHROPIC_API_KEY"
-            if kind == "claude_code"
-            else "OPENAI_API_KEY"
-            if kind == "codex"
-            else None
-        )
-        if kind in {"opencode", "pi"} and "/" in model:
-            source = {
-                "opencode": "OPENCODE_API_KEY",
-                "openai": "OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
-            }.get(model.split("/", 1)[0])
-            if kind == "pi" and model.startswith("openai-codex/"):
-                source = "PI_CODING_AGENT_DIR"
+        source = _default_credential_source(kind, model)
         if source and _os.environ.get(source):
             values[source] = source
     if mapping is not None:

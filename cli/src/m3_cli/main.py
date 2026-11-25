@@ -112,6 +112,16 @@ def _parser() -> argparse.ArgumentParser:
         help="dotenv file; defaults to PROJECT_ROOT/.env when present",
     )
     doctor_parser.add_argument(
+        "--credential-env",
+        action="append",
+        default=[],
+        metavar="[KIND:]TARGET=SOURCE",
+        help=(
+            "credential mapping the tests use; a harness requirement then "
+            "checks that SOURCE is set (repeatable)"
+        ),
+    )
+    doctor_parser.add_argument(
         "--m3-config",
         dest="m3_config",
         type=Path,

@@ -59,8 +59,38 @@ Check requested project capabilities. Repeat `--require KIND:TARGET` for
 configuration, binaries, harnesses, protocol, transport, or storage. Use
 `--json` for machine-readable output. `--project-root PATH` defaults to the
 nearest `m3.toml` at or above the current directory, stopping at the Git root;
-otherwise the current directory. Configuration checks load the project root
-`.env` automatically; `--env-file PATH` selects a custom file instead.
+otherwise the current directory. Configuration and harness credential checks
+load the project root `.env` automatically; `--env-file PATH` selects a custom
+file instead.
+
+A `harness:TARGET` requirement runs `TARGET --version` and then checks that M3
+has a credential for that harness. `TARGET` is an executable name or path;
+doctor recognizes `claude`, `codex`, `opencode`, and `pi` by file name.
+
+| Harness | Sources checked | Result when none is present |
+| --- | --- | --- |
+| `claude` | `ANTHROPIC_API_KEY`, non-empty. The host's Claude Code login is not used. | `unavailable`, exit status 1 |
+| `codex` | `OPENAI_API_KEY`, non-empty, or `auth.json` in `CODEX_HOME` (default `~/.codex`) | `unavailable`, exit status 1 |
+| `opencode`, `pi` | The variables M3 selects by model prefix; see [Native harnesses](../credentials.md#native-harnesses) | `credentials: not checked`, because doctor does not know the model |
+| any other executable | none | `credentials: not checked` |
+
+`--credential-env [KIND:]TARGET=SOURCE` tells doctor about a mapping your tests
+use, with the same syntax as `m3 test`. Repeat it for several mappings. For a
+harness the mapping applies to, doctor checks that every `SOURCE` is set to a
+non-empty value and ignores the default variable, because an explicit mapping
+is the complete set of credentials the agent receives. It requires a `harness`
+requirement.
+
+Credential checks read the process environment plus the project root `.env`, or
+the `--env-file` file, with the precedence `m3 test` uses. They test presence
+only: doctor does not contact the provider, does not read the content of
+`auth.json`, and never prints a credential value or a mapped `SOURCE` name.
+With `--json`, each harness result has a `credentials` object with `status`
+(`ready`, `missing`, or `not checked`), `harness`, `reason`, `sources`, and
+`fix`. When `status` is `missing`, the result's `capability.status` is
+`unavailable` and the top-level `ready` is `false`.
+
+`--env-file` requires a `config` or `harness` requirement.
 
 `--m3-config PATH` reads `[tool.m3]` from PATH instead of discovering
 `pyproject.toml`. Doctor reads `cli.project_python_timeout_seconds` on every
