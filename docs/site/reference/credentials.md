@@ -47,6 +47,10 @@ Codex runs with either an API key or a ChatGPT subscription login:
 
 Before the first turn, M3 asks Codex whether it has an account. When it has neither a key nor a login, startup fails with `Codex has no login` instead of the first turn failing with HTTP 401.
 
+Claude Code has no such account check. When no credential reference was passed and the first turn fails, the execution error message is `Claude Code turn failed: no credential was passed to Claude Code; set ANTHROPIC_API_KEY or map CLAUDE_CODE_OAUTH_TOKEN with credential_env`.
+
+`m3 doctor --require harness:claude` and `--require harness:codex` check these sources before a run and exit with status 1 when none is present. See [`m3 doctor`](cli/index.md#m3-doctor).
+
 Agent and judge mappings reject the exact name `M3_ACCESS_TOKEN` as a target or environment source. This validation does not detect the same token copied into another variable.
 
 ## ACP environment
