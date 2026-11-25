@@ -1275,8 +1275,20 @@ class RuntimeManager:
         try:
             return urllib.request.build_opener(SafeRedirect()).open(req, timeout=30)
         except urllib.error.HTTPError as exc:
+            hint = ""
+            if (
+                parsed.hostname == "api.github.com"
+                and exc.code in {403, 429}
+                and "Authorization" not in headers
+            ):
+                # GitHub limits unauthenticated API requests per IP address,
+                # which shared CI runners exhaust quickly.
+                hint = (
+                    "; GitHub limits unauthenticated requests, set "
+                    "M3_GITHUB_TOKEN to a GitHub token"
+                )
             raise RuntimeValidationError(
-                f"runtime download failed (HTTP {exc.code})"
+                f"runtime download failed (HTTP {exc.code}){hint}"
             ) from None
         except (OSError, ValueError):
             raise RuntimeValidationError("runtime download failed") from None

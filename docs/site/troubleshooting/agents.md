@@ -28,6 +28,21 @@ without a harness. See [the pytest plugin reference](../reference/pytest.md).
 Use `m3 doctor --require harness:NAME` for a system runtime, or select a managed
 runtime/version supported on the current OS and CPU.
 
+## Managed runtime download fails with HTTP 403
+
+`could not acquire managed Codex ...: runtime download failed (HTTP 403)` means
+GitHub refused the release lookup. M3 finds managed Codex, OpenCode and Pi
+releases through `api.github.com`, and GitHub limits unauthenticated requests
+per IP address. Shared CI runners reach that limit often.
+
+Set `M3_GITHUB_TOKEN` to a GitHub token. M3 sends it only to `api.github.com`
+and removes it on redirects. In GitHub Actions, pass the workflow token:
+
+```yaml
+env:
+  M3_GITHUB_TOKEN: ${{ github.token }}
+```
+
 ## Doctor reports no credential
 
 `m3 doctor --require harness:claude` and `--require harness:codex` exit with

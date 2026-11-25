@@ -208,3 +208,35 @@ def test_receipt_without_current_format_is_reported_as_outdated(
     assert not core.RuntimeManager._receipt_valid(entry)
     entries = list_cache(tmp_path / "cache")
     assert [item["status"] for item in entries] == ["outdated"]
+
+
+@pytest.mark.parametrize(
+    ("url", "token", "code", "hinted"),
+    [
+        ("https://api.github.com/repos/org/repo/releases/latest", "", 403, True),
+        ("https://api.github.com/repos/org/repo/releases/latest", "", 429, True),
+        ("https://api.github.com/repos/org/repo/releases/latest", "", 404, False),
+        (
+            "https://api.github.com/repos/org/repo/releases/latest",
+            "tok-secret",
+            403,
+            False,
+        ),
+        ("https://example.com/asset", "", 403, False),
+    ],
+)
+def test_rate_limited_metadata_download_names_the_token_variable(
+    monkeypatch: pytest.MonkeyPatch, url: str, token: str, code: int, hinted: bool
+) -> None:
+    class Opener:
+        def open(self, request: object, timeout: int) -> object:
+            raise core.urllib.error.HTTPError(url, code, "denied", None, None)  # type: ignore[arg-type]
+
+    monkeypatch.setenv("M3_GITHUB_TOKEN", token)
+    monkeypatch.setattr(core.urllib.request, "build_opener", lambda handler: Opener())
+    with pytest.raises(RuntimeValidationError) as raised:
+        core.RuntimeManager._open_download(url)
+    message = str(raised.value)
+    assert message.startswith(f"runtime download failed (HTTP {code})")
+    assert ("M3_GITHUB_TOKEN" in message) is hinted
+    assert token == "" or token not in message.replace("M3_GITHUB_TOKEN", "")
