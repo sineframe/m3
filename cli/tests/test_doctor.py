@@ -242,7 +242,10 @@ def test_doctor_env_file_without_config_fails_before_reading_file(
         == 2
     )
     captured = capsys.readouterr()
-    assert captured.err.strip() == "m3 doctor: --env-file requires a config requirement"
+    assert (
+        captured.err.strip()
+        == "m3 doctor: --env-file requires a config or harness requirement"
+    )
 
 
 def test_doctor_transport_and_storage_namespaces(capsys) -> None:
@@ -436,3 +439,312 @@ def test_doctor_invalid_config_fails_without_config_requirement(
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == "invalid_configuration"
+
+
+_CREDENTIAL_VARIABLES = (
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+    "OPENCODE_API_KEY",
+    "PI_CODING_AGENT_DIR",
+    "MY_CLAUDE_TOKEN",
+)
+
+
+def _harness_executable(directory: Path, name: str) -> str:
+    """A stand-in harness executable that only answers ``--version``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(f"#!{sys.executable}\nprint('1.2.3')\n", encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.fixture
+def no_credentials(tmp_path: Path, monkeypatch) -> Path:
+    """An environment with no agent credential and an empty Codex home."""
+    for name in _CREDENTIAL_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    # An empty explicit env file keeps a developer's project .env out of it.
+    (tmp_path / "empty.env").write_text("", encoding="utf-8")
+    return tmp_path
+
+
+def _doctor_harness(tmp_path: Path, name: str, *extra: str) -> list[str]:
+    executable = _harness_executable(tmp_path / "bin", name)
+    arguments = ["doctor", "--require", f"harness:{executable}", "--json"]
+    if "--env-file" not in extra:
+        arguments += ["--env-file", str(tmp_path / "empty.env")]
+    return [*arguments, *extra]
+
+
+def test_doctor_claude_without_credential_is_not_ready(
+    no_credentials: Path, capsys
+) -> None:
+    assert main(_doctor_harness(no_credentials, "claude")) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["ready"] is False
+    result = report["results"][0]
+    assert result["capability"]["status"] == "unavailable"
+    assert result["capability"]["reason"] == "no credential for Claude Code"
+    # The executable itself still probed successfully.
+    assert result["evidence"]["details"]["returncode"] == 0
+    credentials = result["credentials"]
+    assert credentials["status"] == "missing"
+    assert credentials["harness"] == "claude_code"
+    assert credentials["sources"] == [
+        {
+            "name": "ANTHROPIC_API_KEY",
+            "kind": "environment",
+            "used_for": "any model",
+            "status": "not set",
+        },
+        {"name": "Claude Code login", "kind": "login", "status": "not used"},
+    ]
+    assert "ANTHROPIC_API_KEY" in credentials["fix"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in credentials["fix"]
+
+
+def test_doctor_claude_human_output_names_the_fix(no_credentials: Path, capsys) -> None:
+    arguments = [
+        item for item in _doctor_harness(no_credentials, "claude") if item != "--json"
+    ]
+    assert main(arguments) == 1
+    output = capsys.readouterr().out
+    assert "m3 doctor: not ready" in output
+    assert "harness: unavailable (no credential for Claude Code)" in output
+    assert "ANTHROPIC_API_KEY: not set" in output
+    assert "Claude Code login: not used" in output
+    assert "Next: set ANTHROPIC_API_KEY, or export a token" in output
+    assert "claude_code:CLAUDE_CODE_OAUTH_TOKEN=MY_CLAUDE_TOKEN" in output
+    assert "Next: m3 doctor" not in output
+
+
+def test_doctor_claude_with_api_key_is_ready_and_value_free(
+    no_credentials: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "credential-canary-value")
+    assert main(_doctor_harness(no_credentials, "claude")) == 0
+    output = capsys.readouterr().out
+    assert "credential-canary-value" not in output
+    report = json.loads(output)
+    assert report["ready"] is True
+    credentials = report["results"][0]["credentials"]
+    assert credentials["status"] == "ready"
+    assert credentials["sources"][0]["status"] == "set"
+    assert credentials["sources"][0]["origin"] == "environment"
+
+
+def test_doctor_claude_empty_api_key_is_not_a_credential(
+    no_credentials: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    assert main(_doctor_harness(no_credentials, "claude")) == 1
+    credentials = json.loads(capsys.readouterr().out)["results"][0]["credentials"]
+    assert credentials["status"] == "missing"
+    assert credentials["sources"][0]["status"] == "empty"
+
+
+def test_doctor_claude_mapped_token_is_ready_and_value_free(
+    no_credentials: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("MY_CLAUDE_TOKEN", "credential-canary-value")
+    mapping = "claude:CLAUDE_CODE_OAUTH_TOKEN=MY_CLAUDE_TOKEN"
+    assert (
+        main(_doctor_harness(no_credentials, "claude", "--credential-env", mapping))
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "credential-canary-value" not in output
+    assert "MY_CLAUDE_TOKEN" not in output
+    credentials = json.loads(output)["results"][0]["credentials"]
+    assert credentials["status"] == "ready"
+    assert credentials["sources"] == [
+        {
+            "name": "CLAUDE_CODE_OAUTH_TOKEN",
+            "kind": "mapped",
+            "status": "set",
+            "origin": "environment",
+        }
+    ]
+
+
+def test_doctor_mapping_replaces_the_default_credential(
+    no_credentials: Path, monkeypatch, capsys
+) -> None:
+    # An explicit mapping is the complete set, so a set ANTHROPIC_API_KEY does
+    # not make up for an unset mapped source.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "credential-canary-value")
+    mapping = "claude_code:CLAUDE_CODE_OAUTH_TOKEN=MY_CLAUDE_TOKEN"
+    assert (
+        main(_doctor_harness(no_credentials, "claude", "--credential-env", mapping))
+        == 1
+    )
+    credentials = json.loads(capsys.readouterr().out)["results"][0]["credentials"]
+    assert credentials["status"] == "missing"
+    assert credentials["reason"] == "1 mapped credential source is not set or empty"
+    assert credentials["sources"][0]["status"] == "not set"
+
+
+def test_doctor_mapping_for_another_harness_is_ignored(
+    no_credentials: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "credential-canary-value")
+    mapping = "codex:OPENAI_API_KEY=MY_CLAUDE_TOKEN"
+    assert (
+        main(_doctor_harness(no_credentials, "claude", "--credential-env", mapping))
+        == 0
+    )
+    credentials = json.loads(capsys.readouterr().out)["results"][0]["credentials"]
+    assert credentials["sources"][0]["kind"] == "environment"
+
+
+def test_doctor_reads_harness_credential_from_env_file(
+    no_credentials: Path, capsys
+) -> None:
+    env_file = no_credentials / "agent.env"
+    env_file.write_text("ANTHROPIC_API_KEY=credential-canary-value\n", encoding="utf-8")
+    arguments = _doctor_harness(no_credentials, "claude", "--env-file", str(env_file))
+    assert main(arguments) == 0
+    output = capsys.readouterr().out
+    assert "credential-canary-value" not in output
+    source = json.loads(output)["results"][0]["credentials"]["sources"][0]
+    assert source["status"] == "set"
+    assert source["origin"] == "env_file"
+
+    assert main([item for item in arguments if item != "--json"]) == 0
+    human = capsys.readouterr().out
+    assert "credential-canary-value" not in human
+    assert "ANTHROPIC_API_KEY: set (from the env file" in human
+
+
+def test_doctor_empty_ambient_credential_overrides_env_file(
+    no_credentials: Path, monkeypatch, capsys
+) -> None:
+    env_file = no_credentials / "agent.env"
+    env_file.write_text("ANTHROPIC_API_KEY=credential-canary-value\n", encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    arguments = _doctor_harness(no_credentials, "claude", "--env-file", str(env_file))
+    assert main(arguments) == 1
+    credentials = json.loads(capsys.readouterr().out)["results"][0]["credentials"]
+    assert credentials["sources"][0]["status"] == "empty"
+
+
+def test_doctor_codex_without_key_or_login_is_not_ready(
+    no_credentials: Path, capsys
+) -> None:
+    assert main(_doctor_harness(no_credentials, "codex")) == 1
+    credentials = json.loads(capsys.readouterr().out)["results"][0]["credentials"]
+    assert credentials["status"] == "missing"
+    assert credentials["reason"] == "no credential for Codex"
+    assert [(item["name"], item["status"]) for item in credentials["sources"]] == [
+        ("OPENAI_API_KEY", "not set"),
+        ("Codex login file", "not found"),
+    ]
+    assert "codex login" in credentials["fix"]
+
+
+def test_doctor_codex_login_file_is_ready_without_reading_it(
+    no_credentials: Path, capsys
+) -> None:
+    (no_credentials / "codex-home" / "auth.json").write_text(
+        "credential-canary-value", encoding="utf-8"
+    )
+    assert main(_doctor_harness(no_credentials, "codex")) == 0
+    output = capsys.readouterr().out
+    assert "credential-canary-value" not in output
+    credentials = json.loads(output)["results"][0]["credentials"]
+    assert credentials["status"] == "ready"
+    assert credentials["sources"][-1] == {
+        "name": "Codex login file",
+        "kind": "login",
+        "status": "present",
+    }
+
+
+def test_doctor_opencode_credentials_depend_on_the_model(
+    no_credentials: Path, monkeypatch, capsys
+) -> None:
+    assert main(_doctor_harness(no_credentials, "opencode")) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["ready"] is True
+    credentials = report["results"][0]["credentials"]
+    assert credentials["status"] == "not checked"
+    assert credentials["reason"].endswith("none is set")
+    assert [item["name"] for item in credentials["sources"]] == [
+        "OPENCODE_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ]
+
+    monkeypatch.setenv("OPENAI_API_KEY", "credential-canary-value")
+    assert main(_doctor_harness(no_credentials, "opencode")) == 0
+    output = capsys.readouterr().out
+    assert "credential-canary-value" not in output
+    credentials = json.loads(output)["results"][0]["credentials"]
+    assert credentials["status"] == "not checked"
+    assert credentials["reason"].endswith("set: OPENAI_API_KEY")
+
+
+def test_doctor_unknown_harness_executable_credentials_are_not_checked(
+    no_credentials: Path, capsys
+) -> None:
+    assert main(_doctor_harness(no_credentials, "my-agent")) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["ready"] is True
+    credentials = report["results"][0]["credentials"]
+    assert credentials["status"] == "not checked"
+    assert credentials["harness"] is None
+
+
+def test_doctor_non_harness_results_have_no_credentials(capsys) -> None:
+    assert main(["doctor", "--require", f"binary:{sys.executable}", "--json"]) == 0
+    assert "credentials" not in json.loads(capsys.readouterr().out)["results"][0]
+
+
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        ("sk-secret-canary", "--credential-env requires TARGET=SOURCE"),
+        (
+            "CLAUDE_CODE_OAUTH_TOKEN=sk-secret-canary",
+            "credential environment names must be Python identifiers",
+        ),
+        ("nope:TARGET=sk_secret_canary", "unknown credential scope"),
+        (
+            "M3_ACCESS_TOKEN=sk_secret_canary",
+            "M3_ACCESS_TOKEN cannot be mapped to a test credential",
+        ),
+    ],
+)
+def test_doctor_rejects_credential_mapping_without_echoing_input(
+    no_credentials: Path, capsys, mapping: str, message: str
+) -> None:
+    arguments = _doctor_harness(no_credentials, "claude", "--credential-env", mapping)
+    assert main(arguments) == 2
+    captured = capsys.readouterr()
+    assert "canary" not in captured.out + captured.err
+    assert message in captured.out + captured.err
+
+
+def test_doctor_credential_env_requires_a_harness_requirement(capsys) -> None:
+    assert (
+        main(
+            [
+                "doctor",
+                "--require",
+                "storage:memory",
+                "--credential-env",
+                "OPENAI_API_KEY=MY_OPENAI_KEY",
+            ]
+        )
+        == 2
+    )
+    assert (
+        capsys.readouterr().err.strip()
+        == "m3 doctor: --credential-env requires a harness requirement"
+    )
