@@ -5,6 +5,22 @@ description: "Run m3 setup from the project root. It installs the SDK version ma
 
 # Installation and project Python
 
+## The shell installer reports HTTP 403
+
+`curl: (22) The requested URL returned error: 403` followed by `could not list
+M3 releases through the GitHub API` means GitHub refused the installer's
+request for the release list. GitHub limits requests without a token per IP
+address, so this shows up on shared addresses such as CI runners and office
+networks.
+
+The installer then continues without the release list: it installs the latest
+final release, or the exact build named by `--tag`, `--canary`, or `--pr`.
+`--prerelease` needs the list and stops.
+
+To avoid the limit, set `M3_GITHUB_TOKEN` to a GitHub token before running the
+installer. It is sent only to `api.github.com`. Installing with
+`uv tool install sf-m3-cli` does not use the GitHub API at all.
+
 ## `project Python ... does not match`
 
 Run `m3 setup` from the project root. It installs the SDK version matching the

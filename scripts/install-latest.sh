@@ -33,16 +33,58 @@ while [ "$#" -gt 0 ]; do
 done
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/m3-bootstrap.XXXXXX") || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
+# GitHub limits API requests without a token per IP address, so shared
+# addresses (CI runners, office networks) can get HTTP 403 here. A token in
+# M3_GITHUB_TOKEN is sent to api.github.com only. Without a usable answer the
+# script falls back to release URLs that need no API call.
+api_failed=
 page=1
 while :; do
     page_file="$TMP_DIR/releases-$page.json"
-    curl --fail --silent --show-error --location \
-        "https://api.github.com/repos/${REPOSITORY}/releases?per_page=100&page=${page}" \
-        --output "$page_file"
+    releases_url="https://api.github.com/repos/${REPOSITORY}/releases?per_page=100&page=${page}"
+    if [ -n "${M3_GITHUB_TOKEN:-}" ]; then
+        printf 'header = "Authorization: Bearer %s"\n' "$M3_GITHUB_TOKEN" |
+            curl --config - --fail --silent --show-error --location "$releases_url" --output "$page_file" ||
+            api_failed=1
+    else
+        curl --fail --silent --show-error --location "$releases_url" --output "$page_file" || api_failed=1
+    fi
+    [ -z "$api_failed" ] || break
     count=$("$BOOTSTRAP_PYTHON" -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$page_file")
     [ "$count" -eq 100 ] || break
     page=$((page + 1))
 done
+if [ -n "$api_failed" ]; then
+    echo 'could not list M3 releases through the GitHub API; GitHub limits requests without a token, set M3_GITHUB_TOKEN to a GitHub token to avoid this' >&2
+    if [ "$mode" = prerelease ]; then
+        echo '--prerelease needs the release list; set M3_GITHUB_TOKEN or pass --tag' >&2
+        exit 1
+    fi
+    candidate=$exact_tag
+    if [ -z "$candidate" ]; then
+        latest_url=$(curl --fail --silent --show-error --location --output /dev/null \
+            --write-out '%{url_effective}' "https://github.com/${REPOSITORY}/releases/latest") ||
+            { echo 'could not find the latest M3 release; install with: uv tool install sf-m3-cli' >&2; exit 1; }
+        candidate=${latest_url##*/}
+    fi
+    tag=$("$BOOTSTRAP_PYTHON" - "$candidate" "$mode" "$exact_tag" <<'PY'
+import re, sys
+candidate, mode, exact = sys.argv[1:4]
+if mode == "canary":
+    pattern = r"canary-(?:main|pr-[1-9][0-9]*)"
+elif exact:
+    pattern = r"v\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
+else:
+    pattern = r"v\d+\.\d+\.\d+"
+if not re.fullmatch(pattern, candidate):
+    if exact:
+        raise SystemExit("requested tag is invalid or not a published release")
+    raise SystemExit("could not find the latest M3 release; install with: uv tool install sf-m3-cli")
+print(candidate)
+PY
+    ) || exit 1
+    echo "continuing with ${tag} from its release files" >&2
+else
 tag=$("$BOOTSTRAP_PYTHON" - "$TMP_DIR" "$mode" "$exact_tag" <<'PY'
 import json, pathlib, re, sys
 root, mode, exact = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
@@ -93,6 +135,7 @@ if not choices:
 print(max(choices, key=lambda r: parse(r["tag_name"]))["tag_name"])
 PY
 )
+fi
 base_url="https://github.com/${REPOSITORY}/releases/download/${tag}"
 curl --fail --silent --show-error --location "${base_url}/manifest.json" --output "$TMP_DIR/manifest.json"
 curl --fail --silent --show-error --location "${base_url}/install.sh" --output "$TMP_DIR/install.sh"

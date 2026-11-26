@@ -141,7 +141,13 @@ def test_public_posix_installer_rejects_bad_checksum(tmp_path: Path) -> None:
 
 
 def _bootstrap(
-    tmp_path: Path, releases: list[dict[str, object]], *args: str, uv_only: bool = False
+    tmp_path: Path,
+    releases: list[dict[str, object]],
+    *args: str,
+    uv_only: bool = False,
+    api_status: int = 0,
+    latest: str = "",
+    token: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str | None]:
     tmp_path.mkdir(parents=True)
     fake_bin = tmp_path / "bin"
@@ -180,8 +186,16 @@ for arg do
   if [ "$arg" = --output ]; then previous=output; fi
 done
 url=$*
+case " $* " in *" --config - "*) cat > "$M3_TEST_CURL_CONFIG" ;; esac
 case "$url" in
-  *api.github.com*) cp "$M3_TEST_RELEASES" "$out" ;;
+  *api.github.com*)
+    [ "$M3_TEST_API_STATUS" -eq 0 ] || exit "$M3_TEST_API_STATUS"
+    cp "$M3_TEST_RELEASES" "$out"
+    ;;
+  */releases/latest)
+    [ -n "$M3_TEST_LATEST" ] || exit 22
+    printf '%s' "https://github.com/sineframe/m3/releases/$M3_TEST_LATEST"
+    ;;
   */releases/download/*/manifest.json)
     tag=${url#*/releases/download/}; tag=${tag%%/*}
     cp "$M3_TEST_ASSETS/$tag/manifest.json" "$out"
@@ -226,9 +240,15 @@ esac
             "M3_TEST_SELECTED": str(selected),
             "M3_TEST_PYTHON": sys.executable,
             "M3_TEST_UV_LOG": str(tmp_path / "uv.log"),
+            "M3_TEST_API_STATUS": str(api_status),
+            "M3_TEST_LATEST": latest,
+            "M3_TEST_CURL_CONFIG": str(tmp_path / "curl-config"),
             "TMPDIR": str(tmp_path),
         }
     )
+    env.pop("M3_GITHUB_TOKEN", None)
+    if token:
+        env["M3_GITHUB_TOKEN"] = token
     result = subprocess.run(
         [
             "/bin/sh" if uv_only else "sh",
@@ -290,6 +310,77 @@ def test_bootstrap_uses_uv_python_when_python3_is_absent(tmp_path: Path) -> None
         "python install 3.13",
         "python find 3.13",
     ]
+
+
+def test_bootstrap_sends_the_github_token_to_the_release_list_only(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "token"
+    result, selected = _bootstrap(root, [_release("v1.2.3")], token="tok-secret")
+    assert result.returncode == 0, result.stderr
+    assert selected == "v1.2.3"
+    config = root.joinpath("curl-config").read_text()
+    assert config == 'header = "Authorization: Bearer tok-secret"\n'
+    assert "tok-secret" not in result.stdout + result.stderr
+    result, _ = _bootstrap(tmp_path / "no-token", [_release("v1.2.3")])
+    assert result.returncode == 0, result.stderr
+    assert not tmp_path.joinpath("no-token", "curl-config").exists()
+
+
+def test_bootstrap_installs_latest_final_when_the_release_list_is_refused(
+    tmp_path: Path,
+) -> None:
+    releases = [_release("v1.0.0"), _release("v1.1.0")]
+    result, selected = _bootstrap(
+        tmp_path / "limited", releases, api_status=22, latest="tag/v1.1.0"
+    )
+    assert result.returncode == 0, result.stderr
+    assert selected == "v1.1.0"
+    assert "set M3_GITHUB_TOKEN" in result.stderr
+    assert "continuing with v1.1.0" in result.stderr
+
+
+def test_bootstrap_installs_exact_builds_when_the_release_list_is_refused(
+    tmp_path: Path,
+) -> None:
+    releases = [
+        _release("v0.4.0a2", prerelease=True),
+        _release("canary-main", prerelease=True),
+    ]
+    result, selected = _bootstrap(
+        tmp_path / "tag", releases, "--tag", "v0.4.0a2", api_status=22
+    )
+    assert result.returncode == 0, result.stderr
+    assert selected == "v0.4.0a2"
+    result, selected = _bootstrap(
+        tmp_path / "canary", releases, "--canary", api_status=22
+    )
+    assert result.returncode == 0, result.stderr
+    assert selected == "canary-main"
+    result, selected = _bootstrap(
+        tmp_path / "bad", releases, "--tag", "main; echo", api_status=22
+    )
+    assert result.returncode != 0 and selected is None
+    assert "requested tag is invalid" in result.stderr
+
+
+def test_bootstrap_stops_with_a_fix_when_no_release_can_be_found(
+    tmp_path: Path,
+) -> None:
+    releases = [_release("v1.0.0")]
+    result, selected = _bootstrap(tmp_path / "unreachable", releases, api_status=22)
+    assert result.returncode != 0 and selected is None
+    assert "uv tool install sf-m3-cli" in result.stderr
+    result, selected = _bootstrap(
+        tmp_path / "odd", releases, api_status=22, latest="releases"
+    )
+    assert result.returncode != 0 and selected is None
+    assert "could not find the latest M3 release" in result.stderr
+    result, selected = _bootstrap(
+        tmp_path / "pre", releases, "--prerelease", api_status=22, latest="tag/v1.0.0"
+    )
+    assert result.returncode != 0 and selected is None
+    assert "--prerelease needs the release list" in result.stderr
 
 
 def test_bootstrap_fails_when_release_has_no_installer(tmp_path: Path) -> None:
